@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from typing import Any
 
 from aidn_hypervisor.consensus.finality import ConsensusFinalityEvidence
@@ -270,7 +269,7 @@ def test_recovery_reuses_persisted_lock_envelope_serialization() -> None:
     )
 
     expected_hash = hashlib.sha256(
-        json.dumps(persisted_envelope.model_dump(mode="json")).encode("utf-8")
+        persisted_envelope.consensus_bytes()
     ).hexdigest().upper()
     assert result["canonical_operation_ids"]["lock"] == persisted_envelope.operation_id
     assert result["submissions"]["lock"]["transaction_hash"] == expected_hash

@@ -1876,6 +1876,77 @@ The target Epoch must match `closing_epoch`, and a second transition for the
 same closing Epoch is rejected.  Both ABCI and deterministic local block
 execution apply this validation before recording the operation.
 
+## 53.1 Epoch Result Manifest Commit
+
+`EPOCH_RESULT_MANIFEST_COMMIT`
+
+Commits the immutable RFC-0048 Epoch Result Manifest that aggregates the
+finalized evidence roots and budget references required by a later
+`EPOCH_TRANSITION`.
+
+Required Payload
+
+```yaml
+manifest:
+  manifest_version:
+  manifest_state: FINALIZED
+  epoch_number:
+  start_height:
+  closing_height:
+  start_time:
+  closing_time:
+  protocol_version:
+  parameter_version:
+  task_set_version:
+  epoch_schedule_version:
+  epoch_schedule_hash:
+  scheduled_end_time:
+  frozen_evidence_root:
+  participant_snapshot_root:
+  service_snapshot_root:
+  task_result_root:
+  eligibility_root:
+  reputation_root:
+  penalty_root:
+  recycle_root:
+  reward_authorization_root:
+  reward_result_root:
+  faucet_root:
+  validator_set_update_root:
+  reward_calculation_root:
+  next_protocol_parameters_hash:
+  pool_budgets: {}
+  pool_budget_references: {}
+  next_epoch_reference:
+  previous_epoch_result_hash:
+  manifest_hash:
+```
+
+Preconditions
+
+- operation origin is Protocol, the fee class is `PROTOCOL_SPONSORED`, and no
+  Wallet sender is present;
+- the manifest is `FINALIZED`, hash-bound to the canonical manifest schema,
+  and its closing height is not before its start height;
+- every pool budget has exactly one non-empty canonical reference and every
+  budget is a non-negative integer amount in Q atoms;
+- only one manifest may be committed for an Epoch number.
+
+State Changes
+
+- records the immutable manifest and emits `EpochResultManifestCommitted`;
+- creates no Wallet balance effect, pool spend, reward authorization or
+  protocol-parameter activation;
+- makes the manifest available to the read-only Epoch Transition Input
+  preflight.
+
+When a transition includes `epoch_result_manifest_hash` and
+`epoch_result_manifest_operation_id`, the referenced manifest MUST already be
+finalized before the block containing the transition begins. A manifest and a
+dependent transition in the same block are rejected in both ABCI and
+deterministic execution. The transition MUST reproduce the manifest's task,
+eligibility, reward, parameter, schedule and pool-budget bindings exactly.
+
 ## 54. Reward Mint
 
 `REWARD_MINT`
@@ -2423,6 +2494,7 @@ The MVP SHALL implement at minimum:
 - `VALIDATION_BOND_FORFEIT`;
 - `SERVICE_VERIFICATION_COMMIT`;
 - `REPUTATION_PROFILE_UPDATE`;
+- `EPOCH_RESULT_MANIFEST_COMMIT`;
 - `EPOCH_TRANSITION`;
 - `REWARD_MINT`;
 - `CONSENSUS_VALIDATOR_SET_UPDATE`;

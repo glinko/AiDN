@@ -10,6 +10,10 @@ from typing import TYPE_CHECKING, cast
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
+from aidn_hypervisor.consensus.epoch_result_manifest import (
+    EPOCH_RESULT_MANIFEST_OPERATION,
+    EpochResultManifest,
+)
 from aidn_hypervisor.consensus.replay import FinalizedOperationRegistry
 from aidn_hypervisor.faucet_treasury import (
     FAUCET_TREASURY_FUNDING_DOMAIN,
@@ -1637,6 +1641,56 @@ class LedgerOperationService:
         return self.record_admitted_envelope(
             envelope,
             emitted_events=["ServiceVerificationCommitted"],
+        )
+
+    def epoch_result_manifest_commitment(self, epoch_number: int) -> dict | None:
+        """Return the canonical RFC-0048 manifest for one closing epoch."""
+        matches = []
+        for operation in self._operations:
+            if operation.get("operation_type") != EPOCH_RESULT_MANIFEST_OPERATION:
+                continue
+            manifest = (operation.get("payload") or {}).get("manifest")
+            if isinstance(manifest, dict) and manifest.get("epoch_number") == epoch_number:
+                matches.append(operation)
+        return dict(matches[-1]) if matches else None
+
+    def validate_consensus_epoch_result_manifest(
+        self,
+        envelope: "LedgerOperationEnvelope",
+    ) -> dict:
+        """Validate one immutable, protocol-owned Epoch Result Manifest."""
+        if envelope.operation_type != EPOCH_RESULT_MANIFEST_OPERATION:
+            raise ValueError(
+                "consensus epoch result manifest requires EPOCH_RESULT_MANIFEST_COMMIT"
+            )
+        if envelope.origin_type != "protocol" or envelope.sender_wallet is not None:
+            raise ValueError("epoch result manifest requires protocol origin")
+        if envelope.fee_class != "protocol_sponsored":
+            raise ValueError("epoch result manifest requires protocol-sponsored fee class")
+
+        payload = dict(envelope.payload)
+        raw_manifest = payload.get("manifest")
+        if not isinstance(raw_manifest, dict):
+            raise ValueError("epoch result manifest payload is required")
+        try:
+            manifest = EpochResultManifest.model_validate(raw_manifest)
+        except Exception as error:
+            raise ValueError("epoch result manifest is invalid") from error
+        if envelope.target_epoch is not None and envelope.target_epoch != str(manifest.epoch_number):
+            raise ValueError("epoch result manifest target epoch does not match payload")
+        if self.epoch_result_manifest_commitment(manifest.epoch_number) is not None:
+            raise ValueError("epoch result manifest for epoch is already committed")
+        return {"manifest": manifest, "payload": payload}
+
+    def apply_consensus_epoch_result_manifest(
+        self,
+        envelope: "LedgerOperationEnvelope",
+    ) -> dict:
+        """Persist one immutable Epoch Result Manifest without economic effects."""
+        self.validate_consensus_epoch_result_manifest(envelope)
+        return self.record_admitted_envelope(
+            envelope,
+            emitted_events=["EpochResultManifestCommitted"],
         )
 
     def reputation_profile_update_commitment(
@@ -5009,6 +5063,8 @@ class LedgerOperationService:
     def validate_consensus_epoch_transition(
         self,
         envelope: "LedgerOperationEnvelope",
+        *,
+        finalized_operation_ids: set[str] | None = None,
     ) -> dict:
         """Validate the canonical payload used to authorize epoch rewards."""
         if envelope.operation_type != "EPOCH_TRANSITION":
@@ -5040,6 +5096,66 @@ class LedgerOperationService:
         if envelope.target_epoch is not None and envelope.target_epoch != str(closing_epoch):
             raise ValueError("epoch transition target epoch does not match closing epoch")
 
+        manifest = None
+        manifest_fields = {
+            "epoch_result_manifest_hash",
+            "epoch_result_manifest_operation_id",
+        }
+        supplied_manifest_fields = manifest_fields & set(payload)
+        if supplied_manifest_fields:
+            if supplied_manifest_fields != manifest_fields:
+                raise ValueError("epoch transition result manifest linkage is incomplete")
+            manifest_operation_id = payload["epoch_result_manifest_operation_id"]
+            finalized_ids = (
+                set(finalized_operation_ids)
+                if finalized_operation_ids is not None
+                else set(self.finalized_operation_ids())
+            )
+            if manifest_operation_id not in finalized_ids:
+                raise ValueError("epoch transition result manifest is not finalized")
+            manifest_operation = self._operation_by_id(manifest_operation_id)
+            if (
+                manifest_operation is None
+                or manifest_operation.get("operation_type") != EPOCH_RESULT_MANIFEST_OPERATION
+            ):
+                raise ValueError("epoch transition result manifest operation is invalid")
+            try:
+                manifest = EpochResultManifest.model_validate(
+                    (manifest_operation.get("payload") or {}).get("manifest")
+                )
+            except Exception as error:
+                raise ValueError("epoch transition result manifest is invalid") from error
+            if manifest.manifest_hash != payload["epoch_result_manifest_hash"]:
+                raise ValueError("epoch transition result manifest hash does not match")
+            bindings = {
+                "epoch_number": closing_epoch,
+                "epoch_task_result_root": manifest.task_result_root,
+                "eligibility_snapshot_root": manifest.eligibility_root,
+                "reward_calculation_root": manifest.reward_calculation_root,
+                "next_protocol_parameters_hash": manifest.next_protocol_parameters_hash,
+                "epoch_schedule_version": payload.get("epoch_schedule_version"),
+                "epoch_schedule_hash": payload.get("epoch_schedule_hash"),
+                "canonical_block_time": payload.get("canonical_block_time"),
+                "scheduled_end_time": payload.get("scheduled_end_time"),
+            }
+            manifest_bindings = {
+                "epoch_number": manifest.epoch_number,
+                "epoch_task_result_root": manifest.task_result_root,
+                "eligibility_snapshot_root": manifest.eligibility_root,
+                "reward_calculation_root": manifest.reward_calculation_root,
+                "next_protocol_parameters_hash": manifest.next_protocol_parameters_hash,
+                "epoch_schedule_version": manifest.epoch_schedule_version,
+                "epoch_schedule_hash": manifest.epoch_schedule_hash,
+                "canonical_block_time": manifest.closing_time,
+                "scheduled_end_time": manifest.scheduled_end_time,
+            }
+            if bindings != manifest_bindings:
+                raise ValueError("epoch transition result manifest binding mismatch")
+            if payload.get("pool_budgets") != manifest.pool_budgets:
+                raise ValueError("epoch transition pool budgets do not match result manifest")
+            if payload.get("pool_budget_references") != manifest.pool_budget_references:
+                raise ValueError("epoch transition pool budget references do not match result manifest")
+
         pool_budgets = payload.get("pool_budgets")
         if not isinstance(pool_budgets, dict):
             raise ValueError("epoch transition pool budgets are required")
@@ -5070,14 +5186,20 @@ class LedgerOperationService:
             "closing_epoch": closing_epoch,
             "opening_epoch": opening_epoch,
             "pool_budgets": pool_budgets,
+            "manifest": manifest,
         }
 
     def apply_consensus_epoch_transition(
         self,
         envelope: "LedgerOperationEnvelope",
+        *,
+        finalized_operation_ids: set[str] | None = None,
     ) -> dict:
         """Validate and persist one canonical epoch transition."""
-        self.validate_consensus_epoch_transition(envelope)
+        self.validate_consensus_epoch_transition(
+            envelope,
+            finalized_operation_ids=finalized_operation_ids,
+        )
         return self.record_admitted_envelope(
             envelope,
             emitted_events=["EpochTransition"],

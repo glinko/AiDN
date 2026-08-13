@@ -20,6 +20,7 @@ from aidn_hypervisor.consensus.coverage import (
     strict_operation_coverage_error,
     strict_operation_version_error,
 )
+from aidn_hypervisor.consensus.epoch_result_manifest import EpochResultManifest
 from aidn_hypervisor.consensus.epoch_schedule import EpochSchedule
 from aidn_hypervisor.consensus.epoch_transition_inputs import (
     build_epoch_transition_input_report,
@@ -921,6 +922,14 @@ class AIDNABCIApplication:
         opening_epoch = None
         scheduled_end_time = None
         epoch_boundary_reached = False
+        epoch_task_result_root = None
+        eligibility_snapshot_root = None
+        reward_calculation_root = None
+        next_protocol_parameters_hash = None
+        pool_budgets: dict[str, int] = {}
+        pool_budget_references: dict[str, str] = {}
+        epoch_result_manifest_hash = None
+        epoch_result_manifest_operation_id = None
         missing_schedule_inputs: list[str] = []
         if self._epoch_schedule is None:
             missing_schedule_inputs.append("epoch_schedule")
@@ -946,12 +955,55 @@ class AIDNABCIApplication:
                     opening_epoch = boundary.opening_epoch
                     if not boundary.boundary_reached:
                         missing_schedule_inputs.append("epoch_boundary")
+                    else:
+                        manifest_operation = self.ledger.epoch_result_manifest_commitment(
+                            boundary.closing_epoch
+                        )
+                        if manifest_operation is None:
+                            missing_schedule_inputs.append("epoch_result_manifest")
+                        else:
+                            try:
+                                manifest = EpochResultManifest.model_validate(
+                                    (manifest_operation.get("payload") or {}).get("manifest")
+                                )
+                            except Exception:
+                                missing_schedule_inputs.append("epoch_result_manifest_invalid")
+                            else:
+                                manifest_bindings = (
+                                    manifest.epoch_number == boundary.closing_epoch
+                                    and manifest.start_time == active_start_time
+                                    and manifest.scheduled_end_time == scheduled_end_time
+                                    and manifest.protocol_version == self._epoch_schedule.protocol_version
+                                    and manifest.parameter_version == self._epoch_schedule.parameter_version
+                                    and manifest.task_set_version == self._epoch_schedule.task_set_version
+                                    and manifest.epoch_schedule_version == self._epoch_schedule.schema_version
+                                    and manifest.epoch_schedule_hash == self._epoch_schedule.schedule_hash
+                                    and manifest.closing_height == closing_height
+                                    and manifest.closing_time == self._last_block_time
+                                )
+                                if not manifest_bindings:
+                                    missing_schedule_inputs.append("epoch_result_manifest_binding")
+                                else:
+                                    epoch_task_result_root = manifest.task_result_root
+                                    eligibility_snapshot_root = manifest.eligibility_root
+                                    reward_calculation_root = manifest.reward_calculation_root
+                                    next_protocol_parameters_hash = manifest.next_protocol_parameters_hash
+                                    pool_budgets = dict(manifest.pool_budgets)
+                                    pool_budget_references = dict(manifest.pool_budget_references)
+                                    epoch_result_manifest_hash = manifest.manifest_hash
+                                    epoch_result_manifest_operation_id = manifest_operation.get("operation_id")
         return build_epoch_transition_input_report(
             closing_epoch=closing_epoch,
             opening_epoch=opening_epoch,
             closing_height=closing_height,
             closing_block_hash=closing_block_hash,
             closing_state_root=closing_state_root,
+            epoch_task_result_root=epoch_task_result_root,
+            eligibility_snapshot_root=eligibility_snapshot_root,
+            reward_calculation_root=reward_calculation_root,
+            next_protocol_parameters_hash=next_protocol_parameters_hash,
+            pool_budgets=pool_budgets,
+            pool_budget_references=pool_budget_references,
             source_app_hash=source_app_hash,
             epoch_schedule_version=(
                 self._epoch_schedule.schema_version if self._epoch_schedule is not None else None
@@ -962,6 +1014,8 @@ class AIDNABCIApplication:
             canonical_block_time=self._last_block_time,
             scheduled_end_time=scheduled_end_time,
             epoch_boundary_reached=epoch_boundary_reached,
+            epoch_result_manifest_hash=epoch_result_manifest_hash,
+            epoch_result_manifest_operation_id=epoch_result_manifest_operation_id,
             additional_missing_inputs=tuple(missing_schedule_inputs),
         ).model_dump(mode="json")
 
@@ -1276,7 +1330,12 @@ class AIDNABCIApplication:
                     finalized_operation_ids=finalized_operation_ids,
                 )
             elif envelope.operation_type == "EPOCH_TRANSITION":
-                self.ledger.apply_consensus_epoch_transition(envelope)
+                self.ledger.apply_consensus_epoch_transition(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "EPOCH_RESULT_MANIFEST_COMMIT":
+                self.ledger.apply_consensus_epoch_result_manifest(envelope)
             elif envelope.operation_type == "SERVICE_VERIFICATION_COMMIT":
                 self.ledger.apply_consensus_service_verification(envelope)
             elif envelope.operation_type == "REPUTATION_PROFILE_UPDATE":
@@ -1566,7 +1625,12 @@ class AIDNABCIApplication:
                     finalized_operation_ids=finalized_operation_ids,
                 )
             elif envelope.operation_type == "EPOCH_TRANSITION":
-                self.ledger.validate_consensus_epoch_transition(envelope)
+                self.ledger.validate_consensus_epoch_transition(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+            elif envelope.operation_type == "EPOCH_RESULT_MANIFEST_COMMIT":
+                self.ledger.validate_consensus_epoch_result_manifest(envelope)
             elif envelope.operation_type == "SERVICE_VERIFICATION_COMMIT":
                 self.ledger.validate_consensus_service_verification(envelope)
             elif envelope.operation_type == "SNAPSHOT_COMMIT":

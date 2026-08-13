@@ -124,6 +124,7 @@ class ExecutionEngine:
         "CONSENSUS_VALIDATOR_SET_UPDATE": 200,
         "EPOCH_TASK": 150,
         "EPOCH_TRANSITION": 200,
+        "EPOCH_RESULT_MANIFEST_COMMIT": 175,
         "TREASURY_MANIFEST_BIND": 250,
         "TREASURY_FUND": 250,
         "REWARD_MINT": 250,
@@ -330,6 +331,11 @@ class ExecutionEngine:
                             )
                         elif result.envelope.operation_type == "EPOCH_TRANSITION":
                             self.ledger.apply_consensus_epoch_transition(
+                                result.envelope,
+                                finalized_operation_ids=finalized_operation_ids,
+                            )
+                        elif result.envelope.operation_type == "EPOCH_RESULT_MANIFEST_COMMIT":
+                            self.ledger.apply_consensus_epoch_result_manifest(
                                 result.envelope,
                             )
                         elif result.envelope.operation_type == "SERVICE_VERIFICATION_COMMIT":
@@ -1064,7 +1070,10 @@ class ExecutionEngine:
                 )
                 emitted.append("DevelopmentRewardCorrected")
             elif envelope.operation_type == "EPOCH_TRANSITION":
-                self.ledger.validate_consensus_epoch_transition(envelope)
+                self.ledger.validate_consensus_epoch_transition(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
                 state_changes.append(
                     StateChange(
                         entity_type="epoch",
@@ -1077,6 +1086,22 @@ class ExecutionEngine:
                     )
                 )
                 emitted.append("EpochTransition")
+            elif envelope.operation_type == "EPOCH_RESULT_MANIFEST_COMMIT":
+                validation = self.ledger.validate_consensus_epoch_result_manifest(envelope)
+                manifest = validation["manifest"]
+                state_changes.append(
+                    StateChange(
+                        entity_type="epoch_result_manifest",
+                        entity_id=manifest.manifest_hash,
+                        change_type="commit",
+                        after={
+                            "epoch_number": manifest.epoch_number,
+                            "task_result_root": manifest.task_result_root,
+                            "reward_calculation_root": manifest.reward_calculation_root,
+                        },
+                    )
+                )
+                emitted.append("EpochResultManifestCommitted")
             elif envelope.operation_type == "SERVICE_VERIFICATION_COMMIT":
                 self.ledger.validate_consensus_service_verification(envelope)
                 state_changes.append(

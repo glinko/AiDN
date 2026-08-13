@@ -51,6 +51,8 @@ class EpochTransitionInputReport(BaseModel):
     canonical_block_time: str | None = None
     scheduled_end_time: str | None = None
     epoch_boundary_reached: bool = False
+    epoch_result_manifest_hash: str | None = None
+    epoch_result_manifest_operation_id: str | None = None
     missing_inputs: list[str] = Field(default_factory=list)
     reason_code: str | None = None
     report_hash: str
@@ -71,6 +73,8 @@ class EpochTransitionInputReport(BaseModel):
             "epoch_schedule_hash",
             "canonical_block_time",
             "scheduled_end_time",
+            "epoch_result_manifest_hash",
+            "epoch_result_manifest_operation_id",
         ):
             value = getattr(self, name)
             if value is not None and not value.strip():
@@ -144,6 +148,13 @@ class EpochTransitionInputReport(BaseModel):
             "next_epoch_start_time": self.scheduled_end_time,
             "protocol_authority_policy_hash": protocol_authority_policy_hash,
         }
+        if self.epoch_result_manifest_hash and self.epoch_result_manifest_operation_id:
+            payload.update(
+                {
+                    "epoch_result_manifest_hash": self.epoch_result_manifest_hash,
+                    "epoch_result_manifest_operation_id": self.epoch_result_manifest_operation_id,
+                }
+            )
         return payload
 
 
@@ -166,6 +177,8 @@ def build_epoch_transition_input_report(
     canonical_block_time: str | None = None,
     scheduled_end_time: str | None = None,
     epoch_boundary_reached: bool = False,
+    epoch_result_manifest_hash: str | None = None,
+    epoch_result_manifest_operation_id: str | None = None,
     additional_missing_inputs: tuple[str, ...] = (),
 ) -> EpochTransitionInputReport:
     """Build a deterministic READY/BLOCKED report from observed inputs."""
@@ -190,6 +203,8 @@ def build_epoch_transition_input_report(
         "canonical_block_time": canonical_block_time,
         "scheduled_end_time": scheduled_end_time,
         "epoch_boundary_reached": epoch_boundary_reached,
+        "epoch_result_manifest_hash": epoch_result_manifest_hash,
+        "epoch_result_manifest_operation_id": epoch_result_manifest_operation_id,
     }
     required = (
         "closing_epoch",

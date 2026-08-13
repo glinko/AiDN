@@ -61,10 +61,17 @@ validator. A mismatch fails closed; the nodes must not choose a majority
 schedule. The last CometBFT block timestamp is the only accepted time source;
 host wall clocks are not used to close an epoch.
 
-The following remain unavailable until their canonical sources exist:
+The Epoch Engine now publishes these inputs through an immutable,
+consensus-bound `EPOCH_RESULT_MANIFEST_COMMIT`. The manifest is an
+evidence-only object: it does not mint Q, spend a pool, activate parameters or
+replace protocol-authority signatures. It aggregates the exact RFC-0048 roots
+and ECO-0007 pool budget references consumed by a later transition.
 
-- epoch task result root;
-- participant eligibility snapshot root;
+The following remain unavailable until a finalized manifest for the closing
+Epoch exists:
+
+- epoch result manifest;
+- epoch task result root and participant/service eligibility snapshot roots;
 - deterministic reward calculation root;
 - approved next-protocol-parameters hash;
 - pool budgets and their ECO-0007 source references.
@@ -72,6 +79,8 @@ The following remain unavailable until their canonical sources exist:
 These values must be produced by the live Epoch Engine from finalized evidence
 and governance-approved parameters. A local UI balance, a wallet operation or
 the legacy floating-point reward simulator is not an acceptable substitute.
+The manifest must be finalized before the dependent `EPOCH_TRANSITION` block;
+same-block manifest-plus-transition construction is rejected.
 
 ## Next implementation slice
 
@@ -82,7 +91,9 @@ consensus-bound sources for:
 2. frozen evidence and task-result commitments;
 3. participant/service eligibility snapshot;
 4. ECO-0007 reward calculation and integer pool budgets;
-5. the approved next protocol parameter hash.
+5. the approved next protocol parameter hash;
+6. the finalized `EPOCH_RESULT_MANIFEST_COMMIT` and a subsequent
+   authority-signed `EPOCH_TRANSITION`.
 
 Only then should `prepare-authorized-epoch-transition.py` consume the report
 instead of a manually authored payload.
@@ -97,5 +108,8 @@ The boundary slice is complete when:
   `closing_epoch/opening_epoch` pair only at or after scheduled end;
 - a durable restart restores the schedule and last block time;
 - a schedule mismatch fails closed;
-- task, eligibility, reward and parameter roots are still independently
-  supplied by their own canonical producers.
+- a finalized manifest exposes the same roots, schedule bindings and pool
+  budget references on every validator;
+- a transition referencing that manifest is accepted only in a later block;
+- task, eligibility, reward and parameter roots are independently reproducible
+  from the manifest's committed evidence.

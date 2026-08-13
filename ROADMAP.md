@@ -1,8 +1,36 @@
 # AiDN Roadmap
 
-Last updated: `2026-08-12`
+Last updated: `2026-08-13`
 
 This is the main public roadmap for the repository.
+
+## 2026-08-13 Canonical Epoch Result Manifest
+
+Completed in this slice:
+
+- [x] Add the immutable, hash-bound `EPOCH_RESULT_MANIFEST_COMMIT` consensus
+  operation. It records the RFC-0048 evidence roots, schedule bindings,
+  integer ECO-0007 pool budgets and source references without changing Wallet
+  balances or emitting Q.
+- [x] Bind the read-only Epoch Transition Input preflight to the finalized
+  manifest instead of allowing local services to invent task, eligibility,
+  reward or budget roots. The report now exposes the manifest hash and source
+  operation ID for quorum comparison.
+- [x] Require exact manifest binding when a transition references one, and
+  reject a manifest plus dependent transition in the same block in both ABCI
+  and deterministic execution.
+- [x] Add duplicate, hash-integrity, schedule-binding and no-economic-effect
+  coverage in `tests/consensus/test_epoch_result_manifest.py`.
+
+Next required economic-network work:
+
+- [ ] Produce the first live manifest from finalized Epoch Engine evidence on
+  validators `128`, `129` and `130`.
+- [ ] Verify identical manifest roots and operation finality through the
+  quorum preflight, then create the authority-signed `EPOCH_TRANSITION` in a
+  later block.
+- [ ] Re-run the ECO-0007 production batch gate against that finalized epoch
+  pool; this slice does not activate reward payment by itself.
 
 ## 2026-08-12 Protocol Authority Boundary
 

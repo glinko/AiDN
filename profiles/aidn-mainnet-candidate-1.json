@@ -47,6 +47,7 @@
       "DEVELOPMENT_REWARD_PAY_MATURITY",
       "DEVELOPMENT_REWARD_RESERVE",
       "ENDPOINT_PUBLISH",
+      "EPOCH_RESULT_MANIFEST_COMMIT",
       "EPOCH_TASK",
       "EPOCH_TRANSITION",
       "OPERATOR_WALLET_BIND",
@@ -112,6 +113,7 @@
       "DEVELOPMENT_REWARD_PAY_MATURITY",
       "DEVELOPMENT_REWARD_RESERVE",
       "ENDPOINT_PUBLISH",
+      "EPOCH_RESULT_MANIFEST_COMMIT",
       "EPOCH_TRANSITION",
       "OPERATOR_WALLET_BIND",
       "PARTICIPANT_REINSTATE",
@@ -168,6 +170,7 @@
       "DEVELOPMENT_REWARD_PAY_MATURITY",
       "DEVELOPMENT_REWARD_RESERVE",
       "ENDPOINT_PUBLISH",
+      "EPOCH_RESULT_MANIFEST_COMMIT",
       "EPOCH_TRANSITION",
       "OPERATOR_WALLET_BIND",
       "PARTICIPANT_REINSTATE",
@@ -230,7 +233,7 @@
       "VALIDATOR_STAKE",
       "VALIDATOR_UNSTAKE"
     ],
-    "operation_catalog_hash": "sha256:229efefad5afa9c6b2c7bbdb33fe180cfa5d34a7a5c4d18195c9d75cb9923cbe"
+    "operation_catalog_hash": "sha256:80eed9516ce1ff2ec8503d69a071d0d2a9b39681d38eb2d929f8d937cff0d767"
   },
   "state_commitment": {
     "abci_app_hash_version": "aidn-abci-state-hash.v1",
@@ -239,5 +242,5 @@
     "empty_extension_compatibility": "empty post-MVP extensions are omitted from historical AppHash"
   },
   "stable_error_policy": "symbolic deterministic errors; human text is non-consensus",
-  "profile_commitment": "sha256:76944e91a9d270a09919d66bec2793ef58df8a839c2764977f4976457ec2ddbd"
+  "profile_commitment": "sha256:0c57add087ffa51d855f891bc78d2081975604f784e784ca714eaa3c9615323e"
 }

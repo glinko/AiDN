@@ -57,6 +57,12 @@ from aidn_hypervisor.consensus.deployment import (
     CometBftFinalityDeploymentConfig,
     load_cometbft_finality_deployment_config,
 )
+from aidn_hypervisor.consensus.epoch_result_manifest import (
+    EPOCH_RESULT_MANIFEST_OPERATION,
+    EPOCH_RESULT_MANIFEST_VERSION,
+    EpochResultManifest,
+    build_epoch_result_manifest,
+)
 from aidn_hypervisor.consensus.epoch_schedule import (
     EPOCH_SCHEDULE_VERSION,
     EpochBoundary,
@@ -197,6 +203,10 @@ __all__ = [
     "EpochBoundary",
     "EpochSchedule",
     "build_epoch_schedule",
+    "EPOCH_RESULT_MANIFEST_OPERATION",
+    "EPOCH_RESULT_MANIFEST_VERSION",
+    "EpochResultManifest",
+    "build_epoch_result_manifest",
     "build_session_escrow_lock_envelope",
     "build_session_escrow_lock_envelope_from_funding",
     "build_session_failure_evidence_envelope",
