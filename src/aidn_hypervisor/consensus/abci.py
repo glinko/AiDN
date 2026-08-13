@@ -142,9 +142,7 @@ class AIDNABCIApplication:
     ):
         self.ledger = ledger_service
         self.mempool = ABCIMempool()
-        self._admission = admission_validator or AdmissionValidator(
-            current_time=datetime.now(UTC).isoformat()
-        )
+        self._admission = admission_validator or AdmissionValidator(current_time=datetime.now(UTC).isoformat())
         self._genesis_time = genesis_time or datetime.now(UTC).isoformat()
         self._last_block_height = 0
         self._last_block_hash = b"\x00" * 32
@@ -182,9 +180,7 @@ class AIDNABCIApplication:
         if treasury_manifest is not None and persisted_snapshot is None:
             genesis_accounts = dict(genesis_accounts or {})
             treasury_accounts = (
-                treasury_manifest.genesis_accounts()
-                if treasury_manifest.funding_mode == "GENESIS"
-                else {}
+                treasury_manifest.genesis_accounts() if treasury_manifest.funding_mode == "GENESIS" else {}
             )
             for wallet_id, amount in treasury_accounts.items():
                 existing = genesis_accounts.get(wallet_id)
@@ -226,10 +222,7 @@ class AIDNABCIApplication:
         if projection is None:
             return
         restored = EpochSchedule.model_validate(projection["epoch_schedule"])
-        if (
-            self._epoch_schedule is not None
-            and self._epoch_schedule.schedule_hash != restored.schedule_hash
-        ):
+        if self._epoch_schedule is not None and self._epoch_schedule.schedule_hash != restored.schedule_hash:
             raise ValueError("canonical epoch schedule does not match configured schedule")
         self._epoch_schedule = restored
 
@@ -296,44 +289,32 @@ class AIDNABCIApplication:
                 if not isinstance(operation, dict) or not operation.get("operation_id"):
                     raise ABCIStateStoreError("ABCI Ledger operation is invalid")
                 operation_id = str(operation["operation_id"])
-                result[operation_id] = {
-                    key: value for key, value in operation.items() if key != "transaction_hash"
-                }
+                result[operation_id] = {key: value for key, value in operation.items() if key != "transaction_hash"}
             return result
 
         local_by_id = normalized_operations(local_operations)
         durable_by_id = normalized_operations(durable_operations)
         for operation_id, operation in local_by_id.items():
             if durable_by_id.get(operation_id) != operation:
-                raise ABCIStateStoreError(
-                    "local Hypervisor Ledger contains operations absent from durable ABCI state"
-                )
+                raise ABCIStateStoreError("local Hypervisor Ledger contains operations absent from durable ABCI state")
         if any(
             operation.get("operation_type") == "ENDPOINT_UPDATE"
             for operation in durable_operations
             if isinstance(operation, dict)
         ):
-            raise ABCIStateStoreError(
-                "durable ABCI state contains a non-canonical Endpoint update"
-            )
+            raise ABCIStateStoreError("durable ABCI state contains a non-canonical Endpoint update")
 
         current_projection = self.prepare_snapshot()
         if current_projection["wallet_sequences"] != snapshot.get("wallet_sequences", {}):
-            raise ABCIStateStoreError(
-                "local Hypervisor Ledger wallet sequences do not match durable ABCI state"
-            )
+            raise ABCIStateStoreError("local Hypervisor Ledger wallet sequences do not match durable ABCI state")
         current_settlement = dict(current_projection["settlement_state"])
         durable_settlement = dict(snapshot.get("settlement_state", {}))
         current_ready = current_settlement.pop("settlement_ready_commits", [])
         durable_ready = durable_settlement.pop("settlement_ready_commits", [])
         if current_settlement != durable_settlement:
-            raise ABCIStateStoreError(
-                "local Hypervisor Ledger settlement state does not match durable ABCI state"
-            )
+            raise ABCIStateStoreError("local Hypervisor Ledger settlement state does not match durable ABCI state")
         if current_ready not in ([], durable_ready):
-            raise ABCIStateStoreError(
-                "local Hypervisor Ledger checkpoint state does not match durable ABCI state"
-            )
+            raise ABCIStateStoreError("local Hypervisor Ledger checkpoint state does not match durable ABCI state")
         current_consensus = current_projection.get("consensus_state") or {}
         durable_consensus = snapshot.get("consensus_state") or {}
         current_has_consensus_state = bool(
@@ -342,9 +323,7 @@ class AIDNABCIApplication:
             or current_consensus.get("activated_validator_set_epochs")
         )
         if current_has_consensus_state and current_consensus != durable_consensus:
-            raise ABCIStateStoreError(
-                "local Hypervisor Ledger consensus state does not match durable ABCI state"
-            )
+            raise ABCIStateStoreError("local Hypervisor Ledger consensus state does not match durable ABCI state")
 
         result = self.apply_snapshot(snapshot)
         if result.code != "ok":
@@ -562,9 +541,7 @@ class AIDNABCIApplication:
         selected: list[bytes] = []
         selected_ids: set[str] = set()
         total_bytes = 0
-        preexisting_epoch_schedule_commit = (
-            self.ledger.epoch_schedule_commitment() is not None
-        )
+        preexisting_epoch_schedule_commit = self.ledger.epoch_schedule_commitment() is not None
         block_contains_epoch_schedule_commit = self._block_contains_epoch_schedule_commit(txs)
         for tx_data in txs:
             try:
@@ -602,9 +579,7 @@ class AIDNABCIApplication:
         """Validate a proposed block without changing application state."""
         operation_ids: set[str] = set()
         finalized_operation_ids = self._finalized_operation_ids()
-        preexisting_epoch_schedule_commit = (
-            self.ledger.epoch_schedule_commitment() is not None
-        )
+        preexisting_epoch_schedule_commit = self.ledger.epoch_schedule_commitment() is not None
         block_contains_epoch_schedule_commit = self._block_contains_epoch_schedule_commit(txs)
         for tx_data in txs:
             try:
@@ -696,9 +671,7 @@ class AIDNABCIApplication:
         tx_results: list[ABCIResult] = []
         events = []
         finalized_operation_ids = self._finalized_operation_ids()
-        preexisting_epoch_schedule_commit = (
-            self.ledger.epoch_schedule_commitment() is not None
-        )
+        preexisting_epoch_schedule_commit = self.ledger.epoch_schedule_commitment() is not None
         block_contains_epoch_schedule_commit = False
         for tx_data in txs:
             try:
@@ -814,9 +787,7 @@ class AIDNABCIApplication:
                         rollback_note += "; durable rollback failed"
                 self._pending_commit_snapshot = None
                 self._pending_commit_admission_state = None
-                raise ABCIStateStoreError(
-                    f"durable state persistence failed: {error}{rollback_note}"
-                ) from error
+                raise ABCIStateStoreError(f"durable state persistence failed: {error}{rollback_note}") from error
             self._pending_commit_snapshot = None
             self._pending_commit_admission_state = None
 
@@ -918,9 +889,7 @@ class AIDNABCIApplication:
                 "policy_hash": policy.policy_hash if configured else None,
                 "threshold": policy.threshold if configured else None,
                 "authority_count": len(policy.authorities) if configured else 0,
-                "epoch_transition_mode": (
-                    "THRESHOLD_AUTHORIZED" if configured else "FAIL_CLOSED"
-                ),
+                "epoch_transition_mode": ("THRESHOLD_AUTHORIZED" if configured else "FAIL_CLOSED"),
             }
             kwargs["key"] = b"protocol:authority-policy"
             kwargs["value"] = json.dumps(
@@ -950,11 +919,7 @@ class AIDNABCIApplication:
                 epoch_number = int(raw_epoch)
             except ValueError:
                 epoch_number = -1
-            projection = (
-                self.ledger.epoch_result_manifest_projection(epoch_number)
-                if epoch_number >= 0
-                else None
-            )
+            projection = self.ledger.epoch_result_manifest_projection(epoch_number) if epoch_number >= 0 else None
             kwargs["key"] = f"epoch:result-manifest:{raw_epoch}".encode()
             kwargs["value"] = (
                 json.dumps(projection, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -1007,13 +972,9 @@ class AIDNABCIApplication:
         live Epoch Engine publishes those artifacts.
         """
         closing_height = self._last_block_height or None
-        closing_block_hash = (
-            "sha256:" + self._last_block_hash.hex() if closing_height is not None else None
-        )
+        closing_block_hash = "sha256:" + self._last_block_hash.hex() if closing_height is not None else None
         closing_state_root = (
-            "sha256:" + compute_execution_state_root(self.ledger)
-            if closing_height is not None
-            else None
+            "sha256:" + compute_execution_state_root(self.ledger) if closing_height is not None else None
         )
         source_app_hash = "sha256:" + self._app_hash.hex() if self._app_hash else None
         closing_epoch = None
@@ -1058,9 +1019,7 @@ class AIDNABCIApplication:
                     if not boundary.boundary_reached:
                         missing_schedule_inputs.append("epoch_boundary")
                     else:
-                        manifest_operation = self.ledger.epoch_result_manifest_commitment(
-                            boundary.closing_epoch
-                        )
+                        manifest_operation = self.ledger.epoch_result_manifest_commitment(boundary.closing_epoch)
                         if manifest_operation is None:
                             missing_schedule_inputs.append("epoch_result_manifest")
                         else:
@@ -1124,12 +1083,8 @@ class AIDNABCIApplication:
             next_protocol_parameters_hash=next_protocol_parameters_hash,
             pool_budgets=pool_budgets,
             pool_budget_references=pool_budget_references,
-            epoch_schedule_version=(
-                self._epoch_schedule.schema_version if self._epoch_schedule is not None else None
-            ),
-            epoch_schedule_hash=(
-                self._epoch_schedule.schedule_hash if self._epoch_schedule is not None else None
-            ),
+            epoch_schedule_version=(self._epoch_schedule.schema_version if self._epoch_schedule is not None else None),
+            epoch_schedule_hash=(self._epoch_schedule.schedule_hash if self._epoch_schedule is not None else None),
             epoch_schedule_commit_operation_id=epoch_schedule_commit_operation_id,
             epoch_schedule_commit_sequence_id=epoch_schedule_commit_sequence_id,
             epoch_schedule_commit_record_digest=epoch_schedule_commit_record_digest,
@@ -1166,11 +1121,7 @@ class AIDNABCIApplication:
             return 0, self._epoch_schedule.genesis_start_time, "active_epoch_transition_payload"
         opening_epoch = payload.get("opening_epoch")
         next_start = payload.get("next_epoch_start_time")
-        if (
-            isinstance(opening_epoch, bool)
-            or not isinstance(opening_epoch, int)
-            or opening_epoch < 0
-        ):
+        if isinstance(opening_epoch, bool) or not isinstance(opening_epoch, int) or opening_epoch < 0:
             return 0, self._epoch_schedule.genesis_start_time, "active_epoch_transition_epoch"
         if not isinstance(next_start, str) or not next_start.strip():
             return opening_epoch, self._epoch_schedule.genesis_start_time, "active_epoch_start_time"
@@ -1230,9 +1181,7 @@ class AIDNABCIApplication:
             raise ValueError("snapshot application version is unsupported")
         snapshot_manifest = snapshot.get("genesis_treasury_manifest")
         if snapshot_manifest is not None:
-            manifest = validate_faucet_treasury_manifest(
-                FaucetTreasuryManifest.model_validate(snapshot_manifest)
-            )
+            manifest = validate_faucet_treasury_manifest(FaucetTreasuryManifest.model_validate(snapshot_manifest))
             if (
                 self._genesis_treasury_manifest is not None
                 and self._genesis_treasury_manifest["manifest_hash"] != manifest.manifest_hash
@@ -1458,6 +1407,20 @@ class AIDNABCIApplication:
                         key="reason",
                         value="epoch transition cannot depend on same-block epoch schedule commit",
                     ),
+                ],
+            )
+
+        special_error = self._special_operation_error(
+            envelope,
+            finalized_operation_ids=finalized_operation_ids,
+        )
+        if special_error is not None:
+            return ABCIResult(
+                code="rejected",
+                log=special_error,
+                tags=[
+                    ABCITag(key="operation_id", value=envelope.operation_id),
+                    ABCITag(key="reason", value=special_error),
                 ],
             )
 
@@ -1739,9 +1702,7 @@ class AIDNABCIApplication:
         """
 
         operation_ids = (
-            finalized_operation_ids
-            if finalized_operation_ids is not None
-            else self._finalized_operation_ids()
+            finalized_operation_ids if finalized_operation_ids is not None else self._finalized_operation_ids()
         )
         if envelope.operation_id not in operation_ids:
             return None
@@ -2037,8 +1998,7 @@ class AIDNABCIApplication:
         if self.ledger.epoch_schedule_rebase_commitment() is not None:
             return None
         if any(
-            operation.get("operation_type") == "EPOCH_TRANSITION"
-            for operation in self.ledger.snapshot_operations()
+            operation.get("operation_type") == "EPOCH_TRANSITION" for operation in self.ledger.snapshot_operations()
         ):
             return None
         try:

@@ -388,6 +388,14 @@ def test_late_schedule_cannot_start_epoch_activity_without_authorized_rebase() -
     check = app.check_transaction(signed.consensus_bytes())
     assert check.code == "rejected"
     assert check.log == "epoch schedule activation is required before epoch activity"
+    _, finalized = app.finalize_block_with_results(
+        block_height=2,
+        block_hash=b"Z" * 32,
+        txs=[signed.consensus_bytes()],
+        time="2030-01-01T00:02:01Z",
+    )
+    assert finalized[0].code == "rejected"
+    assert finalized[0].log == "epoch schedule activation is required before epoch activity"
 
 
 def test_rebased_epoch_zero_manifest_requires_exact_rebase_evidence() -> None:
