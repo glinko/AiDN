@@ -30,6 +30,12 @@ def _parser() -> argparse.ArgumentParser:
         help="independent signature artifact; repeat until threshold is met",
     )
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--quorum-report",
+        type=Path,
+        help="required for a quorum-bound envelope",
+    )
+    parser.add_argument("--expected-chain-id")
     return parser
 
 
@@ -60,10 +66,21 @@ def main() -> int:
         if authority_id in signatures:
             raise ValueError(f"duplicate authority signature: {authority_id}")
         signatures[authority_id] = signature
+    quorum_report = _object(args.quorum_report) if args.quorum_report is not None else None
+    if quorum_report is None and any(
+        key in envelope.payload
+        for key in (
+            "epoch_transition_quorum_version",
+            "epoch_transition_quorum_hash",
+        )
+    ):
+        raise ValueError("--quorum-report is required for a quorum-bound envelope")
     signed = combine_epoch_transition_signatures(
         envelope,
         policy=policy,
         signatures=signatures,
+        quorum_report=quorum_report,
+        expected_chain_id=args.expected_chain_id,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
@@ -79,6 +96,7 @@ def main() -> int:
                 "authority_ids": sorted(signatures),
                 "output": str(args.output),
                 "broadcast": False,
+                "quorum_bound": quorum_report is not None,
             },
             sort_keys=True,
         )

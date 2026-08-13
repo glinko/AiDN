@@ -70,6 +70,11 @@ from aidn_hypervisor.consensus.epoch_schedule import (
     EpochSchedule,
     build_epoch_schedule,
 )
+from aidn_hypervisor.consensus.epoch_transition import (
+    build_signed_epoch_transition_from_quorum,
+    build_unsigned_epoch_transition_from_quorum,
+    validate_quorum_bound_epoch_transition,
+)
 from aidn_hypervisor.consensus.epoch_transition_inputs import (
     EPOCH_TRANSITION_INPUT_REPORT_VERSION,
     EPOCH_TRANSITION_INPUTS_NOT_READY,
@@ -210,6 +215,9 @@ __all__ = [
     "EpochTransitionQuorumReport",
     "collect_epoch_transition_quorum",
     "epoch_transition_quorum_hash",
+    "build_signed_epoch_transition_from_quorum",
+    "build_unsigned_epoch_transition_from_quorum",
+    "validate_quorum_bound_epoch_transition",
     "EPOCH_SCHEDULE_VERSION",
     "EpochBoundary",
     "EpochSchedule",

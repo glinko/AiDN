@@ -8,11 +8,14 @@ authority boundary rollout. It is an offline builder only.
 `tools/build-authorized-epoch-transition.py`:
 
 - reads a public protocol-authority policy;
-- reads a caller-supplied canonical transition payload;
+- reads either a caller-supplied legacy transition payload or a hash-bound
+  `READY` quorum report;
 - reads external Ed25519 private-key files only for signing;
 - verifies that every private key controls the declared authority public key;
 - requires the configured threshold;
-- validates the payload through the same Ledger epoch-transition validator;
+- validates the payload through the same Ledger epoch-transition rules. A
+  quorum-bound artifact additionally requires the exact report when it is
+  signed or combined;
 - writes a signed envelope for later consensus submission.
 
 It does **not**:
@@ -26,6 +29,46 @@ It does **not**:
 Private key files must remain outside the repository and must be protected by
 the operator's secret-management procedure. The tool prints only operation ID,
 policy hash, signer IDs and output path.
+
+## Quorum-bound production path
+
+The production path starts with the multi-validator preflight. Save its JSON
+output without editing it:
+
+```text
+uv run python tools/query-epoch-transition-inputs.py \
+  --rpc-url http://192.168.88.128:26657 \
+  --rpc-url http://192.168.88.129:26657 \
+  --rpc-url http://192.168.88.130:26657 \
+  > /secure/aidn/epoch-20-quorum.json
+```
+
+The command exits with `2` until a complete validator quorum is available.
+Only a report whose `status` is `READY`, whose `quorum_hash` verifies, and
+whose manifest finality reference is identical on the required validators may
+be used below. The builder copies the typed report fields; it does not accept
+an operator-edited payload alongside the report.
+
+```text
+uv run python tools/build-authorized-epoch-transition.py \
+  --policy /secure/aidn/protocol-authority.json \
+  --quorum-report /secure/aidn/epoch-20-quorum.json \
+  --expected-chain-id chain-Anm7Jk \
+  --signer governance-1=/secure/keys/governance-1.seed \
+  --signer governance-2=/secure/keys/governance-2.seed \
+  --created-at 2030-01-01T00:02:00Z \
+  --expires-at 2030-01-02T00:00:00Z \
+  --output /secure/aidn/epoch-20-transition.signed.json
+```
+
+For independent signing, prepare the unsigned artifact with
+`tools/prepare-authorized-epoch-transition.py --quorum-report`, then pass the
+same immutable report to every invocation of
+`tools/sign-authorized-epoch-transition.py --quorum-report`. The combiner also
+requires that report. A quorum-bound envelope cannot be signed or combined
+without it, and a changed report is rejected. The final validator still
+performs its own local check that the referenced manifest operation is
+finalized; an external report never replaces that check.
 
 ## Policy artifact
 
@@ -75,7 +118,7 @@ The builder adds `protocol_authority_policy_hash` before signing. It requires
 `opening_epoch == closing_epoch + 1`, a protocol-origin envelope, and all
 canonical Ledger roots and pool references.
 
-## Offline build
+## Legacy offline build
 
 ```text
 uv run python tools/build-authorized-epoch-transition.py \
@@ -88,16 +131,19 @@ uv run python tools/build-authorized-epoch-transition.py \
   --output /secure/aidn/epoch-20-transition.signed.json
 ```
 
-Inspect and independently reproduce the operation ID, policy hash and
-signature quorum before any broadcast. The next submission step must use the
-existing canonical consensus transport and wait for multi-RPC finality. A
-single-node `CheckTx` response is not finality.
+The payload mode above remains for compatibility and fixtures. It is not the
+production path for a manifest-backed transition because it permits a caller
+to supply roots directly. Inspect and independently reproduce the operation
+ID, policy hash and signature quorum before any broadcast. The next submission
+step must use the existing canonical consensus transport and wait for
+multi-RPC finality. A single-node `CheckTx` response is not finality.
 
 ## Current localnet gate
 
-The localnet does not yet have an approved authority policy artifact or a
-finalized epoch-engine payload. Therefore this builder is implemented and
-tested, but no live `EPOCH_TRANSITION` should be created or submitted yet. The
-next acceptance record must include the identical policy hash on all three
-validators, finalized transition evidence, and a `READY` ECO-0007 quorum
-preflight before a reward batch is built.
+The localnet does not yet expose a `READY` epoch-engine report: the live
+validators currently return an unknown `epoch/transition-inputs` query. The
+quorum-bound builder and independent signing path are implemented and tested,
+but no live `EPOCH_TRANSITION` should be created or submitted yet. The next
+acceptance record must include the identical policy hash on all three
+validators, a finalized manifest, a `READY` quorum preflight, authority
+signatures and later-block finality before a reward batch is built.

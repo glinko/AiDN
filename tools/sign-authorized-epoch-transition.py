@@ -26,8 +26,21 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--policy", required=True, type=Path)
     parser.add_argument("--authority-id", required=True)
     parser.add_argument("--private-key", required=True, type=Path)
+    parser.add_argument(
+        "--quorum-report",
+        type=Path,
+        help="required for a quorum-bound envelope",
+    )
+    parser.add_argument("--expected-chain-id")
     parser.add_argument("--output", required=True, type=Path)
     return parser
+
+
+def _object(path: Path) -> dict[str, object]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return value
 
 
 def main() -> int:
@@ -40,12 +53,24 @@ def main() -> int:
     )
     if envelope.signatures:
         raise ValueError("signer input envelope must not already contain signatures")
-    LedgerOperationService().validate_consensus_epoch_transition(envelope)
+    quorum_report = _object(args.quorum_report) if args.quorum_report is not None else None
+    if quorum_report is None and any(
+        key in envelope.payload
+        for key in (
+            "epoch_transition_quorum_version",
+            "epoch_transition_quorum_hash",
+        )
+    ):
+        raise ValueError("--quorum-report is required for a quorum-bound envelope")
+    if quorum_report is None:
+        LedgerOperationService().validate_consensus_epoch_transition(envelope)
     signature = sign_epoch_transition_signature(
         envelope,
         policy=policy,
         authority_id=args.authority_id,
         private_key=load_protocol_authority_private_key(args.private_key),
+        quorum_report=quorum_report,
+        expected_chain_id=args.expected_chain_id,
     )
     artifact = {
         "artifact_version": "aidn.epoch-transition-signature.v1",
@@ -65,6 +90,7 @@ def main() -> int:
                 "output": str(args.output),
                 "private_key_exported": False,
                 "broadcast": False,
+                "quorum_bound": quorum_report is not None,
             },
             sort_keys=True,
         )

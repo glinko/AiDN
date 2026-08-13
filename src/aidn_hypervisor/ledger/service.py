@@ -5132,6 +5132,30 @@ class LedgerOperationService:
             "epoch_result_manifest_hash",
             "epoch_result_manifest_operation_id",
         }
+        quorum_fields = {
+            "epoch_transition_quorum_version",
+            "epoch_transition_quorum_hash",
+            "epoch_result_manifest_sequence_id",
+            "epoch_result_manifest_record_digest",
+        }
+        supplied_quorum_fields = quorum_fields & set(payload)
+        if supplied_quorum_fields:
+            if supplied_quorum_fields != quorum_fields:
+                raise ValueError("epoch transition quorum evidence is incomplete")
+            if payload["epoch_transition_quorum_version"] != "aidn.epoch-transition-quorum.v1":
+                raise ValueError("epoch transition quorum evidence version is invalid")
+            if (
+                not isinstance(payload["epoch_transition_quorum_hash"], str)
+                or not payload["epoch_transition_quorum_hash"].strip()
+            ):
+                raise ValueError("epoch transition quorum evidence hash is invalid")
+            if not manifest_fields <= set(payload):
+                raise ValueError("epoch transition quorum evidence requires manifest linkage")
+            if not {
+                payload["epoch_transition_quorum_hash"],
+                payload["epoch_result_manifest_operation_id"],
+            } <= set(envelope.evidence_references):
+                raise ValueError("epoch transition quorum evidence references are incomplete")
         supplied_manifest_fields = manifest_fields & set(payload)
         if supplied_manifest_fields:
             if supplied_manifest_fields != manifest_fields:
@@ -5194,6 +5218,23 @@ class LedgerOperationService:
                 raise ValueError("epoch transition pool budgets do not match result manifest")
             if payload.get("pool_budget_references") != manifest.pool_budget_references:
                 raise ValueError("epoch transition pool budget references do not match result manifest")
+
+            reference_fields = {
+                "epoch_result_manifest_sequence_id",
+                "epoch_result_manifest_record_digest",
+            }
+            supplied_reference_fields = reference_fields & set(payload)
+            if supplied_reference_fields:
+                if supplied_reference_fields != reference_fields:
+                    raise ValueError("epoch transition manifest finality reference is incomplete")
+                reference = self.finalized_operation_reference(manifest_operation_id)
+                if reference is None:
+                    raise ValueError("epoch transition manifest finality reference is unavailable")
+                if (
+                    payload["epoch_result_manifest_sequence_id"] != reference["sequence_id"]
+                    or payload["epoch_result_manifest_record_digest"] != reference["record_digest"]
+                ):
+                    raise ValueError("epoch transition manifest finality reference does not match")
 
         pool_budgets = payload.get("pool_budgets")
         if not isinstance(pool_budgets, dict):

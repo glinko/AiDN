@@ -104,6 +104,25 @@ the legacy floating-point reward simulator is not an acceptable substitute.
 The manifest must be finalized before the dependent `EPOCH_TRANSITION` block;
 same-block manifest-plus-transition construction is rejected.
 
+## Quorum-bound transition artifact
+
+The report can now feed the offline authority path directly. Use
+`--quorum-report` with `prepare-authorized-epoch-transition.py` or
+`build-authorized-epoch-transition.py`; do not copy roots into a separate
+payload file. The resulting envelope carries:
+
+- the exact typed transition payload from the `READY` report;
+- the quorum schema version and `quorum_hash`;
+- the finalized manifest `sequence_id` and `record_digest`;
+- evidence references for the manifest operation and quorum report.
+
+Independent signers and the signature combiner must receive the same report.
+They reject a quorum-bound envelope without it or with a mismatching report.
+This is still an offline evidence boundary: the receiving ABCI application
+must independently find the manifest in its own finalized operation registry,
+verify its hash and all historical bindings, and reject a same-block
+manifest-plus-transition attempt.
+
 ## Next implementation slice
 
 The next slice can make the report `READY` only after adding canonical,
@@ -115,10 +134,9 @@ consensus-bound sources for:
 4. ECO-0007 reward calculation and integer pool budgets;
 5. the approved next protocol parameter hash;
 6. the finalized `EPOCH_RESULT_MANIFEST_COMMIT` and a subsequent
-   authority-signed `EPOCH_TRANSITION`.
-
-Only then should `prepare-authorized-epoch-transition.py` consume the report
-instead of a manually authored payload.
+   authority-signed `EPOCH_TRANSITION`;
+7. canonical consensus submission and multi-RPC finality evidence for the
+   first live transition.
 
 ## Acceptance checks
 

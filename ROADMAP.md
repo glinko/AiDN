@@ -29,11 +29,37 @@ Next required live-network work:
 - [ ] Run the quorum collector against validators `128`, `129` and `130` and
   archive the sanitized evidence only after all three nodes expose the same
   finalized manifest reference.
-- [ ] Build the exact authority-signed `EPOCH_TRANSITION` payload from the
-  `READY` report and submit it in a later block through the canonical consensus
-  path; no local UI or agent may invent the roots or pool budget.
+- [ ] Use the quorum-bound builder to create the exact authority-signed
+  `EPOCH_TRANSITION` from a real `READY` report, then submit it in a later
+  block through the canonical consensus path; no local UI or agent may invent
+  the roots or pool budget.
 - [ ] Re-run the quorum gate after transition finality, then execute the first
   independently reproducible ECO-0007 production reward batch.
+
+## 2026-08-13 Quorum-bound Epoch Transition Artifact
+
+Completed in this slice:
+
+- [x] Add a builder that derives the transition payload only from a validated
+  `READY` multi-validator quorum report; hand-authored roots and pool budgets
+  are not accepted on this path.
+- [x] Bind the unsigned envelope to the quorum schema/hash, finalized manifest
+  sequence and record digest, plus explicit evidence references.
+- [x] Require the same hash-bound quorum report for independent signing and
+  signature combination. A signer cannot treat an external report as a
+  substitute for the validator's own local manifest finality check.
+- [x] Add CLI support to prepare, sign, combine and build quorum-bound
+  artifacts with optional expected chain identity.
+- [x] Preserve the legacy payload builder for compatibility and fixtures while
+  documenting it as non-production for manifest-backed transitions.
+
+Next required live-network work:
+
+- [ ] Deploy the epoch transition-input query and manifest projection to the
+  validator set, then obtain a real `READY` report.
+- [ ] Produce and independently verify the authority-signed transition from
+  that report, submit it through canonical consensus and archive multi-RPC
+  finality evidence.
 
 ## 2026-08-13 Canonical Epoch Result Manifest
 

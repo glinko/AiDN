@@ -10,10 +10,14 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from aidn_hypervisor.consensus.epoch_transition_quorum import (
+    EpochTransitionQuorumReport,
+)
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.consensus.protocol_authority import (
     EPOCH_TRANSITION_AUTHORITY_HASH_FIELD,
@@ -21,6 +25,23 @@ from aidn_hypervisor.consensus.protocol_authority import (
     normalize_ed25519_public_key,
 )
 from aidn_hypervisor.ledger.service import LedgerOperationService
+
+_QUORUM_BOUND_FIELDS = frozenset(
+    {
+        "epoch_transition_quorum_version",
+        "epoch_transition_quorum_hash",
+        "epoch_result_manifest_sequence_id",
+        "epoch_result_manifest_record_digest",
+    }
+)
+_MANIFEST_BINDING_FIELDS = frozenset(
+    {
+        "epoch_result_manifest_hash",
+        "epoch_result_manifest_operation_id",
+        "epoch_result_manifest_sequence_id",
+        "epoch_result_manifest_record_digest",
+    }
+)
 
 
 def load_protocol_authority_private_key(path: Path) -> Ed25519PrivateKey:
@@ -60,6 +81,8 @@ def sign_epoch_transition(
     *,
     policy: ProtocolAuthorityPolicy,
     signers: Mapping[str, Ed25519PrivateKey],
+    quorum_report: EpochTransitionQuorumReport | Mapping[str, Any] | None = None,
+    expected_chain_id: str | None = None,
 ) -> LedgerOperationEnvelope:
     """Return an envelope signed by distinct policy authorities.
 
@@ -81,6 +104,8 @@ def sign_epoch_transition(
             policy=policy,
             authority_id=authority_id,
             private_key=key,
+            quorum_report=quorum_report,
+            expected_chain_id=expected_chain_id,
         )
         for authority_id, key in signers.items()
     }
@@ -88,6 +113,8 @@ def sign_epoch_transition(
         envelope,
         policy=policy,
         signatures=signatures,
+        quorum_report=quorum_report,
+        expected_chain_id=expected_chain_id,
     )
 
 
@@ -100,6 +127,7 @@ def build_unsigned_epoch_transition(
     initiator_id: str = "epoch-engine",
     operation_version: str = "1.0.0",
     protocol_version: str = "0.1",
+    evidence_references: list[str] | None = None,
 ) -> LedgerOperationEnvelope:
     """Build the exact unsigned envelope that independent signers receive."""
     transition_payload = dict(payload)
@@ -122,9 +150,157 @@ def build_unsigned_epoch_transition(
         expires_at=expires_at,
         target_epoch=str(closing_epoch),
         payload=transition_payload,
+        evidence_references=sorted(set(evidence_references or [])),
     )
     LedgerOperationService().validate_consensus_epoch_transition(unsigned)
     return unsigned
+
+
+def build_unsigned_epoch_transition_from_quorum(
+    *,
+    policy: ProtocolAuthorityPolicy,
+    quorum_report: EpochTransitionQuorumReport | Mapping[str, Any],
+    created_at: str,
+    expires_at: str | None = None,
+    initiator_id: str = "epoch-engine",
+    operation_version: str = "1.0.0",
+    protocol_version: str = "0.1",
+    expected_chain_id: str | None = None,
+) -> LedgerOperationEnvelope:
+    """Build a transition only from a finalized, hash-bound READY quorum.
+
+    The quorum report is an external read-only evidence artifact. This helper
+    copies the typed transition payload from it and binds the quorum hash plus
+    the manifest's finalized operation reference into the signed envelope. It
+    never queries, signs or broadcasts a transaction.
+    """
+    quorum = (
+        quorum_report
+        if isinstance(quorum_report, EpochTransitionQuorumReport)
+        else EpochTransitionQuorumReport.model_validate(quorum_report)
+    )
+    if not quorum.verify_integrity():
+        raise ValueError("epoch transition quorum report integrity is invalid")
+    if quorum.status != "READY" or quorum.report is None:
+        raise ValueError("epoch transition quorum report is not READY")
+    if expected_chain_id is not None and quorum.chain_id != expected_chain_id:
+        raise ValueError("epoch transition quorum chain ID does not match expected chain")
+    if quorum.manifest_sequence_id is None or not quorum.manifest_record_digest:
+        raise ValueError("epoch transition quorum finality reference is incomplete")
+
+    payload = quorum.report.transition_payload(
+        protocol_authority_policy_hash=policy.policy_hash,
+    )
+    payload.update(
+        {
+            "epoch_transition_quorum_version": quorum.schema_version,
+            "epoch_transition_quorum_hash": quorum.quorum_hash,
+            "epoch_result_manifest_sequence_id": quorum.manifest_sequence_id,
+            "epoch_result_manifest_record_digest": quorum.manifest_record_digest,
+        }
+    )
+    envelope = LedgerOperationEnvelope(
+        operation_type="EPOCH_TRANSITION",
+        operation_version=operation_version,
+        protocol_version=protocol_version,
+        origin_type="protocol",
+        initiator_id=initiator_id,
+        fee_class="protocol_sponsored",
+        created_at=created_at,
+        expires_at=expires_at,
+        target_epoch=str(quorum.report.closing_epoch),
+        payload=payload,
+        evidence_references=sorted(
+            {quorum.manifest_operation_id, quorum.quorum_hash}
+        ),
+    )
+    validate_quorum_bound_epoch_transition(
+        envelope,
+        policy=policy,
+        quorum_report=quorum,
+        expected_chain_id=expected_chain_id,
+    )
+    return envelope
+
+
+def _coerce_quorum_report(
+    quorum_report: EpochTransitionQuorumReport | Mapping[str, Any],
+) -> EpochTransitionQuorumReport:
+    return (
+        quorum_report
+        if isinstance(quorum_report, EpochTransitionQuorumReport)
+        else EpochTransitionQuorumReport.model_validate(quorum_report)
+    )
+
+
+def _is_quorum_bound(envelope: LedgerOperationEnvelope) -> bool:
+    return bool(_QUORUM_BOUND_FIELDS & set(envelope.payload))
+
+
+def validate_quorum_bound_epoch_transition(
+    envelope: LedgerOperationEnvelope,
+    *,
+    policy: ProtocolAuthorityPolicy,
+    quorum_report: EpochTransitionQuorumReport | Mapping[str, Any],
+    expected_chain_id: str | None = None,
+) -> None:
+    """Validate an unsigned transition against one exact READY quorum report.
+
+    This is an offline evidence check. It does not claim that the manifest is
+    present in a local Ledger; the receiving ABCI application performs that
+    independent local-finality check before admission.
+    """
+    quorum = _coerce_quorum_report(quorum_report)
+    if not quorum.verify_integrity():
+        raise ValueError("epoch transition quorum report integrity is invalid")
+    if quorum.status != "READY" or quorum.report is None:
+        raise ValueError("epoch transition quorum report is not READY")
+    if expected_chain_id is not None and quorum.chain_id != expected_chain_id:
+        raise ValueError("epoch transition quorum chain ID does not match expected chain")
+    if not _is_quorum_bound(envelope):
+        raise ValueError("epoch transition envelope is not quorum-bound")
+    if envelope.signatures:
+        raise ValueError("epoch transition quorum input must be unsigned")
+
+    expected_payload = quorum.report.transition_payload(
+        protocol_authority_policy_hash=policy.policy_hash,
+    )
+    expected_payload.update(
+        {
+            "epoch_transition_quorum_version": quorum.schema_version,
+            "epoch_transition_quorum_hash": quorum.quorum_hash,
+            "epoch_result_manifest_sequence_id": quorum.manifest_sequence_id,
+            "epoch_result_manifest_record_digest": quorum.manifest_record_digest,
+        }
+    )
+    if envelope.payload != expected_payload:
+        raise ValueError("epoch transition payload does not match quorum report")
+
+    expected_references = sorted(
+        {quorum.manifest_operation_id, quorum.quorum_hash}
+    )
+    if envelope.evidence_references != expected_references:
+        raise ValueError("epoch transition evidence references do not match quorum report")
+
+    # Reuse the canonical Ledger checks that do not require looking up the
+    # external manifest. The ABCI application repeats those checks with the
+    # local finalized operation registry and validates the manifest binding.
+    detached_payload = {
+        key: value
+        for key, value in envelope.payload.items()
+        if key not in (_MANIFEST_BINDING_FIELDS | _QUORUM_BOUND_FIELDS)
+    }
+    detached_values = envelope.model_dump(mode="json")
+    detached_values.update(
+        {
+            "payload": detached_payload,
+            "evidence_references": [],
+            "signatures": [],
+            "operation_id": "",
+        }
+    )
+    detached = LedgerOperationEnvelope.model_validate(detached_values)
+    LedgerOperationService().validate_consensus_epoch_transition(detached)
 
 
 def sign_epoch_transition_signature(
@@ -133,13 +309,27 @@ def sign_epoch_transition_signature(
     policy: ProtocolAuthorityPolicy,
     authority_id: str,
     private_key: Ed25519PrivateKey,
+    quorum_report: EpochTransitionQuorumReport | Mapping[str, Any] | None = None,
+    expected_chain_id: str | None = None,
 ) -> str:
     """Sign one unsigned transition for exactly one declared authority."""
     if envelope.operation_type != "EPOCH_TRANSITION":
         raise ValueError("protocol authority signing requires EPOCH_TRANSITION")
     if envelope.signatures:
         raise ValueError("protocol authority signer input must be unsigned")
-    LedgerOperationService().validate_consensus_epoch_transition(envelope)
+    if _is_quorum_bound(envelope):
+        if quorum_report is None:
+            raise ValueError("quorum report is required for quorum-bound transition")
+        validate_quorum_bound_epoch_transition(
+            envelope,
+            policy=policy,
+            quorum_report=quorum_report,
+            expected_chain_id=expected_chain_id,
+        )
+    elif quorum_report is not None:
+        raise ValueError("quorum report supplied for non-quorum-bound transition")
+    else:
+        LedgerOperationService().validate_consensus_epoch_transition(envelope)
     authority_keys = dict(policy.authorities)
     expected_key = authority_keys.get(authority_id)
     if expected_key is None:
@@ -156,6 +346,8 @@ def combine_epoch_transition_signatures(
     *,
     policy: ProtocolAuthorityPolicy,
     signatures: Mapping[str, str],
+    quorum_report: EpochTransitionQuorumReport | Mapping[str, Any] | None = None,
+    expected_chain_id: str | None = None,
 ) -> LedgerOperationEnvelope:
     """Attach independently produced signatures and verify the full quorum."""
     if envelope.operation_type != "EPOCH_TRANSITION":
@@ -164,7 +356,19 @@ def combine_epoch_transition_signatures(
         raise ValueError("protocol authority combiner input must be unsigned")
     if not signatures:
         raise ValueError("at least one protocol authority signature is required")
-    LedgerOperationService().validate_consensus_epoch_transition(envelope)
+    if _is_quorum_bound(envelope):
+        if quorum_report is None:
+            raise ValueError("quorum report is required for quorum-bound transition")
+        validate_quorum_bound_epoch_transition(
+            envelope,
+            policy=policy,
+            quorum_report=quorum_report,
+            expected_chain_id=expected_chain_id,
+        )
+    elif quorum_report is not None:
+        raise ValueError("quorum report supplied for non-quorum-bound transition")
+    else:
+        LedgerOperationService().validate_consensus_epoch_transition(envelope)
     unknown = sorted(set(signatures) - {authority_id for authority_id, _ in policy.authorities})
     if unknown:
         raise ValueError(f"protocol authority signer is not in policy: {unknown[0]}")
@@ -198,6 +402,38 @@ def build_signed_epoch_transition(
     return sign_epoch_transition(unsigned, policy=policy, signers=signers)
 
 
+def build_signed_epoch_transition_from_quorum(
+    *,
+    policy: ProtocolAuthorityPolicy,
+    quorum_report: EpochTransitionQuorumReport | Mapping[str, Any],
+    signers: Mapping[str, Ed25519PrivateKey],
+    created_at: str,
+    expires_at: str | None = None,
+    initiator_id: str = "epoch-engine",
+    operation_version: str = "1.0.0",
+    protocol_version: str = "0.1",
+    expected_chain_id: str | None = None,
+) -> LedgerOperationEnvelope:
+    """Build and sign a transition derived exclusively from a READY quorum."""
+    unsigned = build_unsigned_epoch_transition_from_quorum(
+        policy=policy,
+        quorum_report=quorum_report,
+        created_at=created_at,
+        expires_at=expires_at,
+        initiator_id=initiator_id,
+        operation_version=operation_version,
+        protocol_version=protocol_version,
+        expected_chain_id=expected_chain_id,
+    )
+    return sign_epoch_transition(
+        unsigned,
+        policy=policy,
+        signers=signers,
+        quorum_report=quorum_report,
+        expected_chain_id=expected_chain_id,
+    )
+
+
 def restrict_private_key_file(path: Path) -> None:
     """Best-effort owner-only permissions for Unix operator key files."""
     if os.name != "nt":
@@ -206,10 +442,13 @@ def restrict_private_key_file(path: Path) -> None:
 
 __all__ = [
     "build_unsigned_epoch_transition",
+    "build_unsigned_epoch_transition_from_quorum",
     "build_signed_epoch_transition",
+    "build_signed_epoch_transition_from_quorum",
     "combine_epoch_transition_signatures",
     "load_protocol_authority_private_key",
     "restrict_private_key_file",
     "sign_epoch_transition_signature",
     "sign_epoch_transition",
+    "validate_quorum_bound_epoch_transition",
 ]
