@@ -13,6 +13,9 @@ Completed in this slice:
   mismatched policy hashes, invalid signatures and duplicated signer evidence
   at both `CheckTx` and block execution; deterministic replay execution uses
   the same boundary. See [protocol authority policy](./docs/development/protocol-authority-policy.md).
+- [x] Roll out commit `8145166` to validators `128`, `129`, and `130` without
+  resetting ledger or CometBFT state. The rollout acceptance record is
+  [here](./docs/development/protocol-authority-rollout-acceptance-2026-08-12.md).
 
 Next required economic-network work:
 
