@@ -19,8 +19,8 @@ usage() {
 Usage: aidn-whisper-runtime-ubuntu.sh <install|start|status|stop> [options]
 
 Installs or starts a reviewed Whisper ASR container bound only to 127.0.0.1.
-It never exposes port 9000 on the LAN. Docker must already be installed and
-running; Docker installation is a separate node-administration decision.
+It never exposes port 9000 on the LAN. On install or start, the reviewed
+Ubuntu Docker package is installed and its daemon is enabled if needed.
 
 Options:
   --model MODEL       tiny, base, small, medium, or large-v3 (default: base)
@@ -31,6 +31,15 @@ EOF
 }
 
 die() { echo "error: $*" >&2; exit 1; }
+
+ensure_docker() {
+  if ! command -v docker >/dev/null 2>&1; then
+    sudo apt-get update
+    sudo apt-get install -y --no-install-recommends docker.io
+  fi
+  sudo systemctl enable --now docker
+  sudo docker info >/dev/null 2>&1 || die "Docker daemon is unavailable"
+}
 
 [[ $# -gt 0 ]] || { usage >&2; exit 2; }
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then usage; exit 0; fi
@@ -55,19 +64,24 @@ case "$model" in tiny|base|small|medium|large-v3) ;; *) die "unsupported Whisper
 [[ "$data_dir" =~ ^/var/lib/aidn/[A-Za-z0-9._/-]+$ && "$data_dir" != *".."* ]] \
   || die "data directory must stay under /var/lib/aidn and use safe path characters"
 
-command -v docker >/dev/null 2>&1 || die "Docker is required; install Docker before enabling managed Whisper"
-docker info >/dev/null 2>&1 || die "Docker daemon is unavailable"
+case "$action" in
+  install|start) ensure_docker ;;
+  status|stop)
+    command -v docker >/dev/null 2>&1 || { echo '{"state":"absent"}'; exit 3; }
+    sudo docker info >/dev/null 2>&1 || die "Docker daemon is unavailable"
+    ;;
+esac
 
 case "$action" in
   install)
-    docker pull "$image" >/dev/null
-    image_digest="$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')"
+    sudo docker pull "$image" >/dev/null
+    image_digest="$(sudo docker image inspect "$image" --format '{{index .RepoDigests 0}}')"
     [[ -n "$image_digest" && "$image_digest" != '<no value>' ]] || die "could not resolve pulled image digest"
     printf '{"status":"installed","provider":"whisper","image":"%s","model_download":"deferred"}\n' \
       "$image_digest"
     ;;
   status)
-    docker inspect "$SERVICE_NAME" --format '{"name":"{{.Name}}","state":"{{.State.Status}}","image":"{{.Config.Image}}"}' 2>/dev/null || {
+    sudo docker inspect "$SERVICE_NAME" --format '{"name":"{{.Name}}","state":"{{.State.Status}}","image":"{{.Config.Image}}"}' 2>/dev/null || {
       echo '{"state":"absent"}'
       exit 3
     }
@@ -75,16 +89,16 @@ case "$action" in
       && echo '{"health":"ready"}' || echo '{"health":"starting_or_unavailable"}'
     ;;
   stop)
-    docker stop --time 30 "$SERVICE_NAME" >/dev/null 2>&1 || true
+    sudo docker stop --time 30 "$SERVICE_NAME" >/dev/null 2>&1 || true
     echo '{"status":"stopped"}'
     ;;
   start)
-    install -d -m 0750 "$data_dir/cache"
-    docker pull "$image" >/dev/null
-    image_digest="$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')"
+    sudo install -d -m 0750 "$data_dir/cache"
+    sudo docker pull "$image" >/dev/null
+    image_digest="$(sudo docker image inspect "$image" --format '{{index .RepoDigests 0}}')"
     [[ -n "$image_digest" && "$image_digest" != '<no value>' ]] || die "could not resolve pulled image digest"
-    docker rm --force "$SERVICE_NAME" >/dev/null 2>&1 || true
-    docker run --detach --name "$SERVICE_NAME" --restart unless-stopped \
+    sudo docker rm --force "$SERVICE_NAME" >/dev/null 2>&1 || true
+    sudo docker run --detach --name "$SERVICE_NAME" --restart unless-stopped \
       --publish "127.0.0.1:$port:9000" \
       --volume "$data_dir/cache:/root/.cache:rw" \
       --env "ASR_ENGINE=openai_whisper" \
@@ -100,7 +114,7 @@ case "$action" in
       fi
       sleep 2
     done
-    docker logs --tail 80 "$SERVICE_NAME" >&2 || true
+    sudo docker logs --tail 80 "$SERVICE_NAME" >&2 || true
     die "Whisper did not become ready within 180 seconds"
     ;;
 esac
