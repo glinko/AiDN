@@ -4,8 +4,8 @@ from datetime import datetime
 
 from aidn_hypervisor.accounting.models import SessionAccountingCheckpoint
 from aidn_hypervisor.domain.models import TaskRequest
-from aidn_hypervisor.session_failure.models import is_terminal_status
 from aidn_hypervisor.service import HypervisorService
+from aidn_hypervisor.session_failure.models import is_terminal_status
 
 
 def build_public_usage_acknowledgement_snapshot(snapshot: dict | None) -> dict:

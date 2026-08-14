@@ -216,6 +216,7 @@ DEVELOPMENT_BOUNTY_RESERVE
 DEVELOPMENT_BOUNTY_RELEASE
 DEVELOPMENT_BOUNTY_EXPIRE
 DEVELOPMENT_REWARD_CALCULATE
+DEVELOPMENT_REWARD_ACTIVATION_SCOPE_EXTEND
 DEVELOPMENT_REWARD_RESERVE
 DEVELOPMENT_REWARD_PAY_IMMEDIATE
 DEVELOPMENT_REWARD_PAY_MATURITY
@@ -251,6 +252,17 @@ is bound to the allocated pool and immutable bounty state; cancellation and
 correction preserve paid history and append only validated unpaid-balance
 adjustments. All of these transitions are dispatched and validated in both
 ABCI and deterministic execution, with snapshot restore coverage.
+
+`DEVELOPMENT_REWARD_ACTIVATION_SCOPE_EXTEND` is the only supported way to add
+an economic operation to an already finalized activation approval. It is an
+additive, future-effective, quorum-signed record bound to the exact base
+activation ID, approval hash, policy hash, authority set, quorum and economic
+effect profile. It cannot remove, replace or reinterpret an existing
+operation, and it cannot authorize an operation outside the `DEVELOPMENT_*`
+namespace. A maturity payment built against an older approval must reference
+the finalized scope-extension operation, the exact extension record and its
+evidence hashes; otherwise it is rejected. The original approval and all
+historical calculations remain immutable.
 
 Pool allocation, carryover, bounty reservation, reward calculation/reservation/payment, unclaimed marking, claim, cancellation, and correction SHALL be idempotent. Each paid stage atomically debits the applicable bucket, credits the verified Wallet, updates the record, and updates the maturity reserve. Unclaimed marking only records the immutable claim state and does not debit the reserve. A `(Reward ID, Payment Stage)` cannot pay, become unclaimed, or be claimed twice; a claim keeps the original unclaimed evidence and consumes the corresponding reserved stage exactly once. Failed payment remains reserved for idempotent retry.
 

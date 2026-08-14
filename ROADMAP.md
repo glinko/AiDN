@@ -1,8 +1,60 @@
 # AiDN Roadmap
 
-Last updated: `2026-08-13`
+Last updated: `2026-08-14`
 
 This is the main public roadmap for the repository.
+
+## 2026-08-14 ECO-0007 Activation Scope Extension And Maturity Completion
+
+Completed in this slice:
+
+- [x] Add the immutable, future-effective `DEVELOPMENT_REWARD_ACTIVATION_SCOPE_EXTEND`
+  consensus operation. It preserves the finalized ECO-0007 approval, authority
+  set, quorum and policy hash while adding only the explicitly signed maturity
+  payment scope.
+- [x] Bind maturity payment envelopes to the finalized extension operation and
+  exact source epoch boundary. JSON normalization is compared through the
+  canonical extension model, and malformed offline operation IDs fail before
+  an envelope is written.
+- [x] Cover the complete deterministic path:
+  `EPOCH_TRANSITION -> CALCULATE -> SCOPE_EXTEND -> ALLOCATE -> RESERVE -> PAY_MATURITY`,
+  including replay protection, snapshot behavior and the old-approval migration
+  case.
+- [x] Prepare and reproduce the controlled-localnet Wallet 127 extension and
+  stage-one envelope offline with real authority seeds. Both builders report
+  `broadcast=false` and never export private material.
+- [x] Add the reusable `execute-development-reward-maturity-payment.py`
+  executor. It accepts only a source-bound maturity envelope, retains the exact
+  pending envelope until finality, retries the same operation identity and
+  removes pending state only after verified validator quorum finality.
+
+Controlled-localnet live gate completed:
+
+- [x] Deploy the compatible ABCI implementation to validators `128`, `129` and
+  `130` without resetting the chain. All three validators reached the same
+  committed state and remained `catching_up=false`.
+- [x] Finalize the exact scope extension through the configured `2-of-3`
+  multi-RPC quorum at block `72115`.
+- [x] Submit the previously reserved stage-one maturity payment and finalize it
+  at block `72172`; the canonical Wallet 127 delta is exactly `953400 q_atoms`.
+- [x] Verify the final transaction identities and `tx_result.code=0` on all
+  three validator RPCs, then perform restart-style replay reconciliation without
+  rebroadcasting or creating a second payment.
+- [x] Advance the canonical controlled-localnet Epoch Engine from closing epoch
+  `5` through opening epoch `13` using seven finalized no-work manifests and
+  seven quorum-bound `EPOCH_TRANSITION` operations. No epoch roots, budgets or
+  transition IDs were hand-authored; each artifact came from the live validator
+  quorum and the preceding finalized manifest.
+- [x] Submit the reserved stage-two maturity payment after the exact opening
+  epoch `13` transition. The payment finalized at block `74988` for
+  `953400 q_atoms` and the replay returned the same operation and transaction
+  identity.
+- [x] Verify the post-stage-two canonical balance on validators `128`, `129`
+  and `130`: `142158000 q_atoms` on each node, an exact `953400 q_atoms`
+  delta from the post-stage-one balance.
+
+The detailed live evidence is in
+[the Wallet 127 acceptance record](./docs/development/controlled-localnet-epoch-1-eco0007-wallet127-live-payout-acceptance-2026-08-14.md).
 
 ## 2026-08-13 Canonical Epoch Schedule Commitment
 
@@ -57,6 +109,12 @@ allocation and its ECO-0007 preflight are recorded in
 and the complete live payout path is recorded in
 [the live payout acceptance](./docs/development/controlled-localnet-epoch-1-eco0007-live-payout-acceptance-2026-08-13.md).
 
+A repeated controlled-localnet payout to the verified contributor profile for
+`wallet-5320047bb01d` is also finalized. It confirms the same ordered
+RFC-0068/ECO-0007 path, multi-RPC finality, canonical Wallet delta and replay
+behavior without treating the controlled operator Wallet as an independent
+external identity. See [the Wallet 127 acceptance record](./docs/development/controlled-localnet-epoch-1-eco0007-wallet127-live-payout-acceptance-2026-08-14.md).
+
 ## 2026-08-13 Multi-validator Epoch Transition Quorum Gate
 
 Completed in this slice:
@@ -109,6 +167,10 @@ Live-network acceptance:
   contribution and verified Wallet binding. The live payout, validator
   quorum, restart recovery and replay evidence is recorded in the
   [payout acceptance](./docs/development/controlled-localnet-epoch-1-eco0007-live-payout-acceptance-2026-08-13.md).
+- [x] Repeat the controlled-localnet RFC-0068/ECO-0007 batch with the verified
+  contributor profile for `wallet-5320047bb01d`, including an immediate
+  `1.2712 Q` payout, `1.9068 Q` maturity reserve, `3/3` finality and a clean
+  replay. See [the Wallet 127 acceptance](./docs/development/controlled-localnet-epoch-1-eco0007-wallet127-live-payout-acceptance-2026-08-14.md).
 - [ ] Repeat the same batch gate under a production/public authority policy
   and externally operated validator set.
 
@@ -209,6 +271,9 @@ Current economic-network gate:
   payout acceptance record.
 - [x] Build, independently reproduce and finalize the first controlled-localnet
   ECO-0007 development reward batch, including restart/reconciliation evidence.
+- [x] Make ordered reward-batch polling idempotent when a stateful light client
+  has already verified a higher block, and persist non-secret submission tx
+  identities for restart recovery.
 - [ ] Repeat RFC-0068 and ECO-0007 finality under a production/public authority
   policy and externally operated validators.
 
@@ -1321,6 +1386,15 @@ This work is intentionally outside the functional MVP. It must not alter current
     the `2-of-3` authority policy observed identically on validators `128`,
     `129` and `130`; the external-wallet acceptance path finalized successfully
     without exporting private material or submitting Q.
+37. Added the additive ECO-0007 activation scope-extension path. An old
+    finalized approval remains immutable; a future-effective 2-of-N extension
+    can add only a bounded `DEVELOPMENT_*` operation, preserves the original
+    policy/authority/quorum/economic scope, and has no Wallet effect. Maturity
+    payments built against an old approval now require the finalized extension
+    operation and exact extension evidence. The builder, Ledger, ABCI and
+    deterministic execution paths have targeted regression coverage. The
+    operator procedure is documented in
+    [the scope-extension runbook](./docs/development/eco-0007-activation-scope-extension.md).
 
 ### Current post-MVP implementation gate
 
@@ -1370,9 +1444,17 @@ This work is intentionally outside the functional MVP. It must not alter current
   external-key verification for RFC-0068 acceptance. The profile is test-only;
   public-network contribution attribution still requires an independently
   verified contributor identity and production authority policy.
-- [ ] Execute a new ECO-0007 live reward batch using the verified contributor
-  Wallet profile, then record the exact consensus finality and maturity reserve
+- [x] Finalize the ECO-0007 scope extension on the controlled localnet and
+  execute both previously reserved Wallet 127 maturity payments; require
+  sequential validator rollout, exact epoch-boundary evidence and replay-safe
+  balance verification. The controlled-localnet gate is complete; the remaining
+  public-network gate is tracked below.
+- [x] Execute the repeated controlled-localnet ECO-0007 live reward batch using
+  the verified contributor Wallet profile, then finalize both maturity stages
   without treating the controlled operator Wallet as an independent identity.
+- [x] Add the reusable maturity-payment executor and use it for stage two. It
+  accepts only a source-bound envelope, persists pending state until verified
+  finality and is safe to replay without creating a second payment.
 - [x] Roll out the ECO-0007-aware ABCI image sequentially to the controlled
   validators and verify health, preserved state mounts, rollback containers,
   CometBFT quorum and the live read-only preflight; see

@@ -510,6 +510,10 @@ The fixture set MUST freeze:
 }
 ```
 
+Fixture file hashes are calculated from UTF-8 text with line endings
+normalized to LF. This keeps the manifest stable across Git checkouts on
+Windows and Unix-like systems without weakening canonical operation checks.
+
 ## 20. Cross-implementation use
 
 Any independent implementation MUST be able to download the fixture pack and verify conformance without running the reference implementation.

@@ -7,9 +7,9 @@ import hashlib
 import hmac
 import json
 import secrets
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Callable
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
@@ -144,7 +144,13 @@ class McpEnrollmentService:
         return state
 
     def _save(self, state: dict) -> None:
-        self._secret_manager.put(handle=MCP_ENROLLMENT_STATE_HANDLE, value=json.dumps(state, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+        encoded = json.dumps(state, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+        self._secret_manager.put(
+            handle=MCP_ENROLLMENT_STATE_HANDLE,
+            value=encoded,
+        )
 
     def _pending(self, state: dict, request_id: str) -> dict:
         record = next((item for item in state["requests"] if item["request_id"] == request_id), None)
@@ -180,7 +186,12 @@ class McpEnrollmentService:
         recipient = X25519PublicKey.from_public_bytes(public_key)
         ephemeral = X25519PrivateKey.generate()
         shared = ephemeral.exchange(recipient)
-        key = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=("aidn.mcp.enrollment.v1:" + request_id).encode()).derive(shared)
+        key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=None,
+            info=("aidn.mcp.enrollment.v1:" + request_id).encode(),
+        ).derive(shared)
         nonce = secrets.token_bytes(12)
         ciphertext = AESGCM(key).encrypt(nonce, token.encode("utf-8"), request_id.encode("utf-8"))
         return {
@@ -192,7 +203,15 @@ class McpEnrollmentService:
 
     @staticmethod
     def _public(record: dict) -> dict:
-        return {key: record[key] for key in ("request_id", "label", "key_fingerprint", "state", "created_at", "expires_at")}
+        public_fields = (
+            "request_id",
+            "label",
+            "key_fingerprint",
+            "state",
+            "created_at",
+            "expires_at",
+        )
+        return {key: record[key] for key in public_fields}
 
     @staticmethod
     def _digest(value: str) -> str:

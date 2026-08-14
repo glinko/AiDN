@@ -3435,13 +3435,11 @@ def test_operator_dashboard_shell_route_exposes_sessions_workspace_controls() ->
     assert "/operators/dashboard/sessions/actions/sweep-idle" in response.text
     assert "/operators/wallet/economics" in response.text
     assert "/operators/wallet/economics/export" in response.text
-    assert "/operators/wallet/economics/faucet" in response.text
-    assert "/operators/wallet/economics/faucet/claim" in response.text
+    assert "/operators/wallet/economics/faucet" not in response.text
     assert 'data-wallet-tab="economics"' in response.text
-    assert "Faucet Pool" in response.text
-    assert "Faucet Claim" in response.text
-    assert "Claim Faucet Share" in response.text
-    assert "Faucet Mechanics" in response.text
+    assert "External Faucet Treasury" in response.text
+    assert "standalone Faucet service" in response.text
+    assert "Claim Faucet Share" not in response.text
     assert "Reward Pools" in response.text
     assert "Economics History" in response.text
     assert "Recycle Backlog" in response.text
@@ -3882,7 +3880,9 @@ def test_operator_dashboard_shell_route_exposes_guided_proxy_phase_transitions()
     assert 'phase: "publish"' in response.text
     assert 'phase: "validate_optional"' in response.text
     assert "clearGuidedProxyFlow" in response.text
-    assert 'state.screen = proxyGuidedFlow?.phase === "publish" ? "endpoints" : "home";' in response.text
+    assert 'result?.data?.status === "CONSENSUS_PENDING" || proxyGuidedFlow?.phase === "publish"' in response.text
+    assert '? "endpoints"' in response.text
+    assert ': "home";' in response.text
     assert "Open the validation controls when you are ready to request it." not in response.text
     assert "`${endpointApiBase}/${draft.endpoint_id}/request-validation`" in response.text
 
@@ -3931,7 +3931,9 @@ def test_operator_dashboard_shell_route_exposes_guided_onboarding_sections() -> 
     assert 'data-screen-jump="providers"' in response.text
     assert 'data-screen-jump="bundles"' in response.text
     assert 'data-screen-jump="endpoints"' in response.text
-    assert 'state.screen = proxyGuidedFlow?.phase === "publish" ? "endpoints" : "home";' in response.text
+    assert 'result?.data?.status === "CONSENSUS_PENDING" || proxyGuidedFlow?.phase === "publish"' in response.text
+    assert '? "endpoints"' in response.text
+    assert ': "home";' in response.text
 
 
 def test_operator_dashboard_home_market_preview_matches_market_candidates() -> None:

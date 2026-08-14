@@ -2828,10 +2828,13 @@ class LedgerOperationService:
         envelope: "LedgerOperationEnvelope",
         *,
         expected_operation_type: str = "DEVELOPMENT_REWARD_CALCULATE",
+        finalized_operation_ids: set[str] | None = None,
     ) -> dict:
         """Validate one self-contained, non-emitting ECO-0007 calculation."""
+        from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
         from aidn_hypervisor.reward.development_activation import (
             DevelopmentRewardActivationApproval,
+            DevelopmentRewardActivationScopeExtension,
             verify_development_reward_activation_approval,
         )
         from aidn_hypervisor.reward.development_commitments import (
@@ -2919,8 +2922,36 @@ class LedgerOperationService:
             raise ValueError("DEVELOPMENT_REWARD_ACTIVATION_INVALID") from error
         if expected_commitment.model_dump(mode="json") != commitment.model_dump(mode="json"):
             raise ValueError("DEVELOPMENT_REWARD_COMMITMENT_MISMATCH")
+        scope_extension = None
         if expected_operation_type not in approval.authorized_operation_types:
-            raise ValueError("DEVELOPMENT_REWARD_OPERATION_NOT_AUTHORIZED")
+            if expected_operation_type != "DEVELOPMENT_REWARD_PAY_MATURITY" or finalized_operation_ids is None:
+                raise ValueError("DEVELOPMENT_REWARD_OPERATION_NOT_AUTHORIZED")
+            extension_operation_id = payload.get("activation_scope_extension_operation_id")
+            if not isinstance(extension_operation_id, str) or not extension_operation_id.strip():
+                raise ValueError("DEVELOPMENT_REWARD_SCOPE_EXTENSION_REQUIRED")
+            if extension_operation_id not in finalized_operation_ids:
+                raise ValueError("DEVELOPMENT_REWARD_SCOPE_EXTENSION_NOT_FINALIZED")
+            extension_operation = self._operation_by_id(extension_operation_id)
+            if extension_operation is None or extension_operation.get("operation_type") != (
+                "DEVELOPMENT_REWARD_ACTIVATION_SCOPE_EXTEND"
+            ):
+                raise ValueError("DEVELOPMENT_REWARD_SCOPE_EXTENSION_INVALID")
+            extension_validation = self.validate_consensus_development_reward_activation_scope_extend(
+                LedgerOperationEnvelope.model_validate(extension_operation),
+                finalized_operation_ids=finalized_operation_ids,
+                allow_existing=True,
+            )
+            scope_extension = extension_validation["extension"]
+            try:
+                bound_scope_extension = DevelopmentRewardActivationScopeExtension.model_validate(
+                    payload.get("activation_scope_extension")
+                )
+            except Exception as error:
+                raise ValueError("DEVELOPMENT_REWARD_SCOPE_EXTENSION_BINDING_INVALID") from error
+            if bound_scope_extension.model_dump(mode="json") != scope_extension.model_dump(mode="json"):
+                raise ValueError("DEVELOPMENT_REWARD_SCOPE_EXTENSION_BINDING_INVALID")
+            if expected_operation_type not in scope_extension.additional_operation_types:
+                raise ValueError("DEVELOPMENT_REWARD_OPERATION_NOT_AUTHORIZED")
         if expected_operation_type == "DEVELOPMENT_POOL_ALLOCATE" and approval.economic_effect_profile not in {
             "POOL_ALLOCATION",
             "DEVELOPMENT_RESERVES",
@@ -2964,6 +2995,14 @@ class LedgerOperationService:
             approval.activation_id,
             approval.approval_hash,
         }
+        if scope_extension is not None:
+            required_evidence.update(
+                {
+                    scope_extension.extension_id,
+                    scope_extension.extension_hash,
+                    payload["activation_scope_extension_operation_id"],
+                }
+            )
         if not required_evidence.issubset(set(envelope.evidence_references)):
             raise ValueError("DEVELOPMENT_REWARD_CALCULATION_EVIDENCE_REFERENCES_INVALID")
 
@@ -2985,6 +3024,7 @@ class LedgerOperationService:
             "calculation": calculation,
             "commitment": commitment,
             "approval": approval,
+            "scope_extension": scope_extension,
         }
 
     def validate_consensus_development_reward_calculate(
@@ -3002,6 +3042,125 @@ class LedgerOperationService:
         return self.record_admitted_envelope(
             envelope,
             emitted_events=["DevelopmentRewardCalculationCommitted"],
+        )
+
+    def validate_consensus_development_reward_activation_scope_extend(
+        self,
+        envelope: "LedgerOperationEnvelope",
+        *,
+        finalized_operation_ids: set[str],
+        allow_existing: bool = False,
+    ) -> dict:
+        """Validate an additive authority scope for an existing calculation."""
+
+        from aidn_hypervisor.reward.development_activation import (
+            DevelopmentRewardActivationApproval,
+            DevelopmentRewardActivationScopeExtension,
+            verify_development_reward_activation_scope_extension,
+        )
+        from aidn_hypervisor.reward.development_commitments import DevelopmentRewardCommitment
+        from aidn_hypervisor.reward.development_distribution import canonical_hash
+
+        if envelope.operation_type != "DEVELOPMENT_REWARD_ACTIVATION_SCOPE_EXTEND":
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_OPERATION_INVALID")
+        if envelope.origin_type != "protocol" or envelope.sender_wallet is not None:
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_ORIGIN_INVALID")
+        if envelope.fee_class != "protocol_sponsored":
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_FEE_INVALID")
+        payload = dict(envelope.payload)
+        payload_hash = payload.get("payload_hash")
+        if not isinstance(payload_hash, str) or payload_hash != canonical_hash(
+            {key: value for key, value in payload.items() if key != "payload_hash"}
+        ):
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_PAYLOAD_HASH_INVALID")
+        try:
+            extension = DevelopmentRewardActivationScopeExtension.model_validate(payload.get("scope_extension"))
+        except Exception as error:
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_EVIDENCE_INVALID") from error
+        if envelope.target_epoch != str(extension.effective_epoch):
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_TARGET_EPOCH_INVALID")
+        if (
+            payload.get("extension_id") != extension.extension_id
+            or payload.get("extension_hash") != extension.extension_hash
+        ):
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_BINDING_INVALID")
+        if payload.get("base_activation_id") != extension.base_activation_id:
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_BASE_BINDING_INVALID")
+        if payload.get("base_approval_hash") != extension.base_approval_hash:
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_BASE_BINDING_INVALID")
+        base_calculation_operation_id = payload.get("base_calculation_operation_id")
+        if not isinstance(base_calculation_operation_id, str) or not base_calculation_operation_id.strip():
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_CALCULATION_REQUIRED")
+        if base_calculation_operation_id not in finalized_operation_ids:
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_CALCULATION_NOT_FINALIZED")
+        base_calculation_operation = self._operation_by_id(base_calculation_operation_id)
+        if base_calculation_operation is None or base_calculation_operation.get("operation_type") != (
+            "DEVELOPMENT_REWARD_CALCULATE"
+        ):
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_CALCULATION_INVALID")
+        base_payload = base_calculation_operation.get("payload") or {}
+        try:
+            base_approval = DevelopmentRewardActivationApproval.model_validate(base_payload.get("activation_approval"))
+            commitment = DevelopmentRewardCommitment.model_validate(base_payload.get("commitment"))
+        except Exception as error:
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_BASE_EVIDENCE_INVALID") from error
+        if not commitment.verify_integrity() or commitment.activation_state != "ACTIVATION_VERIFIED":
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_COMMITMENT_INVALID")
+        if (
+            base_payload.get("commitment_id") != commitment.commitment_id
+            or base_payload.get("calculation_root") != commitment.calculation_root
+            or commitment.activation_id != base_approval.activation_id
+            or commitment.activation_approval_hash != base_approval.approval_hash
+            or commitment.policy_hash != extension.policy_hash
+        ):
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_BASE_BINDING_INVALID")
+        try:
+            verify_development_reward_activation_scope_extension(extension, base_approval=base_approval)
+        except ValueError as error:
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_INVALID") from error
+        if "DEVELOPMENT_REWARD_PAY_MATURITY" not in extension.additional_operation_types:
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_MATURITY_SCOPE_REQUIRED")
+        required_evidence = {
+            extension.extension_id,
+            extension.extension_hash,
+            extension.base_activation_id,
+            extension.base_approval_hash,
+            base_calculation_operation_id,
+        }
+        if not required_evidence.issubset(set(envelope.evidence_references)):
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_EVIDENCE_REFERENCES_INVALID")
+        for operation in self._operations:
+            if operation.get("operation_type") != "DEVELOPMENT_REWARD_ACTIVATION_SCOPE_EXTEND":
+                continue
+            previous = operation.get("payload") or {}
+            if previous.get("extension_id") == extension.extension_id:
+                if previous != payload:
+                    raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_CONFLICT")
+                if not allow_existing:
+                    raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_ALREADY_FINALIZED")
+        return {
+            "payload": payload,
+            "extension": extension,
+            "base_approval": base_approval,
+            "commitment": commitment,
+            "base_calculation_operation_id": base_calculation_operation_id,
+        }
+
+    def apply_consensus_development_reward_activation_scope_extend(
+        self,
+        envelope: "LedgerOperationEnvelope",
+        *,
+        finalized_operation_ids: set[str],
+    ) -> dict:
+        """Commit an additive activation scope without changing Q state."""
+
+        self.validate_consensus_development_reward_activation_scope_extend(
+            envelope,
+            finalized_operation_ids=finalized_operation_ids,
+        )
+        return self.record_admitted_envelope(
+            envelope,
+            emitted_events=["DevelopmentRewardActivationScopeExtended"],
         )
 
     def development_pool_allocation(self, allocation_id: str) -> dict | None:
@@ -3804,6 +3963,7 @@ class LedgerOperationService:
         validated = self._validate_development_reward_calculation_payload(
             envelope,
             expected_operation_type=expected_operation_type,
+            finalized_operation_ids=finalized_operation_ids,
         )
         payload = validated["payload"]
         calculation = validated["calculation"]
@@ -3953,6 +4113,9 @@ class LedgerOperationService:
                 raise ValueError("DEVELOPMENT_REWARD_PAYMENT_MATURITY_EPOCH_INVALID")
             if opening_epoch < maturity_epoch:
                 raise ValueError("DEVELOPMENT_REWARD_MATURITY_NOT_REACHED")
+            scope_extension = validated.get("scope_extension")
+            if scope_extension is not None and opening_epoch < scope_extension.effective_epoch:
+                raise ValueError("DEVELOPMENT_REWARD_SCOPE_EXTENSION_NOT_EFFECTIVE")
 
         payment_id = development_reward_payment_id(
             reserve_id=reserve_id,

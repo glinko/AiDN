@@ -303,12 +303,16 @@ class _PendingStore:
     def __init__(self):
         self.staged = []
         self.discarded = []
+        self.recorded = []
 
     def stage_pending_consensus_envelope(self, envelope):
         self.staged.append(envelope.operation_id)
 
     def discard_pending_consensus_envelopes(self, operation_id):
         self.discarded.append(operation_id)
+
+    def record_submission(self, record):
+        self.recorded.append((record.operation_id, record.status, record.transaction_hash))
 
 
 class _ProductionConsensus:
@@ -396,6 +400,9 @@ def test_production_executor_submits_in_order_and_is_resumable():
     assert consensus.submitted == [item.operation_id for item in batch.plan.envelopes]
     assert result.finalized_operation_ids == consensus.submitted
     assert store.discarded == consensus.submitted
+    assert {item[0] for item in store.recorded} == set(consensus.submitted)
+    latest = {operation_id: status for operation_id, status, _tx in store.recorded}
+    assert latest == dict.fromkeys(consensus.submitted, SubmissionStatus.FINALIZED)
 
 
 def test_disabled_consensus_executor_uses_local_finalized_records():

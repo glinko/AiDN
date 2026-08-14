@@ -42,7 +42,8 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 
 def _sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    normalized = path.read_text(encoding="utf-8").encode("utf-8")
+    return hashlib.sha256(normalized).hexdigest()
 
 
 def _manifest_hash(manifest: dict[str, Any]) -> str:

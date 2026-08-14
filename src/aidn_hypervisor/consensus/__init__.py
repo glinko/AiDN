@@ -77,6 +77,14 @@ from aidn_hypervisor.consensus.epoch_schedule import (
     EpochSchedule,
     build_epoch_schedule,
 )
+from aidn_hypervisor.consensus.epoch_schedule_commit import (
+    EPOCH_SCHEDULE_COMMIT_OPERATION,
+    build_signed_epoch_schedule_commit,
+    build_unsigned_epoch_schedule_commit,
+    combine_epoch_schedule_commit_signatures,
+    sign_epoch_schedule_commit,
+    sign_epoch_schedule_commit_signature,
+)
 from aidn_hypervisor.consensus.epoch_schedule_rebase import (
     CONTROLLED_LOCALNET_LATE_INITIAL_SCHEDULE,
     EPOCH_SCHEDULE_REBASE_OPERATION,
@@ -89,14 +97,6 @@ from aidn_hypervisor.consensus.epoch_schedule_rebase_commit import (
     combine_epoch_schedule_rebase_signatures,
     sign_epoch_schedule_rebase,
     sign_epoch_schedule_rebase_signature,
-)
-from aidn_hypervisor.consensus.epoch_schedule_commit import (
-    EPOCH_SCHEDULE_COMMIT_OPERATION,
-    build_signed_epoch_schedule_commit,
-    build_unsigned_epoch_schedule_commit,
-    combine_epoch_schedule_commit_signatures,
-    sign_epoch_schedule_commit,
-    sign_epoch_schedule_commit_signature,
 )
 from aidn_hypervisor.consensus.epoch_transition import (
     build_signed_epoch_transition_from_quorum,

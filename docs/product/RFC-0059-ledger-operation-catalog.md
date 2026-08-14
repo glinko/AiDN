@@ -2642,6 +2642,8 @@ Deferred operations SHALL NOT be simulated through unrelated existing operations
 The following operation names are reserved by ECO-0007. They are registered
 in the catalog. The current profile applies the following narrow transitions:
 `DEVELOPMENT_REWARD_CALCULATE` as an evidence-only commitment,
+`DEVELOPMENT_REWARD_ACTIVATION_SCOPE_EXTEND` as an additive future-effective
+activation-scope record,
 `DEVELOPMENT_POOL_ALLOCATE` as a source-bound reserve record,
 `DEVELOPMENT_POOL_CARRYOVER` as a source-epoch-bound carryover record,
 `DEVELOPMENT_BOUNTY_CREATE`, `DEVELOPMENT_BOUNTY_RESERVE`,
@@ -2655,6 +2657,7 @@ source-bound payment transitions, plus
 `DEVELOPMENT_REWARD_FINALIZE_COMMITMENT` as an evidence-only close:
 
 - `DEVELOPMENT_POOL_ALLOCATE`;
+- `DEVELOPMENT_REWARD_ACTIVATION_SCOPE_EXTEND`;
 - `DEVELOPMENT_POOL_CARRYOVER`;
 - `DEVELOPMENT_BOUNTY_CREATE`;
 - `DEVELOPMENT_BOUNTY_RESERVE`;
@@ -2701,6 +2704,11 @@ only unpaid maturity/unclaimed buckets and never rewrite paid history. Other
 catalog operations not described as supported below remain rejected until a
 future version defines their state transitions, replay rules, reserve
 conservation, snapshot behavior, and multi-validator conformance.
+`DEVELOPMENT_REWARD_ACTIVATION_SCOPE_EXTEND` requires a finalized base
+`DEVELOPMENT_REWARD_CALCULATE`, an exact immutable base approval, and a
+quorum-signed additive extension. It has no Wallet or Q effect. Its scope is
+future-effective and cannot authorize an operation already present in the base
+approval or alter the base policy, authorities, quorum or economic profile.
 `DEVELOPMENT_REWARD_CLAIM` requires the
 finalized unclaimed record, a finalized epoch transition whose opening epoch
 falls inside the immutable claim window, and an RFC-0068 signed Wallet
