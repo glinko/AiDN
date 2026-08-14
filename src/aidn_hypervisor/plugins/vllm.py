@@ -8,19 +8,163 @@ from aidn_hypervisor.plugins.base import ProviderPlugin
 
 class VllmPlugin(ProviderPlugin):
     plugin_id = "vllm"
+    plugin_version = "0.2.0"
+    _runtime_version = "0.27.1"
     _default_endpoint = "http://127.0.0.1:8000"
 
     def describe(self) -> dict:
         return {
             "plugin_id": self.plugin_id,
-            "plugin_version": "0.1.0",
+            "plugin_version": self.plugin_version,
             "display_name": "vLLM OpenAI-compatible",
+            "publisher": "AiDN Built-in",
             "provider_type": "vllm",
             "provider_families": ["vllm", "openai-compatible"],
-            "plugin_capability_flags": ["CAN_ATTACH_EXISTING", "CAN_DISCOVER_MODELS"],
+            "plugin_capability_flags": [
+                "CAN_ATTACH_EXISTING",
+                "CAN_INSTALL_PROVIDER",
+                "CAN_DISCOVER_MODELS",
+            ],
+            "required_permissions": [
+                {
+                    "permission_id": "host.package_manager",
+                    "label": "Install reviewed Python runtime",
+                    "risk_level": "high",
+                    "reason": "Install pinned vLLM into an isolated uv environment",
+                },
+                {
+                    "permission_id": "host.service_manager",
+                    "label": "Manage reviewed user service",
+                    "risk_level": "high",
+                    "reason": "Create and supervise the loopback-only vLLM service",
+                },
+                {
+                    "permission_id": "network.egress",
+                    "label": "Download reviewed runtime",
+                    "risk_level": "medium",
+                    "reason": "Download vLLM and its pinned Python dependencies",
+                },
+            ],
+            "trust_status": "AIDN_CURATED",
+            "sandbox_policy": {
+                "execution_mode": "RECORDED_ONLY",
+                "filesystem_scope": "NONE",
+                "network_scope": "NONE",
+                "secret_scope": "DECLARED_HANDLES_ONLY",
+                "notes": (
+                    "The generic executor records approval only. Host mutation requires "
+                    "the future allowlisted Provider runtime installer executor; model "
+                    "credentials remain a separate secret-handle step."
+                ),
+            },
+            "runtime_installers": [
+                {
+                    "installer_id": "aidn-provider-runtime-ubuntu.v1",
+                    "provider": self.plugin_id,
+                    "platform": "ubuntu",
+                    "script": "tools/aidn-provider-runtime-ubuntu.sh",
+                    "pinned_version": self._runtime_version,
+                    "actions": ["install", "start", "status", "stop"],
+                    "model_configuration_separate": True,
+                }
+            ],
+            "source_repository": "https://github.com/vllm-project/vllm",
+            "license": "Apache-2.0",
+            "supported_platforms": ["linux"],
+            "supported_architectures": ["x86_64", "arm64"],
+            "supported_accelerators": ["cuda"],
+            "installation_recipes": [
+                {
+                    "recipe_id": "vllm-ubuntu-cuda",
+                    "display_name": "vLLM on this NVIDIA Ubuntu node",
+                    "description": ("Install pinned vLLM; select and download a model later"),
+                    "provider_configuration": {
+                        "display_name": "Local vLLM",
+                        "endpoint": self._default_endpoint,
+                        "runtime_version": self._runtime_version,
+                        "backend": "cuda",
+                    },
+                    "model_configuration": {},
+                    "endpoint_defaults": {"capability_id": "llm.chat"},
+                }
+            ],
             "supported_aidn_capabilities": ["llm.chat"],
             "workload_types": ["llm_text"],
             "usage_contract": self.usage_contract(),
+        }
+
+    def install_provider_schema(self) -> dict:
+        return {
+            "schema_id": "vllm.install.v1",
+            "fields": [
+                {
+                    "id": "display_name",
+                    "type": "text",
+                    "label": "Provider name",
+                    "required": True,
+                    "default": "Local vLLM",
+                },
+                {
+                    "id": "endpoint",
+                    "type": "url",
+                    "label": "Local endpoint",
+                    "required": True,
+                    "default": self._default_endpoint,
+                },
+                {
+                    "id": "runtime_version",
+                    "type": "text",
+                    "label": "Reviewed runtime version",
+                    "required": True,
+                    "default": self._runtime_version,
+                },
+                {
+                    "id": "backend",
+                    "type": "select",
+                    "label": "Acceleration backend",
+                    "required": True,
+                    "default": "cuda",
+                    "options": [{"value": "cuda", "label": "NVIDIA CUDA"}],
+                },
+            ],
+        }
+
+    def build_installation_plan(self, configuration: dict) -> dict:
+        normalized = {
+            "display_name": configuration.get("display_name") or "Local vLLM",
+            "endpoint": configuration.get("endpoint") or self._default_endpoint,
+            "runtime_version": (configuration.get("runtime_version") or self._runtime_version),
+            "backend": configuration.get("backend") or "cuda",
+        }
+        self.validate_provider_configuration(normalized)
+        version = str(normalized["runtime_version"])
+        parts = version.split(".")
+        if len(parts) != 3 or not all(part.isdigit() for part in parts):
+            raise ValueError("runtime_version is invalid")
+        if normalized["backend"] != "cuda":
+            raise ValueError("the managed vLLM profile currently requires cuda")
+        return {
+            "plan_id": "plan-vllm-ubuntu-cuda-v1",
+            "plugin_id": self.plugin_id,
+            "plan_version": "1.0.0",
+            "summary": "Install pinned vLLM in an isolated Ubuntu CUDA environment",
+            "containers": [],
+            "processes": [],
+            "model_downloads": [],
+            "volumes": [],
+            "networks": [{"name": "vllm-loopback", "scope": "local"}],
+            "environment": {},
+            "resource_limits": {"accelerator": "cuda"},
+            "health_checks": [
+                {
+                    "type": "http",
+                    "url": f"{str(normalized['endpoint']).rstrip('/')}/v1/models",
+                    "timeout_seconds": 5,
+                }
+            ],
+            "required_permissions": self.plugin_manifest()["required_permissions"],
+            "secret_references": [],
+            "unsupported_actions": [],
         }
 
     def attach_provider_schema(self) -> dict:
@@ -123,9 +267,7 @@ class VllmPlugin(ProviderPlugin):
             # helper signature working while the plugin contract is upgraded.
             if "timeout_seconds" not in str(error):
                 raise
-            response = self._request_json(
-                "POST", f"{self._endpoint(runtime_handle)}/v1/completions", request_payload
-            )
+            response = self._request_json("POST", f"{self._endpoint(runtime_handle)}/v1/completions", request_payload)
         choice = (response.get("choices") or [{}])[0]
         return {
             "ok": True,

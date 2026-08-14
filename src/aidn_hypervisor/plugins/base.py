@@ -112,6 +112,7 @@ class ProviderPlugin(ABC):
             diagnostics_schema=description.get("diagnostics_schema"),
             secret_requirements=description.get("secret_requirements", []),
             installation_recipes=description.get("installation_recipes", []),
+            runtime_installers=description.get("runtime_installers", []),
         )
         if signing_private_key:
             private_key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(signing_private_key))

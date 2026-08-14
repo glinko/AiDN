@@ -16,7 +16,10 @@ from pydantic import BaseModel, Field
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.endpoint_publications.signing import sign_consensus_bytes
 from aidn_hypervisor.endpoints.endpoint_application_service import EndpointApplicationService
-from aidn_hypervisor.endpoints.models import UpdateEndpointCommand
+from aidn_hypervisor.endpoints.models import (
+    EndpointMarketplaceDescription,
+    UpdateEndpointCommand,
+)
 from aidn_hypervisor.ledger.service import STANDARD_NETWORK_FEE_Q_ATOMS
 from aidn_hypervisor.mcp.credentials import McpCredential, McpCredentialStore
 from aidn_hypervisor.mcp.enrollment import McpEnrollmentService
@@ -98,6 +101,10 @@ class RegisterBundleOperationRequest(BaseModel):
     bundle_id: str = Field(min_length=1, max_length=128)
     workload_type: str = Field(min_length=1, max_length=128)
     endpoint: str = Field(min_length=1, max_length=2048)
+
+
+class MarketplaceDescriptionPreviewRequest(BaseModel):
+    html: str = Field(min_length=1)
 
 
 class ModelArtifactSetOperationRequest(BaseModel):
@@ -1065,6 +1072,34 @@ def build_operator_access_router(
         except (KeyError, ValueError) as error:
             return operation_error(error)
         return JSONResponse(status_code=201, content=result["payload"])
+
+    @router.post("/operations/endpoints/marketplace-description/preview")
+    async def preview_marketplace_description(
+        payload: MarketplaceDescriptionPreviewRequest,
+        request: Request,
+    ) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        try:
+            description = EndpointMarketplaceDescription(html=payload.html)
+        except ValueError as error:
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "error": {
+                        "code": "MARKETPLACE_DESCRIPTION_INVALID",
+                        "message": str(error),
+                    }
+                },
+            )
+        return JSONResponse(
+            status_code=200,
+            content={
+                "description": description.model_dump(mode="json"),
+                "rendered_html": description.html,
+            },
+        )
 
     @router.patch("/operations/endpoints/{endpoint_id}")
     async def update_endpoint(

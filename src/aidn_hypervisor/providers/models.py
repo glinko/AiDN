@@ -5,7 +5,7 @@ import re
 from pathlib import PurePosixPath
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ProviderConnectionMode = Literal["attached", "managed"]
 ProviderOperationalState = Literal["created", "ready", "degraded", "error", "removed"]
@@ -121,6 +121,8 @@ ProviderInstallationRollbackStatus = Literal[
     "COMPLETED",
     "FAILED",
 ]
+ProviderRuntimeAction = Literal["install", "start", "status", "stop"]
+ProviderRuntimeBrokerStatus = Literal["SUCCEEDED", "FAILED", "CANCELLED"]
 
 
 def _require_non_empty(value: str) -> str:
@@ -707,6 +709,106 @@ class ProviderInstallationExecutionResult(BaseModel):
         return ProviderInstance.model_validate(value).model_dump()
 
 
+class ProviderRuntimeInstallerDescriptor(BaseModel):
+    """Catalog metadata for one reviewed Provider runtime installer boundary."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    installer_id: Literal["aidn-provider-runtime-ubuntu.v1"]
+    provider: Literal["whisper", "ollama", "llama.cpp", "vllm"]
+    platform: Literal["ubuntu"]
+    script: Literal["tools/aidn-provider-runtime-ubuntu.sh"]
+    pinned_version: str
+    actions: list[Literal["install", "start", "status", "stop"]]
+    model_configuration_separate: bool = True
+
+    @field_validator("pinned_version")
+    @classmethod
+    def _pinned_version_not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+    @field_validator("actions")
+    @classmethod
+    def _actions_are_unique_and_complete(cls, value: list[str]) -> list[str]:
+        if value != ["install", "start", "status", "stop"]:
+            raise ValueError("runtime installer actions must match the reviewed lifecycle")
+        return value
+
+
+_PROVIDER_RUNTIME_ARGUMENT_KEYS = {
+    "whisper": {"image", "model", "data_dir", "port"},
+    "ollama": {"version", "model"},
+    "llama.cpp": {"ref", "backend", "model", "root"},
+    "vllm": {"version", "python", "model", "served_model_name", "root"},
+}
+
+
+class ProviderRuntimeInvocation(BaseModel):
+    """Exact, shell-free invocation sent to a reviewed runtime broker."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    approval_id: str
+    plan_hash: str
+    configuration_hash: str
+    installer_id: Literal["aidn-provider-runtime-ubuntu.v1"]
+    provider: Literal["whisper", "ollama", "llama.cpp", "vllm"]
+    action: ProviderRuntimeAction
+    pinned_version: str
+    arguments: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator(
+        "approval_id",
+        "plan_hash",
+        "configuration_hash",
+        "pinned_version",
+    )
+    @classmethod
+    def _required_text(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+    @field_validator("arguments")
+    @classmethod
+    def _arguments_are_bounded_text(cls, value: dict[str, str]) -> dict[str, str]:
+        if len(value) > 12:
+            raise ValueError("runtime invocation has too many arguments")
+        for key, argument in value.items():
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("runtime invocation argument names must be non-empty")
+            if not isinstance(argument, str) or not argument or len(argument) > 512:
+                raise ValueError("runtime invocation arguments must be bounded text")
+            if any(character in argument for character in ("\x00", "\r", "\n")):
+                raise ValueError("runtime invocation arguments must not contain control characters")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_argument_allowlist(self):
+        allowed_keys = _PROVIDER_RUNTIME_ARGUMENT_KEYS[self.provider]
+        unknown_keys = sorted(set(self.arguments) - allowed_keys)
+        if unknown_keys:
+            raise ValueError(
+                "runtime invocation contains unsupported arguments: "
+                + ", ".join(unknown_keys)
+            )
+        return self
+
+
+class ProviderRuntimeBrokerResult(BaseModel):
+    """Redacted bounded result returned by the local runtime broker."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: ProviderRuntimeBrokerStatus
+    summary: str
+    details: dict = Field(default_factory=dict)
+    events: list[dict] = Field(default_factory=list)
+
+    @field_validator("summary")
+    @classmethod
+    def _summary_not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+
 class ProviderPluginManifest(BaseModel):
     plugin_id: str
     plugin_version: str
@@ -735,6 +837,7 @@ class ProviderPluginManifest(BaseModel):
     diagnostics_schema: PluginUISchema | None = None
     secret_requirements: list[PluginSecretRequirement] = Field(default_factory=list)
     installation_recipes: list[InstallationRecipe] = Field(default_factory=list)
+    runtime_installers: list[ProviderRuntimeInstallerDescriptor] = Field(default_factory=list)
 
     @field_validator("plugin_id", "plugin_version", "display_name", "publisher", "package_digest")
     @classmethod

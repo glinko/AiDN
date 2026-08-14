@@ -13,8 +13,10 @@ from aidn_hypervisor.plugins.host import (
     PluginHostIdentity,
     build_plugin_host_activation_proof,
 )
+from aidn_hypervisor.plugins.ollama import OllamaPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.providers.executor import (
+    AllowlistedProviderRuntimeInstallationExecutor,
     ControlledFilesystemProviderInstallationExecutor,
     RecordedProviderInstallationExecutor,
     SandboxEnforcedProviderInstallationExecutor,
@@ -25,6 +27,7 @@ from aidn_hypervisor.providers.models import (
     ProviderInstallationExecutionResult,
     ProviderInstallationJob,
     ProviderPluginManifest,
+    ProviderRuntimeBrokerResult,
 )
 from aidn_hypervisor.providers.package_store import (
     FilesystemPluginPackageStore,
@@ -1146,6 +1149,107 @@ def test_recorded_provider_installation_executor_exposes_sandbox_capabilities() 
     assert capabilities.supported_network_scopes == ["NONE"]
     assert capabilities.supported_secret_scopes == ["DECLARED_HANDLES_ONLY"]
     assert capabilities.host_mutation is False
+
+
+class _StubProviderRuntimeBroker:
+    def __init__(self, *, status: str = "SUCCEEDED") -> None:
+        self.status = status
+        self.invocations = []
+
+    def invoke(self, *, invocation):
+        self.invocations.append(invocation)
+        return ProviderRuntimeBrokerResult(
+            status=self.status,
+            summary="runtime broker completed" if self.status == "SUCCEEDED" else "runtime broker rejected",
+            details={"broker": "test-double"},
+        )
+
+
+def _ollama_runtime_context() -> tuple[ProviderInstallationApproval, InstallationPlan, dict, dict]:
+    plugin = OllamaPlugin()
+    configuration = {
+        "display_name": "Local Ollama",
+        "endpoint": "http://127.0.0.1:11434",
+        "runtime_version": "0.32.12",
+    }
+    plan = InstallationPlan.model_validate(plugin.build_installation_plan(configuration))
+    approval = ProviderInstallationApproval(
+        approval_id="approval-ollama-runtime",
+        plugin_id="ollama",
+        plan_id=plan.plan_id,
+        plan_hash="sha256:ollama-plan",
+        configuration_hash="sha256:ollama-configuration",
+        configuration=configuration,
+        approved_permissions=[permission["permission_id"] for permission in plugin.describe()["required_permissions"]],
+        status="APPROVED",
+        created_at="2026-08-14T12:00:00Z",
+    )
+    return approval, plan, configuration, plugin.plugin_manifest()
+
+
+def test_allowlisted_runtime_executor_builds_pinned_shell_free_invocation() -> None:
+    broker = _StubProviderRuntimeBroker()
+    executor = AllowlistedProviderRuntimeInstallationExecutor(broker)
+    approval, plan, configuration, manifest = _ollama_runtime_context()
+
+    invocation = executor.build_invocation(
+        approval=approval,
+        plan=plan,
+        configuration=configuration,
+        manifest=manifest,
+        action="install",
+    )
+
+    assert executor.executor_id == "allowlisted-provider-runtime-v1"
+    assert invocation.provider == "ollama"
+    assert invocation.pinned_version == "0.32.12"
+    assert invocation.arguments == {"version": "0.32.12"}
+    assert "command" not in invocation.model_dump(mode="json")
+
+    result = executor.apply(
+        approval=approval,
+        plan=plan,
+        configuration=configuration,
+        manifest=manifest,
+        provider_instance_id="pi-ollama-runtime",
+    )
+
+    assert broker.invocations == [invocation]
+    assert result.step_results[0].step_type == "provider_runtime_install"
+    assert result.provider_instance["provider_instance_id"] == "pi-ollama-runtime"
+    assert result.rollback_result is not None
+    assert result.rollback_result.status == "PENDING"
+
+
+def test_allowlisted_runtime_executor_rejects_tampered_script_descriptor() -> None:
+    broker = _StubProviderRuntimeBroker()
+    executor = AllowlistedProviderRuntimeInstallationExecutor(broker)
+    approval, plan, configuration, manifest = _ollama_runtime_context()
+    manifest["runtime_installers"][0]["script"] = "tools/arbitrary.sh"
+
+    with pytest.raises(ValueError, match="script"):
+        executor.build_invocation(
+            approval=approval,
+            plan=plan,
+            configuration=configuration,
+            manifest=manifest,
+            action="install",
+        )
+
+
+def test_allowlisted_runtime_executor_fails_closed_on_broker_failure() -> None:
+    broker = _StubProviderRuntimeBroker(status="FAILED")
+    executor = AllowlistedProviderRuntimeInstallationExecutor(broker)
+    approval, plan, configuration, manifest = _ollama_runtime_context()
+
+    with pytest.raises(ValueError, match="did not complete installation"):
+        executor.apply(
+            approval=approval,
+            plan=plan,
+            configuration=configuration,
+            manifest=manifest,
+            provider_instance_id="pi-ollama-runtime",
+        )
 
 
 def test_sandbox_enforced_provider_installation_executor_accepts_supported_fake_plan() -> None:

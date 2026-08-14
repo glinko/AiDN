@@ -29,7 +29,17 @@ from aidn_hypervisor.providers.models import (
     ProviderInstallationExecutionResult,
     ProviderInstallationRollbackResult,
     ProviderInstallationStepResult,
+    ProviderRuntimeBrokerResult,
+    ProviderRuntimeInstallerDescriptor,
+    ProviderRuntimeInvocation,
 )
+
+
+class ProviderRuntimeBroker(Protocol):
+    """Narrow local boundary for an allowlisted Ubuntu runtime action."""
+
+    def invoke(self, *, invocation: ProviderRuntimeInvocation) -> ProviderRuntimeBrokerResult:
+        ...
 
 
 class ProviderInstallationExecutor(Protocol):
@@ -421,6 +431,220 @@ class RecordedProviderInstallationExecutor:
     def _display_name(self, *, manifest: dict, configuration: dict) -> str:
         display_name = configuration.get("display_name") or manifest.get("display_name")
         return str(display_name or "Managed Provider")
+
+
+class AllowlistedProviderRuntimeInstallationExecutor(RecordedProviderInstallationExecutor):
+    """Validate and dispatch reviewed runtime actions through an injected broker.
+
+    The class intentionally has no default broker. Constructing it requires an
+    implementation of the narrow local broker boundary, so the normal service
+    path cannot accidentally gain subprocess or shell execution.
+    """
+
+    executor_id = "allowlisted-provider-runtime-v1"
+
+    def __init__(self, broker: ProviderRuntimeBroker) -> None:
+        self._broker = broker
+
+    def sandbox_capabilities(self) -> ExecutorSandboxCapabilities:
+        return ExecutorSandboxCapabilities(
+            supported_execution_modes=["RECORDED_ONLY", "UNSANDBOXED_HOST"],
+            supported_filesystem_scopes=["NONE", "CONTROLLED_PATHS"],
+            supported_network_scopes=["NONE", "PRIVATE_ONLY", "DECLARED_EGRESS"],
+            supported_secret_scopes=["NONE", "DECLARED_HANDLES_ONLY"],
+            host_mutation=True,
+            notes=(
+                "Runtime actions are accepted only through a typed allowlist and an "
+                "injected local broker; no generic command runner is exposed."
+            ),
+        )
+
+    def diagnostic_checks(
+        self,
+        *,
+        approval: ProviderInstallationApproval,
+        plan: InstallationPlan,
+        configuration: dict,
+        manifest: dict,
+    ) -> list[ProviderInstallationDiagnosticCheck]:
+        invocation = self.build_invocation(
+            approval=approval,
+            plan=plan,
+            configuration=configuration,
+            manifest=manifest,
+            action="install",
+        )
+        return [
+            ProviderInstallationDiagnosticCheck(
+                check_id="runtime_invocation",
+                status="PASS",
+                summary="Reviewed runtime invocation is accepted by the allowlist.",
+                details={"invocation": invocation.model_dump(mode="json")},
+            )
+        ]
+
+    def rollback_preview(
+        self,
+        *,
+        approval: ProviderInstallationApproval,
+        plan: InstallationPlan,
+        configuration: dict,
+        manifest: dict,
+    ) -> ProviderInstallationRollbackResult:
+        self._validate_inputs(
+            approval=approval,
+            plan=plan,
+            configuration=configuration,
+            manifest=manifest,
+        )
+        invocation = self.build_invocation(
+            approval=approval,
+            plan=plan,
+            configuration=configuration,
+            manifest=manifest,
+            action="stop",
+        )
+        return ProviderInstallationRollbackResult(
+            status="PENDING",
+            summary=(
+                "Runtime rollback requires an explicit broker cleanup policy; "
+                "installation removal is not inferred from stop."
+            ),
+            details={"invocation": invocation.model_dump(mode="json")},
+        )
+
+    def rollback(
+        self,
+        *,
+        approval: ProviderInstallationApproval,
+        plan: InstallationPlan,
+        configuration: dict,
+        manifest: dict,
+        provider_instance_id: str | None,
+    ) -> ProviderInstallationRollbackResult:
+        preview = self.rollback_preview(
+            approval=approval,
+            plan=plan,
+            configuration=configuration,
+            manifest=manifest,
+        )
+        return preview.model_copy(
+            update={
+                "details": {
+                    **deepcopy(preview.details),
+                    "provider_instance_id": provider_instance_id,
+                }
+            }
+        )
+
+    def apply(
+        self,
+        *,
+        approval: ProviderInstallationApproval,
+        plan: InstallationPlan,
+        configuration: dict,
+        manifest: dict,
+        provider_instance_id: str,
+    ) -> ProviderInstallationExecutionResult:
+        invocation = self.build_invocation(
+            approval=approval,
+            plan=plan,
+            configuration=configuration,
+            manifest=manifest,
+            action="install",
+        )
+        broker_result = self._broker.invoke(invocation=invocation)
+        if broker_result.status != "SUCCEEDED":
+            raise ValueError(
+                f"Provider runtime broker did not complete installation: {broker_result.summary}"
+            )
+        result = super().apply(
+            approval=approval,
+            plan=plan,
+            configuration=configuration,
+            manifest=manifest,
+            provider_instance_id=provider_instance_id,
+        )
+        runtime_step = ProviderInstallationStepResult(
+            step_id="runtime-broker-install",
+            step_type="provider_runtime_install",
+            status="RECORDED",
+            summary=broker_result.summary,
+            details={
+                "invocation": invocation.model_dump(mode="json"),
+                "broker": broker_result.model_dump(mode="json"),
+            },
+        )
+        return result.model_copy(update={"step_results": [runtime_step, *result.step_results]})
+
+    def build_invocation(
+        self,
+        *,
+        approval: ProviderInstallationApproval,
+        plan: InstallationPlan,
+        configuration: dict,
+        manifest: dict,
+        action: str,
+    ) -> ProviderRuntimeInvocation:
+        self._validate_inputs(
+            approval=approval,
+            plan=plan,
+            configuration=configuration,
+            manifest=manifest,
+        )
+        if action not in {"install", "start", "status", "stop"}:
+            raise ValueError("unsupported Provider runtime action")
+        descriptors = manifest.get("runtime_installers")
+        if not isinstance(descriptors, list):
+            raise ValueError("Provider manifest does not declare runtime installers")
+        descriptor = next(
+            (
+                item
+                for item in descriptors
+                if isinstance(item, dict)
+                and item.get("installer_id") == "aidn-provider-runtime-ubuntu.v1"
+                and item.get("provider") == approval.plugin_id
+            ),
+            None,
+        )
+        if descriptor is None:
+            raise ValueError("Provider manifest has no matching reviewed runtime installer")
+        runtime = ProviderRuntimeInstallerDescriptor.model_validate(descriptor)
+        if action not in runtime.actions:
+            raise ValueError(f"runtime installer does not support action: {action}")
+
+        arguments: dict[str, str] = {}
+        if action == "install":
+            if runtime.provider == "whisper":
+                arguments["image"] = runtime.pinned_version
+            elif runtime.provider == "ollama":
+                arguments["version"] = runtime.pinned_version
+            elif runtime.provider == "llama.cpp":
+                arguments["ref"] = runtime.pinned_version
+                arguments["backend"] = str(configuration.get("backend") or "cpu")
+                if arguments["backend"] not in {"cpu", "cuda"}:
+                    raise ValueError("llama.cpp runtime backend is not reviewed")
+            elif runtime.provider == "vllm":
+                arguments["version"] = runtime.pinned_version
+                arguments["python"] = str(configuration.get("python_version") or "3.12")
+                if arguments["python"] != "3.12":
+                    raise ValueError("vLLM Python version is not reviewed")
+                if str(configuration.get("backend") or "cuda") != "cuda":
+                    raise ValueError("managed vLLM runtime requires the reviewed CUDA backend")
+
+        configured_version = configuration.get("runtime_version") or configuration.get("runtime_ref")
+        if configured_version is not None and str(configured_version) != runtime.pinned_version:
+            raise ValueError("Provider configuration runtime version does not match reviewed pin")
+        return ProviderRuntimeInvocation(
+            approval_id=approval.approval_id,
+            plan_hash=approval.plan_hash,
+            configuration_hash=approval.configuration_hash,
+            installer_id=runtime.installer_id,
+            provider=runtime.provider,
+            action=action,
+            pinned_version=runtime.pinned_version,
+            arguments=arguments,
+        )
 
 
 class SandboxEnforcedProviderInstallationExecutor(RecordedProviderInstallationExecutor):

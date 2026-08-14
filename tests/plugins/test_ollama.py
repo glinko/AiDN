@@ -54,21 +54,35 @@ class StubOllamaPlugin(OllamaPlugin):
 def test_ollama_plugin_describes_llm_text_capability() -> None:
     plugin = OllamaPlugin()
 
-    assert plugin.describe() == {
-        "plugin_id": "ollama",
-        "plugin_version": "0.1.0",
-        "plugin_capability_flags": ["CAN_ATTACH_EXISTING", "CAN_DISCOVER_MODELS"],
-        "supported_aidn_capabilities": ["llm.chat"],
-        "workload_types": ["llm_text"],
-        "usage_contract": {
-            "supports_exact": True,
-            "supports_estimated": True,
-            "default_measurement_source": "provider_api",
-            "fallback_measurement_source": "provider_api_partial",
-            "fallback_policy": "partial_response_estimate",
-            "missing_usage_behavior": "skip",
-        },
-    }
+    description = plugin.describe()
+
+    assert description["plugin_id"] == "ollama"
+    assert description["plugin_version"] == "0.2.0"
+    assert description["plugin_capability_flags"] == [
+        "CAN_ATTACH_EXISTING",
+        "CAN_INSTALL_PROVIDER",
+        "CAN_DISCOVER_MODELS",
+    ]
+    assert description["supported_aidn_capabilities"] == ["llm.chat"]
+    assert description["workload_types"] == ["llm_text"]
+    assert description["installation_recipes"][0]["recipe_id"] == ("ollama-ubuntu-loopback")
+    assert description["sandbox_policy"]["execution_mode"] == "RECORDED_ONLY"
+    assert description["runtime_installers"][0]["pinned_version"] == "0.32.12"
+
+
+def test_ollama_plugin_builds_reviewed_ubuntu_install_plan() -> None:
+    plan = OllamaPlugin().build_installation_plan({})
+
+    assert plan["plugin_id"] == "ollama"
+    assert plan["processes"] == []
+    assert plan["model_downloads"] == []
+    assert plan["health_checks"][0]["url"] == "http://127.0.0.1:11434/api/tags"
+    assert plan["unsupported_actions"] == []
+
+
+def test_ollama_plugin_rejects_unreviewed_runtime_version() -> None:
+    with pytest.raises(ValueError, match="runtime_version"):
+        OllamaPlugin().build_installation_plan({"runtime_version": "latest; sh"})
 
 
 def test_ollama_plugin_validate_bundle_requires_endpoint() -> None:

@@ -20,4 +20,15 @@ class FileStateStore:
         payload = json.dumps(snapshot.model_dump(mode="json"), indent=2)
         temporary_path = self.path.with_suffix(f"{self.path.suffix}.tmp")
         temporary_path.write_text(payload, encoding="utf-8")
+        # Hypervisor snapshots contain locally-held wallet material. Keep the
+        # atomic replacement while ensuring both the temporary and final file
+        # are owner-readable only on POSIX hosts.
+        try:
+            temporary_path.chmod(0o600)
+        except OSError:
+            pass
         temporary_path.replace(self.path)
+        try:
+            self.path.chmod(0o600)
+        except OSError:
+            pass

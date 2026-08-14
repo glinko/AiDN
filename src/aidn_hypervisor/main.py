@@ -664,6 +664,8 @@ def _build_default_service(
         bundle_registry=_default_bundle_registry(plugins),
         registry_service=registry_service,
         plugin_host_secret_manager=plugin_host_secret_manager,
+        node_id=os.getenv("AIDN_NODE_ID", os.getenv("AIDN_CONSENSUS_NODE_ID", "node-local")),
+        operator_id=os.getenv("AIDN_OPERATOR_ID", os.getenv("AIDN_CONSENSUS_NODE_ID", "operator-local")),
     )
     if state_store is not None:
         service.restore_state(state_store.load())

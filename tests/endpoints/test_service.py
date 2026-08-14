@@ -3,6 +3,7 @@ import pytest
 from aidn_hypervisor.endpoints.endpoint_application_service import EndpointApplicationService
 from aidn_hypervisor.endpoints.models import (
     CreateEndpointCommand,
+    EndpointProfile,
     UpdateEndpointCommand,
 )
 from aidn_hypervisor.endpoints.service import EndpointService, EndpointStateError
@@ -190,6 +191,35 @@ def test_update_endpoint_pricing_rotates_configuration_hash_and_snapshot() -> No
     assert updated.endpoint.configuration_hash != created.endpoint.configuration_hash
     assert updated.snapshot is not None
     assert updated.snapshot.pricing.audio_input_second_price == 0.4
+    assert len(service.list_configuration_snapshots(created.endpoint.endpoint_id)) == 2
+
+
+def test_update_endpoint_marketplace_description_rotates_configuration_hash() -> None:
+    service = EndpointService(EndpointStore())
+    created = service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="bundle-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Operator STT",
+            model_class="speech.stt",
+            capabilities=["speech.stt"],
+        )
+    )
+
+    updated = service.update_endpoint(
+        UpdateEndpointCommand(
+            endpoint_id=created.endpoint.endpoint_id,
+            profile=EndpointProfile(
+                summary="Fast speech recognition",
+                marketplace_description={"html": "<p>Try this endpoint.</p>"},
+            ),
+        )
+    )
+
+    assert updated.endpoint.configuration_hash != created.endpoint.configuration_hash
+    assert updated.snapshot is not None
+    assert updated.snapshot.profile.marketplace_description is not None
     assert len(service.list_configuration_snapshots(created.endpoint.endpoint_id)) == 2
 
 

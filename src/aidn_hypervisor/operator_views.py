@@ -42,6 +42,7 @@ def _local_publication_configuration_hash(manifest) -> str:
         pricing=manifest.pricing.model_dump(mode="json"),
         session=manifest.session.model_dump(mode="json"),
         execution=_execution_payload_for_manifest(manifest),
+        profile=manifest.profile.model_dump(mode="json"),
     )
     return configuration_hash_for_publication(payload)
 

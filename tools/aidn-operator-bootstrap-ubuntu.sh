@@ -40,6 +40,9 @@ Options:
   --cometbft-version TAG   CometBFT release tag (default: v0.38.19)
   --no-consensus             Disable automatic local CometBFT installation
   --no-start                Install and write the user service, but do not start it
+  --wallet-action ACTION    create, import, or skip (interactive default: create)
+  --dashboard-pairing ACTION create or skip (interactive default: create)
+  --agent-action ACTION     guide or skip existing MCP enrollment (default: guide)
   --non-interactive         Use defaults and supplied flags; fail if a value is unsafe
   -h, --help                Show this help
 
@@ -72,7 +75,7 @@ valid_port() {
 }
 
 valid_path() {
-  [[ "$1" == /* && "$1" != *[[:space:]]* ]]
+  [[ "$1" =~ ^/[A-Za-z0-9._/-]+$ && "$1" != *".."* ]]
 }
 
 is_loopback_host() {
@@ -160,9 +163,15 @@ consensus_mode='validator'
 cometbft_version='v0.38.19'
 no_start='false'
 non_interactive='false'
+wallet_action=''
+dashboard_pairing_action=''
+agent_action=''
 operator_id_supplied='false'
 enable_registry_supplied='false'
 consensus_mode_supplied='false'
+wallet_action_supplied='false'
+dashboard_pairing_supplied='false'
+agent_action_supplied='false'
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -267,6 +276,24 @@ while [[ $# -gt 0 ]]; do
       no_start='true'
       shift
       ;;
+    --wallet-action)
+      require_value "$1" "$@"
+      wallet_action="$2"
+      wallet_action_supplied='true'
+      shift 2
+      ;;
+    --dashboard-pairing)
+      require_value "$1" "$@"
+      dashboard_pairing_action="$2"
+      dashboard_pairing_supplied='true'
+      shift 2
+      ;;
+    --agent-action)
+      require_value "$1" "$@"
+      agent_action="$2"
+      agent_action_supplied='true'
+      shift 2
+      ;;
     --non-interactive)
       non_interactive='true'
       shift
@@ -319,6 +346,42 @@ fi
 case "$consensus_mode" in
   validator|non_validator|disabled) ;;
   *) die 'consensus mode must be validator, non_validator, or disabled' ;;
+esac
+
+if [[ "$wallet_action_supplied" != 'true' ]]; then
+  if [[ "$non_interactive" == 'true' ]]; then
+    wallet_action='skip'
+  else
+    wallet_action="$(prompt_value 'Owner wallet action (create/import/skip)' 'create')"
+  fi
+fi
+case "$wallet_action" in
+  create|import|skip) ;;
+  *) die 'wallet action must be create, import, or skip' ;;
+esac
+
+if [[ "$dashboard_pairing_supplied" != 'true' ]]; then
+  if [[ "$non_interactive" == 'true' ]]; then
+    dashboard_pairing_action='skip'
+  else
+    dashboard_pairing_action="$(prompt_value 'Dashboard pairing (create/skip)' 'create')"
+  fi
+fi
+case "$dashboard_pairing_action" in
+  create|skip) ;;
+  *) die 'dashboard pairing action must be create or skip' ;;
+esac
+
+if [[ "$agent_action_supplied" != 'true' ]]; then
+  if [[ "$non_interactive" == 'true' ]]; then
+    agent_action='skip'
+  else
+    agent_action='guide'
+  fi
+fi
+case "$agent_action" in
+  guide|skip) ;;
+  *) die 'agent action must be guide or skip' ;;
 esac
 
 if [[ "$non_interactive" != 'true' ]]; then
@@ -506,10 +569,13 @@ registry_config=$registry_q
 python_bin=$python_q
 export AIDN_HYPERVISOR_STATE_PATH="\$data/hypervisor-state.json"
 export AIDN_HYPERVISOR_BUNDLES_PATH="\$data/bundles.json"
+export AIDN_NODE_ID=$(shell_quote "$operator_id")
+export AIDN_OPERATOR_ID=$(shell_quote "$operator_id")
 export AIDN_RESOURCE_PROBE_MODE=auto
 export AIDN_RESOURCE_CAPACITY_PATH="\$data/resource-capacity.json"
 export AIDN_SECRET_MANAGER_PATH="\$data/registry-replication/secrets.json"
 export AIDN_SECRET_MANAGER_MASTER_KEY="\$(tr -d '\r\n' < "\$data/registry-replication/master-key.b64")"
+export AIDN_MCP_REMOTE_ENABLED=true
 export PYTHONUNBUFFERED=1
 EOF
 if [[ "$consensus_mode" != 'disabled' ]]; then
@@ -540,13 +606,38 @@ chmod 700 "$wrapper"
 
 operator_cli_wrapper="$data_dir/aidn-operator-wrapper.sh"
 dashboard_url="http://$advertise_host:$api_port/operators/dashboard/react#settings"
+operator_api_host="$api_host"
+if [[ "$operator_api_host" == '0.0.0.0' || "$operator_api_host" == '::' ]]; then
+  operator_api_host='127.0.0.1'
+fi
+operator_api_url_host="$operator_api_host"
+if [[ "$operator_api_url_host" == *:* && "$operator_api_url_host" != \[*\] ]]; then
+  operator_api_url_host="[$operator_api_url_host]"
+fi
+operator_api_url="http://$operator_api_url_host:$api_port"
 cat > "$operator_cli_wrapper" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-exec "$python_bin" -m aidn_hypervisor.operator_cli \\
-  --secret-manager-path "$registry_root/secrets.json" \\
-  --master-key-file "$registry_root/master-key.b64" \\
-  --dashboard-url $(shell_quote "$dashboard_url") "\$@"
+export AIDN_HYPERVISOR_STATE_PATH=$(shell_quote "$data_dir/hypervisor-state.json")
+export AIDN_HYPERVISOR_BUNDLES_PATH=$(shell_quote "$data_dir/bundles.json")
+export AIDN_NODE_ID=$(shell_quote "$operator_id")
+export AIDN_OPERATOR_ID=$(shell_quote "$operator_id")
+export AIDN_MCP_REMOTE_ENABLED=true
+if [[ -z "\${AIDN_SECRET_MANAGER_MASTER_KEY:-}" ]]; then
+  export AIDN_SECRET_MANAGER_MASTER_KEY="\$(tr -d '\r\n' < $(shell_quote "$registry_root/master-key.b64"))"
+fi
+common_args=(
+  --secret-manager-path $(shell_quote "$registry_root/secrets.json")
+  --master-key-file $(shell_quote "$registry_root/master-key.b64")
+  --state-path $(shell_quote "$data_dir/hypervisor-state.json")
+  --bundles-path $(shell_quote "$data_dir/bundles.json")
+  --api-url $(shell_quote "$operator_api_url")
+)
+if [[ "\${1:-}" == 'pair' ]]; then
+  exec "$python_bin" -m aidn_hypervisor.operator_cli "\$@" "\${common_args[@]}" \\
+    --dashboard-url $(shell_quote "$dashboard_url")
+fi
+exec "$python_bin" -m aidn_hypervisor.operator_cli "\$@" "\${common_args[@]}"
 EOF
 chmod 700 "$operator_cli_wrapper"
 mkdir -p "$HOME/.local/bin"
@@ -631,6 +722,76 @@ if [[ "$no_start" != 'true' ]]; then
   fi
 fi
 
+wallet_bootstrap_status='deferred_no_start'
+wallet_bootstrap_id=''
+wallet_bootstrap_public_key=''
+dashboard_pairing_status='skipped'
+agent_onboarding_status='skipped'
+if [[ "$no_start" == 'true' ]]; then
+  echo 'Onboarding is deferred because --no-start was supplied.' >&2
+  echo "  After starting $service_name, run: aidn-operator wallet create|import" >&2
+  echo '  Then run: aidn-operator pair' >&2
+else
+  case "$wallet_action" in
+    create)
+      "$HOME/.local/bin/aidn-operator" wallet create --label 'Owner Wallet'
+      ;;
+    import)
+      "$HOME/.local/bin/aidn-operator" wallet import --label 'Owner Wallet'
+      ;;
+    skip)
+      echo 'Owner wallet bootstrap skipped by operator choice.' >&2
+      ;;
+  esac
+  wallet_status_json=''
+  if wallet_status_json="$("$HOME/.local/bin/aidn-operator" wallet status)"; then
+    wallet_bootstrap_status="$($python_bin - "$wallet_status_json" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+print("configured" if payload.get("configured") else "not_configured")
+PY
+)"
+    wallet_bootstrap_id="$($python_bin - "$wallet_status_json" <<'PY'
+import json
+import sys
+
+print(json.loads(sys.argv[1]).get("wallet_id") or "")
+PY
+)"
+    wallet_bootstrap_public_key="$($python_bin - "$wallet_status_json" <<'PY'
+import json
+import sys
+
+print(json.loads(sys.argv[1]).get("public_key") or "")
+PY
+)"
+  else
+    wallet_bootstrap_status='status_unavailable'
+  fi
+
+  if [[ "$dashboard_pairing_action" == 'create' ]]; then
+    "$HOME/.local/bin/aidn-operator" pair
+    dashboard_pairing_status='created_once'
+  else
+    dashboard_pairing_status='skipped_by_operator'
+  fi
+
+  if [[ "$agent_action" == 'guide' ]]; then
+    agent_onboarding_status='guided_existing_enrollment_boundary'
+    echo >&2
+    echo 'Agent onboarding remains an explicit enrollment/approval decision:' >&2
+    echo "  MCP endpoint: $operator_api_url/mcp" >&2
+    echo '  1. Start the agent with its own X25519 key and submit an enrollment request.' >&2
+    echo '  2. Review its label and key fingerprint in Dashboard -> Settings -> Agent enrollment requests.' >&2
+    echo '  3. Approve only the expected request; the agent retrieves its sealed credential once.' >&2
+    echo '  Terminal helpers: aidn-operator enrollment list | aidn-operator enrollment approve --request-id <id>' >&2
+  else
+    agent_onboarding_status='skipped_by_operator'
+  fi
+fi
+
 state_path="$data_dir/bootstrap-state.json"
 registry_state='disabled_until_mutual_peer_approval'
 if [[ "$enable_registry" == 'true' ]]; then
@@ -640,7 +801,9 @@ fi
   "$api_host" "$api_port" "$registry_state" "$service_name" "$identity_root" \
   "$registry_root" "$operator_public_key" "$ref" "$consensus_mode" \
   "$consensus_service_name" "$consensus_home" "$consensus_binary_path" \
-  "$consensus_rpc_host" "$consensus_rpc_port" "$resource_capacity_path" <<'PY'
+  "$consensus_rpc_host" "$consensus_rpc_port" "$resource_capacity_path" \
+  "$wallet_action" "$wallet_bootstrap_status" "$wallet_bootstrap_id" \
+  "$wallet_bootstrap_public_key" "$dashboard_pairing_status" "$agent_onboarding_status" <<'PY'
 import json
 import os
 import sys
@@ -666,6 +829,12 @@ import sys
     consensus_rpc_host,
     consensus_rpc_port,
     resource_capacity_path,
+    wallet_action,
+    wallet_bootstrap_status,
+    wallet_bootstrap_id,
+    wallet_bootstrap_public_key,
+    dashboard_pairing_status,
+    agent_onboarding_status,
 ) = sys.argv[1:]
 payload = {
     "status": "ok",
@@ -695,6 +864,15 @@ payload = {
         "capacity_report": resource_capacity_path,
         "automatic_install": True,
     },
+    "onboarding": {
+        "wallet_action": wallet_action,
+        "wallet_status": wallet_bootstrap_status,
+        "wallet_id": wallet_bootstrap_id or None,
+        "wallet_public_key": wallet_bootstrap_public_key or None,
+        "dashboard_pairing": dashboard_pairing_status,
+        "agent": agent_onboarding_status,
+        "private_material": "not_in_state_file",
+    },
 }
 os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
 with open(path, "w", encoding="utf-8") as stream:
@@ -719,6 +897,10 @@ else
 fi
 echo "  public peer bundle: $registry_root/public-peer.json" >&2
 echo "  public operator identity: $identity_root/operator-public-identity.json" >&2
+echo "  wallet onboarding: $wallet_bootstrap_status${wallet_bootstrap_id:+ ($wallet_bootstrap_id)}" >&2
+echo "  dashboard pairing: $dashboard_pairing_status" >&2
+echo "  agent onboarding: $agent_onboarding_status" >&2
+echo "  operator CLI: $HOME/.local/bin/aidn-operator" >&2
 echo >&2
 echo 'The sudo password was used only by sudo and was not captured by this script.' >&2
 echo 'Do not copy master-key.b64, secrets.json, or operator-attestation-key.raw.' >&2

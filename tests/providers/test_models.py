@@ -20,6 +20,9 @@ from aidn_hypervisor.providers.models import (
     ProviderInstallationRollbackResult,
     ProviderInstallationStepResult,
     ProviderPluginManifest,
+    ProviderRuntimeBrokerResult,
+    ProviderRuntimeInstallerDescriptor,
+    ProviderRuntimeInvocation,
     RuntimeBinding,
     RuntimeIdentity,
     RuntimeInstance,
@@ -89,6 +92,56 @@ def test_provider_plugin_manifest_stores_digest_and_capability_flags() -> None:
         "CAN_ATTACH_EXISTING",
         "CAN_DISCOVER_MODELS",
     ]
+
+
+def test_provider_runtime_installer_descriptor_is_an_exact_allowlist() -> None:
+    descriptor = ProviderRuntimeInstallerDescriptor(
+        installer_id="aidn-provider-runtime-ubuntu.v1",
+        provider="ollama",
+        platform="ubuntu",
+        script="tools/aidn-provider-runtime-ubuntu.sh",
+        pinned_version="0.32.12",
+        actions=["install", "start", "status", "stop"],
+    )
+
+    assert descriptor.model_configuration_separate is True
+
+    for override in (
+        {"script": "/tmp/provider.sh"},
+        {"provider": "custom-shell"},
+        {"actions": ["install", "exec"]},
+    ):
+        payload = descriptor.model_dump()
+        payload.update(override)
+        try:
+            ProviderRuntimeInstallerDescriptor.model_validate(payload)
+        except ValidationError:
+            pass
+        else:
+            raise AssertionError("expected allowlist ValidationError")
+
+
+def test_provider_runtime_invocation_rejects_generic_command_fields() -> None:
+    payload = {
+        "approval_id": "pia-1",
+        "plan_hash": "sha256:plan",
+        "configuration_hash": "sha256:configuration",
+        "installer_id": "aidn-provider-runtime-ubuntu.v1",
+        "provider": "ollama",
+        "action": "install",
+        "pinned_version": "0.32.12",
+        "arguments": {"command": "curl | sh"},
+    }
+
+    try:
+        ProviderRuntimeInvocation.model_validate(payload)
+    except ValidationError as exc:
+        assert "unsupported arguments" in str(exc)
+    else:
+        raise AssertionError("expected generic command field to be rejected")
+
+    result = ProviderRuntimeBrokerResult(status="SUCCEEDED", summary="runtime ready")
+    assert result.events == []
 
 
 def test_provider_plugin_manifest_normalizes_legacy_permission_strings() -> None:

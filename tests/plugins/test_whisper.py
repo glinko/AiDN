@@ -48,9 +48,7 @@ class StubWhisperPlugin(WhisperPlugin):
             return self.transcribe_payload or {"text": ""}
         raise AssertionError(f"unexpected url: {url}")
 
-    def _request_multipart(
-        self, method: str, url: str, body: bytes, *, content_type: str
-    ) -> dict:
+    def _request_multipart(self, method: str, url: str, body: bytes, *, content_type: str) -> dict:
         self.multipart_calls.append((url, body, content_type))
         if self.raise_error is not None:
             raise self.raise_error
@@ -72,10 +70,7 @@ def test_whisper_plugin_describes_speech_to_text_capability() -> None:
         "CAN_DISCOVER_MODELS",
     ]
     assert description["installation_recipes"][0]["recipe_id"] == "whisper-local-http"
-    assert (
-        description["installation_recipes"][0]["provider_configuration"]["api_format"]
-        == "whisper_asr_webservice"
-    )
+    assert description["installation_recipes"][0]["provider_configuration"]["api_format"] == "whisper_asr_webservice"
     assert description["usage_contract"] == {
         "supports_exact": False,
         "supports_estimated": True,
@@ -110,7 +105,9 @@ def test_whisper_plugin_builds_bounded_managed_install_plan() -> None:
         }
     ]
     assert plan["required_permissions"][0]["permission_id"] == "network.private"
-    assert plugin.plugin_manifest()["package_digest"].startswith("sha256:")
+    manifest = plugin.plugin_manifest()
+    assert manifest["package_digest"].startswith("sha256:")
+    assert manifest["runtime_installers"][0]["pinned_version"].endswith(":v1.9.1")
 
 
 def test_whisper_managed_plan_checks_native_asr_openapi() -> None:
@@ -165,9 +162,7 @@ def test_whisper_managed_binding_preserves_provider_api_format() -> None:
         capability_definition_hash="sha256:capability",
     )
 
-    assert binding["compatibility_bundle"]["provider_api_format"] == (
-        "whisper_asr_webservice"
-    )
+    assert binding["compatibility_bundle"]["provider_api_format"] == ("whisper_asr_webservice")
 
 
 def test_whisper_managed_plan_can_be_approved_applied_and_discovered() -> None:
@@ -183,15 +178,20 @@ def test_whisper_managed_plan_can_be_approved_applied_and_discovered() -> None:
         "model_id": "small",
     }
 
+    approved_permissions = [
+        "network.private",
+        "host.container_runtime",
+        "network.egress",
+    ]
     diagnostics = service.run_installation_diagnostics(
         plugin_id="whisper",
         configuration=configuration,
-        approved_permissions=["network.private"],
+        approved_permissions=approved_permissions,
     )
     approval = service.approve_installation_plan(
         "whisper",
         configuration,
-        approved_permissions=["network.private"],
+        approved_permissions=approved_permissions,
     )
     job = service.apply_installation_approval(approval.approval_id)
     models = service.discover_models(job.provider_instance_id)
@@ -325,9 +325,7 @@ def test_whisper_plugin_health_check_returns_false_on_transport_error() -> None:
 
 
 def test_whisper_plugin_invoke_posts_audio_ref_and_returns_normalized_payload() -> None:
-    plugin = StubWhisperPlugin(
-        transcribe_payload={"text": "hello world", "language": "en"}
-    )
+    plugin = StubWhisperPlugin(transcribe_payload={"text": "hello world", "language": "en"})
     runtime = RuntimeHandle(
         runtime_id="rt-1",
         command=["whisper-server"],
@@ -364,9 +362,7 @@ def test_whisper_plugin_invoke_posts_audio_ref_and_returns_normalized_payload() 
 
 
 def test_whisper_plugin_records_provider_duration_without_inventing_tokens() -> None:
-    plugin = StubWhisperPlugin(
-        transcribe_payload={"text": "hello world", "duration_seconds": 12.5}
-    )
+    plugin = StubWhisperPlugin(transcribe_payload={"text": "hello world", "duration_seconds": 12.5})
     runtime = RuntimeHandle(
         runtime_id="rt-1",
         command=["whisper-server"],
@@ -401,9 +397,7 @@ def test_whisper_native_launch_spec_preserves_api_format() -> None:
 def test_whisper_native_invoke_posts_bounded_multipart_audio() -> None:
     audio_bytes = b"RIFF\x00\x00\x00\x00WAVEfmt "
     audio_ref = "data:audio/wav;base64," + base64.b64encode(audio_bytes).decode("ascii")
-    plugin = StubWhisperPlugin(
-        transcribe_payload={"text": "hello native", "language": "en"}
-    )
+    plugin = StubWhisperPlugin(transcribe_payload={"text": "hello native", "language": "en"})
     runtime = RuntimeHandle(
         runtime_id="rt-native",
         command=["whisper-server"],

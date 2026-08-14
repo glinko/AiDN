@@ -45,9 +45,7 @@ class WhisperPlugin(ProviderPlugin):
             "plugin_version": self.plugin_version,
             "display_name": "Whisper HTTP Provider",
             "publisher": "AiDN Built-in",
-            "package_digest": (
-                "sha256:e31e667a78a007570c26933d553812143f6f436e36f017ae5697375f25f8a959"
-            ),
+            "package_digest": ("sha256:e31e667a78a007570c26933d553812143f6f436e36f017ae5697375f25f8a959"),
             "provider_type": "whisper",
             "provider_families": ["whisper"],
             "plugin_capability_flags": [
@@ -61,7 +59,19 @@ class WhisperPlugin(ProviderPlugin):
                     "label": "Private provider network",
                     "risk_level": "low",
                     "reason": "Connect to the operator-selected Whisper HTTP endpoint",
-                }
+                },
+                {
+                    "permission_id": "host.container_runtime",
+                    "label": "Manage reviewed Provider container",
+                    "risk_level": "high",
+                    "reason": "Pull and supervise the reviewed Whisper ASR container",
+                },
+                {
+                    "permission_id": "network.egress",
+                    "label": "Download reviewed runtime",
+                    "risk_level": "medium",
+                    "reason": "Pull the reviewed Whisper ASR image and model cache",
+                },
             ],
             "trust_status": "AIDN_CURATED",
             "sandbox_policy": {
@@ -70,10 +80,21 @@ class WhisperPlugin(ProviderPlugin):
                 "network_scope": "NONE",
                 "secret_scope": "DECLARED_HANDLES_ONLY",
                 "notes": (
-                    "The MVP apply records local provider inventory only; it does not "
-                    "install packages or start a host process."
+                    "The generic executor records approval only. Host mutation requires "
+                    "the future allowlisted Provider runtime installer executor."
                 ),
             },
+            "runtime_installers": [
+                {
+                    "installer_id": "aidn-provider-runtime-ubuntu.v1",
+                    "provider": self.plugin_id,
+                    "platform": "ubuntu",
+                    "script": "tools/aidn-provider-runtime-ubuntu.sh",
+                    "pinned_version": "onerahmet/openai-whisper-asr-webservice:v1.9.1",
+                    "actions": ["install", "start", "status", "stop"],
+                    "model_configuration_separate": True,
+                }
+            ],
             "supported_platforms": ["linux", "darwin", "windows"],
             "supported_architectures": ["x86_64", "arm64"],
             "supported_accelerators": ["cpu", "cuda"],
@@ -81,9 +102,7 @@ class WhisperPlugin(ProviderPlugin):
                 {
                     "recipe_id": "whisper-local-http",
                     "display_name": "Local Whisper HTTP",
-                    "description": (
-                        "Register an operator-managed Whisper HTTP service on this host"
-                    ),
+                    "description": ("Register an operator-managed Whisper HTTP service on this host"),
                     "provider_configuration": {
                         "display_name": "Local Whisper",
                         "endpoint": self._default_endpoint,
@@ -164,28 +183,20 @@ class WhisperPlugin(ProviderPlugin):
             raise ValueError("endpoint must be an absolute HTTP URL")
         if not model_id:
             raise ValueError("model_id is required")
-        api_format = str(
-            configuration.get("api_format") or self._managed_api_format
-        ).strip()
+        api_format = str(configuration.get("api_format") or self._managed_api_format).strip()
         if api_format not in self._supported_api_formats:
             raise ValueError("api_format is unsupported")
 
     def build_installation_plan(self, configuration: dict) -> dict:
         self.validate_provider_configuration(configuration)
         endpoint = str(configuration["endpoint"]).rstrip("/")
-        api_format = str(
-            configuration.get("api_format") or self._managed_api_format
-        )
-        health_url = (
-            f"{endpoint}/openapi.json"
-            if api_format == self._managed_api_format
-            else f"{endpoint}/health"
-        )
+        api_format = str(configuration.get("api_format") or self._managed_api_format)
+        health_url = f"{endpoint}/openapi.json" if api_format == self._managed_api_format else f"{endpoint}/health"
         return {
             "plan_id": "plan-whisper-http-v1",
             "plugin_id": self.plugin_id,
             "plan_version": "1.0.0",
-            "summary": "Register an operator-managed Whisper HTTP provider",
+            "summary": "Install the reviewed Whisper ASR runtime image",
             "containers": [],
             "processes": [],
             "model_downloads": [],
@@ -250,9 +261,7 @@ class WhisperPlugin(ProviderPlugin):
             }
         )
         provider_configuration = model_deployment.get("provider_configuration") or {}
-        api_format = str(
-            provider_configuration.get("api_format") or self._managed_api_format
-        ).strip()
+        api_format = str(provider_configuration.get("api_format") or self._managed_api_format).strip()
         if api_format not in self._supported_api_formats:
             raise ValueError("api_format is unsupported")
         binding["compatibility_bundle"]["provider_api_format"] = api_format
@@ -307,9 +316,7 @@ class WhisperPlugin(ProviderPlugin):
     def health_check(self, runtime_handle) -> bool:
         try:
             if self._api_format(runtime_handle) == self._managed_api_format:
-                payload = self._request_json(
-                    "GET", f"{self._endpoint(runtime_handle)}/openapi.json"
-                )
+                payload = self._request_json("GET", f"{self._endpoint(runtime_handle)}/openapi.json")
                 return "/asr" in payload.get("paths", {})
             payload = self._request_json("GET", f"{self._endpoint(runtime_handle)}/health")
         except Exception:
@@ -407,9 +414,7 @@ class WhisperPlugin(ProviderPlugin):
             raise ValueError("Whisper runtime metadata has unsupported api_format")
         return api_format
 
-    def _invoke_native_asr(
-        self, *, endpoint: str, audio_ref: str
-    ) -> dict:
+    def _invoke_native_asr(self, *, endpoint: str, audio_ref: str) -> dict:
         content_type, filename, audio_bytes = self._decode_inline_audio(audio_ref)
         boundary = f"aidn-whisper-{hashlib.sha256(audio_bytes).hexdigest()[:24]}"
         body = bytearray()
@@ -438,25 +443,20 @@ class WhisperPlugin(ProviderPlugin):
         )
         if match is None:
             raise ValueError(
-                "native Whisper requires audio_ref as a base64 data URI; "
-                "arbitrary filesystem paths are not permitted"
+                "native Whisper requires audio_ref as a base64 data URI; arbitrary filesystem paths are not permitted"
             )
         content_type = match.group("mime").lower()
         extension = self._audio_mime_extensions.get(content_type)
         if extension is None:
             raise ValueError(f"native Whisper does not accept audio MIME type: {content_type}")
         try:
-            audio_bytes = base64.b64decode(
-                re.sub(r"\s+", "", match.group("data")), validate=True
-            )
+            audio_bytes = base64.b64decode(re.sub(r"\s+", "", match.group("data")), validate=True)
         except (ValueError, binascii.Error) as exc:
             raise ValueError("audio_ref contains invalid base64 audio data") from exc
         if not audio_bytes:
             raise ValueError("audio_ref contains empty audio data")
         if len(audio_bytes) > self._max_inline_audio_bytes:
-            raise ValueError(
-                f"inline audio exceeds {self._max_inline_audio_bytes} byte limit"
-            )
+            raise ValueError(f"inline audio exceeds {self._max_inline_audio_bytes} byte limit")
         return content_type, f"input.{extension}", audio_bytes
 
     def _request_json(self, method: str, url: str, payload: dict | None = None) -> dict:

@@ -13,7 +13,10 @@ from aidn_hypervisor.endpoints.endpoint_application_service import (
     EndpointApplicationService,
     RemoteEndpointNotFoundError,
 )
-from aidn_hypervisor.endpoints.models import UpdateEndpointCommand
+from aidn_hypervisor.endpoints.models import (
+    EndpointMarketplaceDescription,
+    UpdateEndpointCommand,
+)
 from aidn_hypervisor.endpoints.mvp_session_application_service import (
     MvpPaidSmokeEvidenceMissingError,
     MvpSessionApplicationService,
@@ -84,6 +87,10 @@ class MvpPaidSmokeRequest(BaseModel):
     actual_network_fees_q_atoms: int = Field(default=0, ge=0)
 
 
+class MarketplaceDescriptionPreviewRequest(BaseModel):
+    html: str = Field(min_length=1)
+
+
 def build_endpoint_router(
     service,
     hypervisor_service=None,
@@ -150,6 +157,7 @@ def build_endpoint_router(
             pricing=endpoint.pricing.model_dump(mode="json"),
             session=endpoint.session.model_dump(mode="json"),
             execution=_publication_execution_payload(endpoint),
+            profile=endpoint.profile.model_dump(mode="json"),
         )
         return configuration_hash_for_publication(payload)
 
@@ -281,6 +289,25 @@ def build_endpoint_router(
     async def list_endpoints() -> JSONResponse:
         items = [item.model_dump(mode="json") for item in service.list_endpoints()]
         return _ok({"items": items})
+
+    @router.post("/marketplace-description/preview")
+    async def preview_marketplace_description(
+        request: MarketplaceDescriptionPreviewRequest,
+    ) -> JSONResponse:
+        try:
+            description = EndpointMarketplaceDescription(html=request.html)
+        except ValueError as error:
+            return _error(
+                422,
+                "marketplace_description_invalid",
+                str(error),
+            )
+        return _ok(
+            {
+                "description": description.model_dump(mode="json"),
+                "rendered_html": description.html,
+            }
+        )
 
     @router.post("", status_code=201)
     async def create_endpoint(payload: dict) -> JSONResponse:

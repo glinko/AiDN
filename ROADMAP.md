@@ -4,6 +4,57 @@ Last updated: `2026-08-14`
 
 This is the main public roadmap for the repository.
 
+## 2026-08-14 Provider Deployment, Marketplace Authoring, And Ubuntu Onboarding
+
+The next operator-product milestone is split into three ordered vertical slices.
+The detailed design and executable task list are in
+[the three-slice design](./docs/superpowers/specs/2026-08-14-provider-marketplace-bootstrap-slices-design.md)
+and [implementation plan](./docs/superpowers/plans/2026-08-14-provider-marketplace-bootstrap-slices.md).
+
+Started in this slice:
+
+- [x] Define one reviewed Ubuntu runtime-installer entrypoint with an exact
+  allowlist for `whisper`, `ollama`, `llama.cpp`, and `vllm`; arbitrary script
+  paths and arbitrary shell commands are not accepted.
+- [x] Add pinned `install/start/status/stop` scripts for the four initial
+  runtimes. Runtime installation stays separate from model selection/download,
+  and managed HTTP services bind to loopback by default.
+- [x] Publish typed runtime-installer metadata from the four built-in Provider
+  Plugin manifests while keeping the existing generic apply executor
+  `RECORDED_ONLY`.
+- [x] Add focused tests for exact dispatch, pinned versions, loopback binding,
+  model/runtime separation, manifest validation, and Bash syntax.
+- [x] Add the typed, shell-free runtime invocation contract and an injected
+  broker adapter that builds only reviewed dispatcher argv with bounded output.
+- [x] Add the versioned Marketplace description model, bounded server-side
+  sanitizer, content hash, and publication-hash binding while preserving
+  Endpoint records that have no description.
+- [x] Add the protected Marketplace HTML preview contract and the React draft
+  editor, rendering only the server-returned sanitized HTML.
+
+Next implementation increments:
+
+- [ ] Wire the specialized allowlisted runtime-installation executor to a
+  root-owned privileged broker. It must authenticate local callers, stream
+  durable job progress, support cancellation/status, and never expose generic
+  shell execution.
+- [ ] Add the Provider catalog dashboard flow: select a reviewed Provider,
+  run preflight, approve permissions, press one primary `Install` action, and
+  see progress/readiness. Model configuration remains a secondary follow-up.
+- [ ] Complete authored Marketplace publication UX: explicit publish/hash
+  confirmation, published/failed states, browser XSS acceptance, and public
+  card coverage. Storage, sanitization, publication binding, preview API, and
+  the initial React editor are implemented.
+- [x] Extend the existing one-line Ubuntu bootstrap with post-install wallet
+  create/import/skip, dashboard pairing, agent-enrollment guidance, health
+  verification, and a secret-free completion summary. Fresh-VM and interrupted
+  rerun acceptance remain open.
+
+Safety gate: the existing Provider approval/apply path intentionally does not
+execute package managers, downloads, containers, or shell processes. The new
+dashboard must not present installation as functional until the specialized
+executor and its privilege boundary are implemented and tested.
+
 ## 2026-08-14 ECO-0007 Activation Scope Extension And Maturity Completion
 
 Completed in this slice:

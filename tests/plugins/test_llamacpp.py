@@ -49,24 +49,31 @@ class StubLlamaCppPlugin(LlamaCppPlugin):
 def test_llamacpp_plugin_describes_llm_text_capability() -> None:
     plugin = LlamaCppPlugin()
 
-    assert plugin.describe() == {
-        "plugin_id": "llama.cpp",
-        "plugin_version": "0.1.0",
-        "display_name": "llama.cpp OpenAI-compatible",
-        "provider_type": "llama.cpp",
-        "provider_families": ["llama.cpp", "openai-compatible"],
-        "plugin_capability_flags": ["CAN_ATTACH_EXISTING", "CAN_DISCOVER_MODELS"],
-        "supported_aidn_capabilities": ["llm.chat"],
-        "workload_types": ["llm_text"],
-        "usage_contract": {
-            "supports_exact": True,
-            "supports_estimated": True,
-            "default_measurement_source": "provider_api",
-            "fallback_measurement_source": "provider_api_partial",
-            "fallback_policy": "partial_response_estimate",
-            "missing_usage_behavior": "skip",
-        },
-    }
+    description = plugin.describe()
+
+    assert description["plugin_id"] == "llama.cpp"
+    assert description["plugin_version"] == "0.2.0"
+    assert description["plugin_capability_flags"] == [
+        "CAN_ATTACH_EXISTING",
+        "CAN_INSTALL_PROVIDER",
+        "CAN_DISCOVER_MODELS",
+    ]
+    assert description["installation_recipes"][0]["recipe_id"] == ("llamacpp-ubuntu-cpu")
+    assert description["runtime_installers"][0]["pinned_version"] == "b10433"
+
+
+def test_llamacpp_plugin_builds_reviewed_ubuntu_install_plan() -> None:
+    plan = LlamaCppPlugin().build_installation_plan({})
+
+    assert plan["plugin_id"] == "llama.cpp"
+    assert plan["processes"] == []
+    assert plan["model_downloads"] == []
+    assert plan["health_checks"][0]["url"] == "http://127.0.0.1:8080/health"
+
+
+def test_llamacpp_plugin_rejects_unreviewed_backend() -> None:
+    with pytest.raises(ValueError, match="backend"):
+        LlamaCppPlugin().build_installation_plan({"backend": "shell"})
 
 
 def test_llamacpp_plugin_validate_bundle_requires_endpoint() -> None:
@@ -121,9 +128,7 @@ def test_llamacpp_plugin_projects_deployment_to_rfc0054_runtime_adapter() -> Non
 
 
 def test_llamacpp_plugin_attaches_existing_openai_compatible_provider() -> None:
-    attached = LlamaCppPlugin().attach_existing_provider(
-        {"base_url": "http://127.0.0.1:9000/"}
-    )
+    attached = LlamaCppPlugin().attach_existing_provider({"base_url": "http://127.0.0.1:9000/"})
 
     assert attached == {
         "configuration": {

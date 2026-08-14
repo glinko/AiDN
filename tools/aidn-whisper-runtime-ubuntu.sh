@@ -16,10 +16,11 @@ data_dir="$DEFAULT_DATA_DIR"
 
 usage() {
   cat <<'EOF'
-Usage: aidn-whisper-runtime-ubuntu.sh <start|status|stop> [options]
+Usage: aidn-whisper-runtime-ubuntu.sh <install|start|status|stop> [options]
 
-Starts a reviewed Whisper ASR container bound only to 127.0.0.1. It never
-exposes port 9000 on the LAN. Docker must already be installed and running.
+Installs or starts a reviewed Whisper ASR container bound only to 127.0.0.1.
+It never exposes port 9000 on the LAN. Docker must already be installed and
+running; Docker installation is a separate node-administration decision.
 
 Options:
   --model MODEL       tiny, base, small, medium, or large-v3 (default: base)
@@ -32,9 +33,10 @@ EOF
 die() { echo "error: $*" >&2; exit 1; }
 
 [[ $# -gt 0 ]] || { usage >&2; exit 2; }
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then usage; exit 0; fi
 action="$1"
 shift
-case "$action" in start|status|stop) ;; *) usage >&2; exit 2 ;; esac
+case "$action" in install|start|status|stop) ;; *) usage >&2; exit 2 ;; esac
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -50,12 +52,20 @@ done
 case "$model" in tiny|base|small|medium|large-v3) ;; *) die "unsupported Whisper model: $model" ;; esac
 [[ "$port" == "9000" ]] || die "only localhost port 9000 is supported in MVP"
 [[ "$image" == "$DEFAULT_IMAGE" ]] || die "only the reviewed image $DEFAULT_IMAGE is supported in MVP"
-[[ "$data_dir" == /var/lib/aidn/* ]] || die "data directory must stay under /var/lib/aidn"
+[[ "$data_dir" =~ ^/var/lib/aidn/[A-Za-z0-9._/-]+$ && "$data_dir" != *".."* ]] \
+  || die "data directory must stay under /var/lib/aidn and use safe path characters"
 
 command -v docker >/dev/null 2>&1 || die "Docker is required; install Docker before enabling managed Whisper"
 docker info >/dev/null 2>&1 || die "Docker daemon is unavailable"
 
 case "$action" in
+  install)
+    docker pull "$image" >/dev/null
+    image_digest="$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')"
+    [[ -n "$image_digest" && "$image_digest" != '<no value>' ]] || die "could not resolve pulled image digest"
+    printf '{"status":"installed","provider":"whisper","image":"%s","model_download":"deferred"}\n' \
+      "$image_digest"
+    ;;
   status)
     docker inspect "$SERVICE_NAME" --format '{"name":"{{.Name}}","state":"{{.State.Status}}","image":"{{.Config.Image}}"}' 2>/dev/null || {
       echo '{"state":"absent"}'

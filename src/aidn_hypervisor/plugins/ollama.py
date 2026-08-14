@@ -1,4 +1,5 @@
 import json
+import re
 from urllib import error, parse, request
 
 from aidn_hypervisor.plugins.base import ProviderPlugin
@@ -6,6 +7,8 @@ from aidn_hypervisor.plugins.base import ProviderPlugin
 
 class OllamaPlugin(ProviderPlugin):
     plugin_id = "ollama"
+    plugin_version = "0.2.0"
+    _runtime_version = "0.32.12"
     _default_endpoint = "http://127.0.0.1:11434"
     _circuit_breaker_policy = {
         "failure_threshold": 2,
@@ -23,11 +26,142 @@ class OllamaPlugin(ProviderPlugin):
     def describe(self) -> dict:
         return {
             "plugin_id": self.plugin_id,
-            "plugin_version": "0.1.0",
-            "plugin_capability_flags": ["CAN_ATTACH_EXISTING", "CAN_DISCOVER_MODELS"],
+            "plugin_version": self.plugin_version,
+            "display_name": "Ollama",
+            "publisher": "AiDN Built-in",
+            "provider_type": "ollama",
+            "provider_families": ["ollama"],
+            "plugin_capability_flags": [
+                "CAN_ATTACH_EXISTING",
+                "CAN_INSTALL_PROVIDER",
+                "CAN_DISCOVER_MODELS",
+            ],
+            "required_permissions": [
+                {
+                    "permission_id": "host.package_manager",
+                    "label": "Install reviewed host packages",
+                    "risk_level": "high",
+                    "reason": "Install the pinned Ollama runtime on Ubuntu",
+                },
+                {
+                    "permission_id": "host.service_manager",
+                    "label": "Manage reviewed system service",
+                    "risk_level": "high",
+                    "reason": "Enable and supervise the loopback-only Ollama service",
+                },
+                {
+                    "permission_id": "network.egress",
+                    "label": "Download reviewed runtime",
+                    "risk_level": "medium",
+                    "reason": "Download Ollama from the official distribution endpoint",
+                },
+            ],
+            "trust_status": "AIDN_CURATED",
+            "sandbox_policy": {
+                "execution_mode": "RECORDED_ONLY",
+                "filesystem_scope": "NONE",
+                "network_scope": "NONE",
+                "secret_scope": "NONE",
+                "notes": (
+                    "The generic executor records approval only. Host mutation requires "
+                    "the future allowlisted Provider runtime installer executor."
+                ),
+            },
+            "runtime_installers": [
+                {
+                    "installer_id": "aidn-provider-runtime-ubuntu.v1",
+                    "provider": self.plugin_id,
+                    "platform": "ubuntu",
+                    "script": "tools/aidn-provider-runtime-ubuntu.sh",
+                    "pinned_version": self._runtime_version,
+                    "actions": ["install", "start", "status", "stop"],
+                    "model_configuration_separate": True,
+                }
+            ],
+            "source_repository": "https://github.com/ollama/ollama",
+            "license": "MIT",
+            "supported_platforms": ["linux"],
+            "supported_architectures": ["x86_64", "arm64"],
+            "supported_accelerators": ["cpu", "cuda", "rocm"],
+            "installation_recipes": [
+                {
+                    "recipe_id": "ollama-ubuntu-loopback",
+                    "display_name": "Ollama on this Ubuntu node",
+                    "description": ("Install pinned Ollama and bind it only to 127.0.0.1:11434"),
+                    "provider_configuration": {
+                        "display_name": "Local Ollama",
+                        "endpoint": self._default_endpoint,
+                        "runtime_version": self._runtime_version,
+                    },
+                    "model_configuration": {},
+                    "endpoint_defaults": {"capability_id": "llm.chat"},
+                }
+            ],
             "supported_aidn_capabilities": ["llm.chat"],
             "workload_types": ["llm_text"],
             "usage_contract": self.usage_contract(),
+        }
+
+    def install_provider_schema(self) -> dict:
+        return {
+            "schema_id": "ollama.install.v1",
+            "fields": [
+                {
+                    "id": "display_name",
+                    "type": "text",
+                    "label": "Provider name",
+                    "required": True,
+                    "default": "Local Ollama",
+                },
+                {
+                    "id": "endpoint",
+                    "type": "url",
+                    "label": "Local endpoint",
+                    "required": True,
+                    "default": self._default_endpoint,
+                },
+                {
+                    "id": "runtime_version",
+                    "type": "text",
+                    "label": "Reviewed runtime version",
+                    "required": True,
+                    "default": self._runtime_version,
+                },
+            ],
+        }
+
+    def build_installation_plan(self, configuration: dict) -> dict:
+        normalized = {
+            "display_name": configuration.get("display_name") or "Local Ollama",
+            "endpoint": configuration.get("endpoint") or self._default_endpoint,
+            "runtime_version": (configuration.get("runtime_version") or self._runtime_version),
+        }
+        self.validate_provider_configuration(normalized)
+        version = str(normalized["runtime_version"])
+        if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:[.-][A-Za-z0-9.-]+)?", version) is None:
+            raise ValueError("runtime_version is invalid")
+        return {
+            "plan_id": "plan-ollama-ubuntu-v1",
+            "plugin_id": self.plugin_id,
+            "plan_version": "1.0.0",
+            "summary": "Install pinned Ollama as a loopback-only Ubuntu service",
+            "containers": [],
+            "processes": [],
+            "model_downloads": [],
+            "volumes": [],
+            "networks": [{"name": "ollama-loopback", "scope": "local"}],
+            "environment": {"OLLAMA_HOST": "127.0.0.1:11434"},
+            "resource_limits": {},
+            "health_checks": [
+                {
+                    "type": "http",
+                    "url": f"{str(normalized['endpoint']).rstrip('/')}/api/tags",
+                    "timeout_seconds": 5,
+                }
+            ],
+            "required_permissions": self.plugin_manifest()["required_permissions"],
+            "secret_references": [],
+            "unsupported_actions": [],
         }
 
     def attach_existing_provider(self, configuration: dict) -> dict:
@@ -56,9 +190,7 @@ class OllamaPlugin(ProviderPlugin):
                 "operational_state": "ready",
             }
             for item in models
-            if isinstance(item, dict)
-            and isinstance(item.get("model"), str)
-            and item["model"]
+            if isinstance(item, dict) and isinstance(item.get("model"), str) and item["model"]
         ]
 
     def validate_bundle(self, bundle_config) -> None:
@@ -121,9 +253,7 @@ class OllamaPlugin(ProviderPlugin):
         except TypeError as error:
             if "timeout_seconds" not in str(error):
                 raise
-            response = self._request_json(
-                "POST", f"{self._endpoint(runtime_handle)}/api/generate", request_payload
-            )
+            response = self._request_json("POST", f"{self._endpoint(runtime_handle)}/api/generate", request_payload)
         result = {
             "ok": True,
             "task_type": task.task_type,

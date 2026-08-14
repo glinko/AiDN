@@ -67,77 +67,6 @@ def test_default_app_exposes_builtin_plugins(tmp_path, monkeypatch) -> None:
 
     assert response.status_code == 200
     plugins = response.json()
-    assert plugins[:4] == [
-        {
-            "plugin_id": "llama.cpp",
-            "plugin_version": "0.1.0",
-            "display_name": "llama.cpp OpenAI-compatible",
-            "provider_type": "llama.cpp",
-            "provider_families": ["llama.cpp", "openai-compatible"],
-            "plugin_capability_flags": ["CAN_ATTACH_EXISTING", "CAN_DISCOVER_MODELS"],
-            "supported_aidn_capabilities": ["llm.chat"],
-            "workload_types": ["llm_text"],
-            "usage_contract": {
-                "supports_exact": True,
-                "supports_estimated": True,
-                "default_measurement_source": "provider_api",
-                "fallback_measurement_source": "provider_api_partial",
-                "fallback_policy": "partial_response_estimate",
-                "missing_usage_behavior": "skip",
-            },
-        },
-        {
-            "plugin_id": "ollama",
-            "plugin_version": "0.1.0",
-            "plugin_capability_flags": ["CAN_ATTACH_EXISTING", "CAN_DISCOVER_MODELS"],
-            "supported_aidn_capabilities": ["llm.chat"],
-            "workload_types": ["llm_text"],
-            "usage_contract": {
-                "supports_exact": True,
-                "supports_estimated": True,
-                "default_measurement_source": "provider_api",
-                "fallback_measurement_source": "provider_api_partial",
-                "fallback_policy": "partial_response_estimate",
-                "missing_usage_behavior": "skip",
-            },
-        },
-        {
-            "plugin_id": "proxy-openai",
-            "plugin_version": "0.1.0",
-            "display_name": "Opaque OpenAI-compatible Proxy",
-            "provider_type": "proxy-openai",
-            "provider_families": ["proxy", "openai-compatible"],
-            "plugin_capability_flags": ["CAN_ATTACH_EXISTING", "CAN_DISCOVER_MODELS"],
-            "supported_aidn_capabilities": ["llm.chat"],
-            "workload_types": ["llm_text"],
-            "usage_contract": {
-                "supports_exact": False,
-                "supports_estimated": False,
-                "default_measurement_source": None,
-                "fallback_measurement_source": "observable_output",
-                "fallback_policy": "fixed_or_observable_only",
-                "missing_usage_behavior": "unavailable",
-            },
-        },
-        {
-            "plugin_id": "vllm",
-            "plugin_version": "0.1.0",
-            "display_name": "vLLM OpenAI-compatible",
-            "provider_type": "vllm",
-            "provider_families": ["vllm", "openai-compatible"],
-            "plugin_capability_flags": ["CAN_ATTACH_EXISTING", "CAN_DISCOVER_MODELS"],
-            "supported_aidn_capabilities": ["llm.chat"],
-            "workload_types": ["llm_text"],
-            "usage_contract": {
-                "supports_exact": True,
-                "supports_estimated": True,
-                "default_measurement_source": "provider_api",
-                "fallback_measurement_source": "provider_api_partial",
-                "fallback_policy": "partial_response_estimate",
-                "missing_usage_behavior": "skip",
-            },
-        }
-    ]
     assert [plugin["plugin_id"] for plugin in plugins] == [
         "llama.cpp",
         "ollama",
@@ -145,6 +74,29 @@ def test_default_app_exposes_builtin_plugins(tmp_path, monkeypatch) -> None:
         "vllm",
         "whisper",
     ]
+    for plugin in plugins:
+        if plugin["plugin_id"] in {"llama.cpp", "ollama", "vllm", "whisper"}:
+            assert plugin["plugin_version"] == "0.2.0"
+            assert plugin["plugin_capability_flags"] == [
+                "CAN_ATTACH_EXISTING",
+                "CAN_INSTALL_PROVIDER",
+                "CAN_DISCOVER_MODELS",
+            ]
+            assert plugin["runtime_installers"][0]["installer_id"] == (
+                "aidn-provider-runtime-ubuntu.v1"
+            )
+            assert plugin["runtime_installers"][0]["actions"] == [
+                "install",
+                "start",
+                "status",
+                "stop",
+            ]
+        else:
+            assert plugin["plugin_version"] == "0.1.0"
+            assert plugin["plugin_capability_flags"] == [
+                "CAN_ATTACH_EXISTING",
+                "CAN_DISCOVER_MODELS",
+            ]
     whisper = plugins[-1]
     assert whisper["plugin_version"] == "0.2.0"
     assert whisper["display_name"] == "Whisper HTTP Provider"
@@ -159,7 +111,19 @@ def test_default_app_exposes_builtin_plugins(tmp_path, monkeypatch) -> None:
             "label": "Private provider network",
             "risk_level": "low",
             "reason": "Connect to the operator-selected Whisper HTTP endpoint",
-        }
+        },
+        {
+            "permission_id": "host.container_runtime",
+            "label": "Manage reviewed Provider container",
+            "risk_level": "high",
+            "reason": "Pull and supervise the reviewed Whisper ASR container",
+        },
+        {
+            "permission_id": "network.egress",
+            "label": "Download reviewed runtime",
+            "risk_level": "medium",
+            "reason": "Pull the reviewed Whisper ASR image and model cache",
+        },
     ]
     assert whisper["installation_recipes"][0]["recipe_id"] == "whisper-local-http"
     assert whisper["supported_aidn_capabilities"] == ["speech_to_text"]

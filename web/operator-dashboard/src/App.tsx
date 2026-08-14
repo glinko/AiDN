@@ -1240,6 +1240,9 @@ function EndpointDraftControl({ ownerWallet, bundles, bindings, onRefresh }: { o
   const [validationEnabled, setValidationEnabled] = useState(false)
   const [fixedPrice, setFixedPrice] = useState('0')
   const [minimumDeposit, setMinimumDeposit] = useState('0')
+  const [marketplaceHtml, setMarketplaceHtml] = useState('')
+  const [marketplacePreview, setMarketplacePreview] = useState<{ html: string; content_hash: string; sanitizer_version: string } | null>(null)
+  const [previewBusy, setPreviewBusy] = useState(false)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
 
@@ -1286,6 +1289,9 @@ function EndpointDraftControl({ ownerWallet, bundles, bindings, onRefresh }: { o
         display_name: displayName.trim(),
         model_class: modelClass.trim() || 'llm.chat',
         capabilities: [modelClass.trim() || 'llm.chat'],
+        profile: marketplaceHtml.trim()
+          ? { marketplace_description: { html: marketplaceHtml } }
+          : {},
         runtime: { streaming: true },
         publication: { visibility, shared_with_wallet_ids: visibility === 'shared' ? sharedWalletIds.split(',').map((wallet) => wallet.trim()).filter(Boolean) : [], discoverable: visibility !== 'private', validation: validationEnabled ? 'enabled' : 'disabled', accepts_external_requests: acceptsExternal },
         pricing: { billing_unit: 'request', fixed_price: Number(fixedPrice) || 0 },
@@ -1301,7 +1307,62 @@ function EndpointDraftControl({ ownerWallet, bundles, bindings, onRefresh }: { o
     }
   }
 
-  return <Card className="border-cyan-300/20 bg-cyan-300/[0.03] py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow text-cyan-100">Endpoint lifecycle</p><CardTitle className="mt-1 text-lg font-semibold">Create a draft from a ready runtime</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">Draft creation is local. Publication signs the immutable configuration and, on a validator, submits `ENDPOINT_PUBLISH` through consensus. Validation is a separate request.</p></CardHeader><CardContent className="grid gap-3 p-5 lg:grid-cols-4"><label className="grid gap-2"><span className="eyebrow">Display name</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Runtime Binding</span><select value={bindingId} onChange={(event) => setBindingId(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300"><option value="">Manual Bundle fields</option>{bindings.map((binding) => <option key={getText(binding, 'runtime_binding_id')} value={getText(binding, 'runtime_binding_id')}>{shortId(getText(binding, 'runtime_binding_id'), 28)} · {getText(binding, 'capability_id')}</option>)}</select></label><label className="grid gap-2"><span className="eyebrow">Capability</span><input value={modelClass} onChange={(event) => setModelClass(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Visibility</span><select value={visibility} onChange={(event) => setVisibility(event.target.value as typeof visibility)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300"><option value="private">Private</option><option value="shared">Shared</option><option value="public">Public</option></select></label><label className="grid gap-2"><span className="eyebrow">Bundle ID</span><input value={bundleId} onChange={(event) => setBundleId(event.target.value)} disabled={Boolean(bindingId)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300 disabled:opacity-50" /></label><label className="grid gap-2"><span className="eyebrow">Bundle hash</span><input value={bundleHash} onChange={(event) => setBundleHash(event.target.value)} disabled={Boolean(bindingId)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300 disabled:opacity-50" /></label><label className="grid gap-2"><span className="eyebrow">Fixed price Q</span><input inputMode="decimal" value={fixedPrice} onChange={(event) => setFixedPrice(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Minimum deposit Q</span><input inputMode="decimal" value={minimumDeposit} onChange={(event) => setMinimumDeposit(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label><div className="flex flex-wrap items-center gap-3 lg:col-span-3"><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={acceptsExternal} onChange={(event) => setAcceptsExternal(event.target.checked)} />Accept external requests</label><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={validationEnabled} onChange={(event) => setValidationEnabled(event.target.checked)} />Require validation</label></div><div className="flex items-end justify-end"><Button className="w-full bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy} onClick={() => void createDraft()}><RadioTower />{busy ? 'Creating...' : 'Create draft'}</Button></div>{message ? <div className="lg:col-span-4"><OperationNotice message={message} onDismiss={() => setMessage(null)} /></div> : null}</CardContent></Card>
+  async function previewDescription() {
+    if (!marketplaceHtml.trim()) {
+      setMessage('Add HTML content before requesting a server preview.')
+      setMarketplacePreview(null)
+      return
+    }
+    setPreviewBusy(true)
+    setMessage(null)
+    try {
+      const result = await dashboardApi.previewMarketplaceDescription(marketplaceHtml)
+      const description = getRecord(result?.description)
+      setMarketplacePreview({
+        html: getText(result, 'rendered_html') || getText(description, 'html'),
+        content_hash: getText(description, 'content_hash'),
+        sanitizer_version: getText(description, 'sanitizer_version'),
+      })
+    } catch (cause) {
+      setMarketplacePreview(null)
+      setMessage(cause instanceof Error ? cause.message : 'Marketplace preview failed.')
+    } finally {
+      setPreviewBusy(false)
+    }
+  }
+
+  return (
+    <Card className="border-cyan-300/20 bg-cyan-300/[0.03] py-0 shadow-none">
+      <CardHeader className="border-b border-border/70 px-5 py-4">
+        <p className="eyebrow text-cyan-100">Endpoint lifecycle</p>
+        <CardTitle className="mt-1 text-lg font-semibold">Create a draft from a ready runtime</CardTitle>
+        <p className="mt-1 text-sm leading-6 text-muted-foreground">Draft creation is local. Publication signs the immutable configuration and, on a validator, submits <code>ENDPOINT_PUBLISH</code> through consensus. Validation is a separate request.</p>
+      </CardHeader>
+      <CardContent className="grid gap-3 p-5 lg:grid-cols-4">
+        <label className="grid gap-2"><span className="eyebrow">Display name</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label>
+        <label className="grid gap-2"><span className="eyebrow">Runtime Binding</span><select value={bindingId} onChange={(event) => setBindingId(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300"><option value="">Manual Bundle fields</option>{bindings.map((binding) => <option key={getText(binding, 'runtime_binding_id')} value={getText(binding, 'runtime_binding_id')}>{shortId(getText(binding, 'runtime_binding_id'), 28)} · {getText(binding, 'capability_id')}</option>)}</select></label>
+        <label className="grid gap-2"><span className="eyebrow">Capability</span><input value={modelClass} onChange={(event) => setModelClass(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label>
+        <label className="grid gap-2"><span className="eyebrow">Visibility</span><select value={visibility} onChange={(event) => setVisibility(event.target.value as typeof visibility)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300"><option value="private">Private</option><option value="shared">Shared</option><option value="public">Public</option></select></label>
+        <label className="grid gap-2"><span className="eyebrow">Bundle ID</span><input value={bundleId} onChange={(event) => setBundleId(event.target.value)} disabled={Boolean(bindingId)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300 disabled:opacity-50" /></label>
+        <label className="grid gap-2"><span className="eyebrow">Bundle hash</span><input value={bundleHash} onChange={(event) => setBundleHash(event.target.value)} disabled={Boolean(bindingId)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300 disabled:opacity-50" /></label>
+        <label className="grid gap-2"><span className="eyebrow">Fixed price Q</span><input inputMode="decimal" value={fixedPrice} onChange={(event) => setFixedPrice(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label>
+        <label className="grid gap-2"><span className="eyebrow">Minimum deposit Q</span><input inputMode="decimal" value={minimumDeposit} onChange={(event) => setMinimumDeposit(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label>
+        <div className="grid gap-2 lg:col-span-4">
+          <label className="eyebrow" htmlFor="marketplace-description-html">Marketplace HTML description</label>
+          <textarea id="marketplace-description-html" value={marketplaceHtml} onChange={(event) => { setMarketplaceHtml(event.target.value); setMarketplacePreview(null) }} rows={6} placeholder="<p>Describe your endpoint, supported inputs, and a safe usage example.</p>" className="w-full rounded-lg border border-input bg-[#07111d] px-3 py-2 font-mono text-xs leading-5 text-white outline-none focus:border-cyan-300" />
+          <p className="text-xs leading-5 text-muted-foreground">The Hypervisor sanitizes this bounded source before it is stored or published. Preview always renders the server-returned sanitized HTML.</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="outline" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={previewBusy || !marketplaceHtml.trim()} onClick={() => void previewDescription()}><Eye />{previewBusy ? 'Sanitizing...' : 'Preview sanitized HTML'}</Button>
+            {marketplacePreview?.content_hash ? <span className="font-mono text-[10px] text-slate-400">{marketplacePreview.sanitizer_version} · {shortId(marketplacePreview.content_hash, 32)}</span> : null}
+          </div>
+          {marketplacePreview?.html ? <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/[0.04] p-4" aria-live="polite"><p className="eyebrow text-emerald-200">Server preview</p><div className="prose prose-invert mt-2 max-w-none text-sm" dangerouslySetInnerHTML={{ __html: marketplacePreview.html }} /></div> : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-3 lg:col-span-3"><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={acceptsExternal} onChange={(event) => setAcceptsExternal(event.target.checked)} />Accept external requests</label><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={validationEnabled} onChange={(event) => setValidationEnabled(event.target.checked)} />Require validation</label></div>
+        <div className="flex items-end justify-end"><Button className="w-full bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy} onClick={() => void createDraft()}><RadioTower />{busy ? 'Creating...' : 'Create draft'}</Button></div>
+        {message ? <div className="lg:col-span-4"><OperationNotice message={message} onDismiss={() => setMessage(null)} /></div> : null}
+      </CardContent>
+    </Card>
+  )
 }
 
 function EndpointTable({ endpoints, onAction }: { endpoints: Endpoint[]; onAction: (endpoint: Endpoint, action: 'publish' | 'validate') => void }) {
@@ -1948,6 +2009,9 @@ function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefres
   const instances = workspace?.provider_instances ?? []
   const deployments = workspace?.model_deployments ?? []
   const bindings = workspace?.runtime_bindings ?? []
+  const runtimeExecutor = getRecord(workspace?.installation_executor)
+  const runtimeSandbox = getRecord(runtimeExecutor?.sandbox_capabilities)
+  const runtimeInstallEnabled = runtimeSandbox?.host_mutation === true
 
   useEffect(() => {
     if (!pluginId && plugins.length > 0) {
@@ -2016,6 +2080,7 @@ function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefres
     {isLoading && !workspace ? <PanelSkeleton rows={5} /> : null}
     {error && !workspace ? <PanelError title="Provider workspace is unavailable" error={error} onRetry={onRefresh} /> : null}
     {workspace ? <>
+      <Card className="border-cyan-300/20 bg-cyan-300/[0.03] py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow text-cyan-100">Reviewed Ubuntu runtimes</p><CardTitle className="mt-1 text-lg font-semibold">Provider install catalog</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">These four runtime profiles are pinned and allowlisted. Installation stays disabled until the node exposes the root-owned broker; attaching an already-running service remains available below.</p></CardHeader><CardContent className="divide-y divide-border/70 p-0">{plugins.filter((plugin) => { const installers = getRecord(plugin)?.runtime_installers; return Array.isArray(installers) && installers.length > 0 }).map((plugin) => { const record = getRecord(plugin); const installers = Array.isArray(record?.runtime_installers) ? record.runtime_installers : []; const installer = getRecord(installers[0]); const providerId = getText(record, 'plugin_id'); return <div key={providerId} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-white">{getText(record, 'display_name') || providerId}</p><StatusBadge value={runtimeInstallEnabled ? 'ready' : 'blocked'} /></div><p className="mt-1 text-xs text-muted-foreground">{getText(installer, 'platform') || 'ubuntu'} · pinned {getText(installer, 'pinned_version') || 'reviewed'} · model setup remains a separate step</p></div><Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={!runtimeInstallEnabled}>{runtimeInstallEnabled ? 'Install runtime' : 'Install unavailable'}</Button></div> })}</CardContent></Card>
       <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Attach existing Provider</p><CardTitle className="mt-1 text-lg font-semibold">Create Provider instance</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">Use the Plugin's documented configuration. For local Ollama, the usual value is a `base_url`; no Provider credentials are persisted in this form.</p></CardHeader><CardContent className="grid gap-3 p-5 lg:grid-cols-[0.8fr_0.9fr_1.5fr_auto]"><label className="grid gap-2"><span className="eyebrow">Plugin</span><select value={pluginId} onChange={(event) => choosePlugin(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300">{plugins.map((plugin) => <option key={getText(plugin, 'plugin_id')} value={getText(plugin, 'plugin_id')}>{getText(plugin, 'display_name') || getText(plugin, 'plugin_id')}</option>)}</select></label><label className="grid gap-2"><span className="eyebrow">Provider name</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Node Ollama" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Configuration JSON</span><input value={configuration} onChange={(event) => setConfiguration(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><div className="flex items-end"><Button className="w-full bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy === 'attach' || plugins.length === 0} onClick={() => void attach()}><ServerCog />{busy === 'attach' ? 'Attaching...' : 'Attach'}</Button></div></CardContent></Card>
       <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/70 px-5 py-4"><div><p className="eyebrow">Attached inventory</p><CardTitle className="mt-1 text-lg font-semibold">Provider instances</CardTitle></div><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={onRefresh}><RefreshCw />Refresh</Button></CardHeader><CardContent className="divide-y divide-border/70 p-0">{instances.length === 0 ? <EmptyState title="No Provider instances attached" detail="Attach a known local Provider above. The Dashboard will not guess an upstream endpoint or create credentials." actionLabel="Refresh catalog" onAction={onRefresh} /> : instances.map((instance) => { const id = getText(instance, 'provider_instance_id'); return <div key={id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-white">{getText(instance, 'display_name') || id}</p><StatusBadge value={getText(instance, 'health_status') || 'unknown'} /></div><p className="mt-1 break-all font-mono text-[11px] text-slate-500">{id} · {String(getRecord(instance)?.model_count ?? 0)} models · {String(getRecord(instance)?.runtime_binding_ready_count ?? 0)} ready bindings</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" className="border-border bg-[#091725]" disabled={busy === `${id}:probe`} onClick={() => void runProviderOperation(id, 'probe')}><Gauge />Probe</Button><Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={busy === `${id}:discover-models`} onClick={() => void runProviderOperation(id, 'discover-models')}><Database />Discover models</Button></div></div> })}</CardContent></Card>
       <div className="grid gap-4 lg:grid-cols-2"><InventoryCard title="Model deployments" detail="Discovered model supply. Runtime binding is required before Endpoint admission." items={deployments} primaryKey="model_deployment_id" /><InventoryCard title="Runtime bindings" detail="Compatibility records backing eligible Bundle and Endpoint runtime selection." items={bindings} primaryKey="runtime_binding_id" /></div>

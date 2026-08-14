@@ -82,6 +82,7 @@ class EndpointPublicationService:
             pricing=manifest.pricing.model_dump(mode="json"),
             session=manifest.session.model_dump(mode="json"),
             execution=execution_payload,
+            profile=manifest.profile.model_dump(mode="json"),
         )
         configuration_hash = configuration_hash_for_publication(payload)
         sequence = 1 if previous is None else previous.sequence + 1

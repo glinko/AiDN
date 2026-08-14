@@ -244,12 +244,21 @@ if [[ "$enable_dashboard_access" == true ]]; then
 #!/usr/bin/env bash
 set -euo pipefail
 
-# This wrapper keeps the encrypted dashboard key inside the node state mount.
-# It only mints a one-time browser pairing code; it never exports MCP tokens.
-exec sudo docker exec "$container" python -m aidn_hypervisor.operator_cli "\$@" \\
-  --secret-manager-path /state/mcp-dashboard-access-secrets.json \\
-  --master-key-file /state/mcp-dashboard-access-master-key.b64 \\
-  --dashboard-url "\${AIDN_DASHBOARD_URL:-http://127.0.0.1:8000}"
+# This wrapper keeps the encrypted dashboard key inside the encrypted state
+# mount. It never exports MCP tokens. Arguments stay before the injected
+# options so argparse subcommands work for pair, wallet, and enrollment.
+common_args=(
+  --secret-manager-path /state/mcp-dashboard-access-secrets.json
+  --master-key-file /state/mcp-dashboard-access-master-key.b64
+  --state-path /state/hypervisor-state.json
+  --bundles-path /state/bundles.json
+  --api-url http://127.0.0.1:8000
+)
+if [[ "\${1:-}" == 'pair' ]]; then
+  exec sudo docker exec "$container" python -m aidn_hypervisor.operator_cli "\$@" "\${common_args[@]}" \\
+    --dashboard-url "\${AIDN_DASHBOARD_URL:-http://127.0.0.1:8000}"
+fi
+exec sudo docker exec "$container" python -m aidn_hypervisor.operator_cli "\$@" "\${common_args[@]}"
 EOF
   chown "$operator_user:$operator_user" "$operator_cli_wrapper"
   chmod 0700 "$operator_cli_wrapper"

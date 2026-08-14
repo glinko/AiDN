@@ -65,6 +65,24 @@ def test_vllm_plugin_is_attached_only_and_projects_runtime_binding() -> None:
     )
 
 
+def test_vllm_plugin_builds_reviewed_ubuntu_cuda_install_plan() -> None:
+    plugin = VllmPlugin()
+    manifest = plugin.plugin_manifest()
+    plan = plugin.build_installation_plan({})
+
+    assert "CAN_INSTALL_PROVIDER" in manifest["plugin_capability_flags"]
+    assert manifest["installation_recipes"][0]["recipe_id"] == "vllm-ubuntu-cuda"
+    assert manifest["runtime_installers"][0]["pinned_version"] == "0.27.1"
+    assert plan["processes"] == []
+    assert plan["model_downloads"] == []
+    assert plan["resource_limits"] == {"accelerator": "cuda"}
+
+
+def test_vllm_plugin_rejects_unreviewed_managed_backend() -> None:
+    with pytest.raises(ValueError, match="requires cuda"):
+        VllmPlugin().build_installation_plan({"backend": "rocm"})
+
+
 def test_vllm_partial_usage_does_not_invent_unknown_tokens() -> None:
     usage = VllmPlugin._usage_from_response({"prompt_tokens": 7})
 

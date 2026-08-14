@@ -64,6 +64,7 @@ class EndpointService:
             session=cmd.session,
             proxy_target=None,
             execution_config=execution_config,
+            profile=cmd.profile,
         )
         manifest = EndpointManifest(
             endpoint_id=endpoint_id,
@@ -92,6 +93,7 @@ class EndpointService:
             bundle_hash=cmd.bundle_hash,
             runtime_binding_id=cmd.runtime_binding_id,
             created_at=created_at,
+            profile=cmd.profile,
             runtime=cmd.runtime,
             publication=cmd.publication,
             pricing=cmd.pricing,
@@ -111,10 +113,13 @@ class EndpointService:
         next_publication = cmd.publication or current.publication
         next_pricing = cmd.pricing or current.pricing
         next_session = cmd.session or current.session
+        next_profile = cmd.profile or current.profile
         next_validation = cmd.validation or current.validation
         next_execution_strategy = cmd.execution_strategy or current.execution_strategy
         next_proxy_target = cmd.proxy_target if cmd.proxy_target is not None else current.proxy_target
         should_rotate_config = (
+            cmd.profile is not None
+            or
             cmd.runtime is not None
             or cmd.publication is not None
             or cmd.pricing is not None
@@ -142,6 +147,7 @@ class EndpointService:
                 session=next_session,
                 proxy_target=next_proxy_target,
                 execution_config=execution_config,
+                profile=next_profile,
             )
             snapshot = EndpointConfigurationSnapshot(
                 configuration_hash=configuration_hash,
@@ -149,6 +155,7 @@ class EndpointService:
                 bundle_hash=current.bundle_hash,
                 runtime_binding_id=current.runtime_binding_id,
                 created_at=datetime.now(UTC).isoformat(),
+                profile=next_profile,
                 runtime=next_runtime,
                 publication=next_publication,
                 pricing=next_pricing,
@@ -160,7 +167,7 @@ class EndpointService:
         updated = current.model_copy(
             update={
                 "display_name": cmd.display_name or current.display_name,
-                "profile": cmd.profile or current.profile,
+                "profile": next_profile,
                 "runtime": next_runtime,
                 "publication": next_publication,
                 "pricing": next_pricing,
@@ -214,6 +221,7 @@ class EndpointService:
             session=current.session,
             proxy_target=proxy_target,
             execution_config=execution_config,
+            profile=current.profile,
         )
         snapshot = EndpointConfigurationSnapshot(
             configuration_hash=configuration_hash,
@@ -221,6 +229,7 @@ class EndpointService:
             bundle_hash=current.bundle_hash,
             runtime_binding_id=current.runtime_binding_id,
             created_at=attached_at,
+            profile=current.profile,
             runtime=current.runtime,
             publication=current.publication,
             pricing=current.pricing,
@@ -264,6 +273,7 @@ class EndpointService:
             session=current.session,
             proxy_target=None,
             execution_config=execution_config,
+            profile=current.profile,
         )
         snapshot = EndpointConfigurationSnapshot(
             configuration_hash=configuration_hash,
@@ -271,6 +281,7 @@ class EndpointService:
             bundle_hash=current.bundle_hash,
             runtime_binding_id=current.runtime_binding_id,
             created_at=detached_at,
+            profile=current.profile,
             runtime=current.runtime,
             publication=current.publication,
             pricing=current.pricing,
@@ -407,6 +418,7 @@ class EndpointService:
         session,
         proxy_target,
         execution_config,
+        profile,
     ) -> str:
         payload = {
             "bundle_hash": bundle_hash,
@@ -422,6 +434,11 @@ class EndpointService:
             ),
             "execution_config": execution_config,
         }
+        marketplace_description = profile.model_dump(mode="json").get(
+            "marketplace_description"
+        )
+        if marketplace_description is not None:
+            payload["marketplace_description"] = marketplace_description
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8"))
         return digest.hexdigest()
 

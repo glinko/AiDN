@@ -79,6 +79,7 @@ export type ProviderArtifactInventory = DashboardRecord[] | DashboardRecord
 
 export type ProviderWorkspace = {
   plugin_directory: DashboardRecord[]
+  installation_executor?: DashboardRecord
   provider_instances: DashboardRecord[]
   model_deployments: DashboardRecord[]
   runtime_bindings: DashboardRecord[]
@@ -102,6 +103,7 @@ const providerArtifactInventorySchema = z.union([
 
 const providerWorkspaceSchema = z.object({
   plugin_directory: z.array(z.record(z.string(), z.unknown())).default([]),
+  installation_executor: z.record(z.string(), z.unknown()).optional(),
   provider_instances: z.array(z.record(z.string(), z.unknown())).default([]),
   model_deployments: z.array(z.record(z.string(), z.unknown())).default([]),
   runtime_bindings: z.array(z.record(z.string(), z.unknown())).default([]),
@@ -220,6 +222,7 @@ export const dashboardApi = {
   createRuntimeBinding: (deploymentId: string, payload: { capability_id: string; capability_version: string; capability_definition_hash: string }) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/model-deployments/${encodeURIComponent(deploymentId)}/runtime-bindings`, { method: 'POST', body: JSON.stringify(payload) }),
   createBundleRevision: (sourceBundleId: string, payload: { bundle_id: string; overrides: DashboardRecord; enabled?: boolean }) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/bundles/${encodeURIComponent(sourceBundleId)}/revisions`, { method: 'POST', body: JSON.stringify(payload) }),
   createEndpoint: (payload: DashboardRecord) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/endpoints', { method: 'POST', body: JSON.stringify(payload) }),
+  previewMarketplaceDescription: (html: string) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/endpoints/marketplace-description/preview', { method: 'POST', body: JSON.stringify({ html }) }),
   updateEndpoint: (endpointId: string, payload: DashboardRecord) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/endpoints/${encodeURIComponent(endpointId)}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   publishEndpoint: (endpointId: string) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/endpoints/${encodeURIComponent(endpointId)}/publish`, { method: 'POST' }),
   requestEndpointValidation: (endpointId: string) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/endpoints/${encodeURIComponent(endpointId)}/validation`, { method: 'POST' }),

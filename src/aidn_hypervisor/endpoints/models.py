@@ -2,6 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from aidn_hypervisor.endpoints.html import SANITIZER_VERSION, sanitize_marketplace_html
 from aidn_hypervisor.validation.models import (
     CertificationStatus,
     ValidationReportRecommendation,
@@ -17,6 +18,26 @@ EndpointExecutionStrategy = Literal["local", "proxy"]
 EndpointSessionQueuePolicy = Literal["busy", "queue"]
 
 
+class EndpointMarketplaceDescription(BaseModel):
+    html: str = Field(min_length=1)
+    sanitizer_version: str = SANITIZER_VERSION
+    content_hash: str | None = None
+
+    @model_validator(mode="after")
+    def _sanitize_and_bind(self):
+        sanitized, sanitizer_version, content_hash = sanitize_marketplace_html(self.html)
+        if not sanitized.strip():
+            raise ValueError("Marketplace description cannot be empty after sanitization")
+        if self.sanitizer_version != sanitizer_version:
+            raise ValueError("unsupported Marketplace HTML sanitizer version")
+        if self.content_hash is not None and self.content_hash != content_hash:
+            raise ValueError("Marketplace description content_hash does not match HTML")
+        self.html = sanitized
+        self.sanitizer_version = sanitizer_version
+        self.content_hash = content_hash
+        return self
+
+
 class EndpointProfile(BaseModel):
     summary: str | None = None
     strengths: list[str] = Field(default_factory=list)
@@ -25,6 +46,7 @@ class EndpointProfile(BaseModel):
     supported_languages: list[str] = Field(default_factory=list)
     preferred_formats: list[str] = Field(default_factory=list)
     examples: list[str] = Field(default_factory=list)
+    marketplace_description: EndpointMarketplaceDescription | None = None
 
 
 class EndpointRuntimeConfig(BaseModel):
@@ -170,6 +192,7 @@ class EndpointConfigurationSnapshot(BaseModel):
     bundle_hash: str
     runtime_binding_id: str | None = None
     created_at: str
+    profile: EndpointProfile = Field(default_factory=EndpointProfile)
     runtime: EndpointRuntimeConfig
     publication: EndpointPublicationPolicy
     pricing: EndpointPricing = Field(default_factory=EndpointPricing)

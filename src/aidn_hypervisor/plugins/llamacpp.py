@@ -6,6 +6,8 @@ from aidn_hypervisor.plugins.base import ProviderPlugin
 
 class LlamaCppPlugin(ProviderPlugin):
     plugin_id = "llama.cpp"
+    plugin_version = "0.2.0"
+    _runtime_ref = "b10433"
     _default_endpoint = "http://127.0.0.1:8080"
     _circuit_breaker_policy = {
         "failure_threshold": 2,
@@ -23,14 +25,158 @@ class LlamaCppPlugin(ProviderPlugin):
     def describe(self) -> dict:
         return {
             "plugin_id": self.plugin_id,
-            "plugin_version": "0.1.0",
+            "plugin_version": self.plugin_version,
             "display_name": "llama.cpp OpenAI-compatible",
+            "publisher": "AiDN Built-in",
             "provider_type": "llama.cpp",
             "provider_families": ["llama.cpp", "openai-compatible"],
-            "plugin_capability_flags": ["CAN_ATTACH_EXISTING", "CAN_DISCOVER_MODELS"],
+            "plugin_capability_flags": [
+                "CAN_ATTACH_EXISTING",
+                "CAN_INSTALL_PROVIDER",
+                "CAN_DISCOVER_MODELS",
+            ],
+            "required_permissions": [
+                {
+                    "permission_id": "host.package_manager",
+                    "label": "Install reviewed build dependencies",
+                    "risk_level": "high",
+                    "reason": "Install the Ubuntu toolchain required to build llama.cpp",
+                },
+                {
+                    "permission_id": "host.service_manager",
+                    "label": "Manage reviewed user service",
+                    "risk_level": "high",
+                    "reason": "Create and supervise the loopback-only llama.cpp service",
+                },
+                {
+                    "permission_id": "network.egress",
+                    "label": "Download reviewed source",
+                    "risk_level": "medium",
+                    "reason": "Fetch the pinned llama.cpp release from its official repository",
+                },
+            ],
+            "trust_status": "AIDN_CURATED",
+            "sandbox_policy": {
+                "execution_mode": "RECORDED_ONLY",
+                "filesystem_scope": "NONE",
+                "network_scope": "NONE",
+                "secret_scope": "NONE",
+                "notes": (
+                    "The generic executor records approval only. Host mutation requires "
+                    "the future allowlisted Provider runtime installer executor."
+                ),
+            },
+            "runtime_installers": [
+                {
+                    "installer_id": "aidn-provider-runtime-ubuntu.v1",
+                    "provider": self.plugin_id,
+                    "platform": "ubuntu",
+                    "script": "tools/aidn-provider-runtime-ubuntu.sh",
+                    "pinned_version": self._runtime_ref,
+                    "actions": ["install", "start", "status", "stop"],
+                    "model_configuration_separate": True,
+                }
+            ],
+            "source_repository": "https://github.com/ggml-org/llama.cpp",
+            "license": "MIT",
+            "supported_platforms": ["linux"],
+            "supported_architectures": ["x86_64", "arm64"],
+            "supported_accelerators": ["cpu", "cuda"],
+            "installation_recipes": [
+                {
+                    "recipe_id": "llamacpp-ubuntu-cpu",
+                    "display_name": "llama.cpp on this Ubuntu node",
+                    "description": ("Build the reviewed llama-server release; add a GGUF model later"),
+                    "provider_configuration": {
+                        "display_name": "Local llama.cpp",
+                        "endpoint": self._default_endpoint,
+                        "runtime_ref": self._runtime_ref,
+                        "backend": "cpu",
+                    },
+                    "model_configuration": {},
+                    "endpoint_defaults": {"capability_id": "llm.chat"},
+                }
+            ],
             "supported_aidn_capabilities": ["llm.chat"],
             "workload_types": ["llm_text"],
             "usage_contract": self.usage_contract(),
+        }
+
+    def install_provider_schema(self) -> dict:
+        return {
+            "schema_id": "llamacpp.install.v1",
+            "fields": [
+                {
+                    "id": "display_name",
+                    "type": "text",
+                    "label": "Provider name",
+                    "required": True,
+                    "default": "Local llama.cpp",
+                },
+                {
+                    "id": "endpoint",
+                    "type": "url",
+                    "label": "Local endpoint",
+                    "required": True,
+                    "default": self._default_endpoint,
+                },
+                {
+                    "id": "runtime_ref",
+                    "type": "text",
+                    "label": "Reviewed runtime release",
+                    "required": True,
+                    "default": self._runtime_ref,
+                },
+                {
+                    "id": "backend",
+                    "type": "select",
+                    "label": "Acceleration backend",
+                    "required": True,
+                    "default": "cpu",
+                    "options": [
+                        {"value": "cpu", "label": "CPU"},
+                        {"value": "cuda", "label": "NVIDIA CUDA"},
+                    ],
+                },
+            ],
+        }
+
+    def build_installation_plan(self, configuration: dict) -> dict:
+        normalized = {
+            "display_name": configuration.get("display_name") or "Local llama.cpp",
+            "endpoint": configuration.get("endpoint") or self._default_endpoint,
+            "runtime_ref": configuration.get("runtime_ref") or self._runtime_ref,
+            "backend": configuration.get("backend") or "cpu",
+        }
+        self.validate_provider_configuration(normalized)
+        runtime_ref = str(normalized["runtime_ref"])
+        if not runtime_ref or any(character.isspace() for character in runtime_ref):
+            raise ValueError("runtime_ref is invalid")
+        backend = str(normalized["backend"])
+        if backend not in {"cpu", "cuda"}:
+            raise ValueError("backend must be cpu or cuda")
+        return {
+            "plan_id": "plan-llamacpp-ubuntu-v1",
+            "plugin_id": self.plugin_id,
+            "plan_version": "1.0.0",
+            "summary": "Build pinned llama.cpp for a loopback-only Ubuntu runtime",
+            "containers": [],
+            "processes": [],
+            "model_downloads": [],
+            "volumes": [],
+            "networks": [{"name": "llamacpp-loopback", "scope": "local"}],
+            "environment": {},
+            "resource_limits": {},
+            "health_checks": [
+                {
+                    "type": "http",
+                    "url": f"{str(normalized['endpoint']).rstrip('/')}/health",
+                    "timeout_seconds": 5,
+                }
+            ],
+            "required_permissions": self.plugin_manifest()["required_permissions"],
+            "secret_references": [],
+            "unsupported_actions": [],
         }
 
     def attach_provider_schema(self) -> dict:

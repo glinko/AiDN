@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from aidn_hypervisor.endpoints.models import EndpointMarketplaceDescription
+
 PublicationStatus = Literal["published", "superseded", "revoked"]
 
 
@@ -17,8 +19,9 @@ def canonical_configuration_payload(
     pricing: dict,
     session: dict | None = None,
     execution: dict | None = None,
+    profile: dict | None = None,
 ) -> dict:
-    return {
+    payload = {
         "bundle_hash": bundle_hash,
         "model_class": model_class,
         "capabilities": sorted(capabilities),
@@ -28,6 +31,10 @@ def canonical_configuration_payload(
         "session": session or {},
         "execution": execution or {},
     }
+    marketplace_description = (profile or {}).get("marketplace_description")
+    if marketplace_description is not None:
+        payload["marketplace_description"] = marketplace_description
+    return payload
 
 
 def configuration_hash_for_publication(payload: dict) -> str:
@@ -60,6 +67,26 @@ class PublishedEndpointConfiguration(BaseModel):
     status: PublicationStatus = "published"
     wallet_signature: str
 
+    @model_validator(mode="before")
+    @classmethod
+    def _sanitize_marketplace_description(cls, value):
+        if not isinstance(value, dict):
+            return value
+        profile = value.get("profile")
+        if not isinstance(profile, dict):
+            return value
+        marketplace_description = profile.get("marketplace_description")
+        if marketplace_description is None:
+            return value
+        normalized_profile = dict(profile)
+        normalized_profile["marketplace_description"] = (
+            EndpointMarketplaceDescription.model_validate(marketplace_description)
+            .model_dump(mode="json")
+        )
+        normalized = dict(value)
+        normalized["profile"] = normalized_profile
+        return normalized
+
     @model_validator(mode="after")
     def _validate_configuration_hash(self):
         expected_hash = configuration_hash_for_publication(
@@ -72,6 +99,7 @@ class PublishedEndpointConfiguration(BaseModel):
                 pricing=self.pricing,
                 session=self.session,
                 execution=self.execution,
+                profile=self.profile,
             )
         )
         if self.configuration_hash != expected_hash:
