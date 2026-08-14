@@ -56,13 +56,18 @@ def test_docs_routes_are_not_exposed(path: str) -> None:
     assert response.status_code == 404
 
 
-def test_default_app_exposes_builtin_plugins() -> None:
+def test_default_app_exposes_builtin_plugins(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv(
+        "AIDN_HYPERVISOR_BUNDLES_PATH",
+        str(tmp_path / "bundles.json"),
+    )
     client = TestClient(build_app())
 
     response = client.get("/plugins")
 
     assert response.status_code == 200
-    assert response.json() == [
+    plugins = response.json()
+    assert plugins[:4] == [
         {
             "plugin_id": "llama.cpp",
             "plugin_version": "0.1.0",
@@ -131,22 +136,44 @@ def test_default_app_exposes_builtin_plugins() -> None:
                 "fallback_policy": "partial_response_estimate",
                 "missing_usage_behavior": "skip",
             },
-        },
-        {
-            "plugin_id": "whisper",
-            "workload_types": ["speech_to_text"],
-            "usage_contract": {
-                "supports_exact": False,
-                "supports_estimated": True,
-                "supported_billing_units": ["audio_input_seconds"],
-                "supported_accounting_modes": ["fixed_price", "observable"],
-                "default_measurement_source": "provider_request",
-                "fallback_measurement_source": "provider_request",
-                "fallback_policy": "fixed_request_estimate",
-                "missing_usage_behavior": "skip",
-            },
         }
     ]
+    assert [plugin["plugin_id"] for plugin in plugins] == [
+        "llama.cpp",
+        "ollama",
+        "proxy-openai",
+        "vllm",
+        "whisper",
+    ]
+    whisper = plugins[-1]
+    assert whisper["plugin_version"] == "0.2.0"
+    assert whisper["display_name"] == "Whisper HTTP Provider"
+    assert whisper["plugin_capability_flags"] == [
+        "CAN_ATTACH_EXISTING",
+        "CAN_INSTALL_PROVIDER",
+        "CAN_DISCOVER_MODELS",
+    ]
+    assert whisper["required_permissions"] == [
+        {
+            "permission_id": "network.private",
+            "label": "Private provider network",
+            "risk_level": "low",
+            "reason": "Connect to the operator-selected Whisper HTTP endpoint",
+        }
+    ]
+    assert whisper["installation_recipes"][0]["recipe_id"] == "whisper-local-http"
+    assert whisper["supported_aidn_capabilities"] == ["speech_to_text"]
+    assert whisper["workload_types"] == ["speech_to_text"]
+    assert whisper["usage_contract"] == {
+        "supports_exact": False,
+        "supports_estimated": True,
+        "supported_billing_units": ["audio_input_seconds"],
+        "supported_accounting_modes": ["fixed_price", "observable"],
+        "default_measurement_source": "provider_request",
+        "fallback_measurement_source": "provider_request",
+        "fallback_policy": "fixed_request_estimate",
+        "missing_usage_behavior": "skip",
+    }
 
 
 def test_default_app_exposes_bundles_loaded_from_configured_registry(
