@@ -269,6 +269,11 @@ class ExecutionEngine:
                             self.ledger.apply_consensus_development_reward_calculate(
                                 result.envelope,
                             )
+                        elif result.envelope.operation_type == "DEVELOPMENT_REWARD_ACTIVATION_SCOPE_EXTEND":
+                            self.ledger.apply_consensus_development_reward_activation_scope_extend(
+                                result.envelope,
+                                finalized_operation_ids=finalized_operation_ids,
+                            )
                         elif result.envelope.operation_type == "DEVELOPMENT_POOL_ALLOCATE":
                             self.ledger.apply_consensus_development_pool_allocate(
                                 result.envelope,
@@ -804,6 +809,26 @@ class ExecutionEngine:
                     )
                 )
                 emitted.append("DevelopmentRewardCalculationCommitted")
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_ACTIVATION_SCOPE_EXTEND":
+                self.ledger.validate_consensus_development_reward_activation_scope_extend(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
+                state_changes.append(
+                    StateChange(
+                        entity_type="development_reward_activation",
+                        entity_id=str(envelope.payload["extension_id"]),
+                        change_type="extend_scope",
+                        after={
+                            "base_activation_id": envelope.payload["base_activation_id"],
+                            "additional_operation_types": (
+                                envelope.payload["scope_extension"]["additional_operation_types"]
+                            ),
+                            "effective_epoch": int(envelope.payload["scope_extension"]["effective_epoch"]),
+                        },
+                    )
+                )
+                emitted.append("DevelopmentRewardActivationScopeExtended")
             elif envelope.operation_type == "DEVELOPMENT_POOL_ALLOCATE":
                 self.ledger.validate_consensus_development_pool_allocate(
                     envelope,

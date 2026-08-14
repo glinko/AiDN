@@ -19,8 +19,14 @@ from aidn_hypervisor.reward.development_activation import (
     DevelopmentRewardApprovalSignature,
     DevelopmentRewardAuthority,
     activation_authorization_payload,
+    activation_scope_extension_authorization_payload,
     build_development_reward_activation_approval,
+    build_development_reward_activation_scope_extension,
     development_reward_policy_hash,
+    verify_development_reward_activation_scope_extension,
+)
+from aidn_hypervisor.reward.development_activation_operations import (
+    build_development_reward_activation_scope_extension_operation,
 )
 from aidn_hypervisor.reward.development_claim import DevelopmentRewardWalletBindingProof
 from aidn_hypervisor.reward.development_commitments import build_development_reward_commitment
@@ -116,6 +122,48 @@ def _approval(
         approvals=approvals,
         authorized_operation_types=operation_types,
         economic_effect_profile=economic_effect_profile,
+    )
+
+
+def _signed_scope_extension(approval, *, effective_epoch: int = 21):
+    unsigned = build_development_reward_activation_scope_extension(
+        base_approval=approval,
+        effective_epoch=effective_epoch,
+        additional_operation_types=["DEVELOPMENT_REWARD_PAY_MATURITY"],
+        approvals=[],
+    )
+    authorities = {item.authority_id: item for item in approval.eligible_authorities}
+    approvals = []
+    for authority_id, seed in (("governance-a", 1), ("governance-b", 2)):
+        private_key = Ed25519PrivateKey.from_private_bytes(bytes([seed]) * 32)
+        assert "ed25519:" + private_key.public_key().public_bytes_raw().hex() == authorities[authority_id].public_key
+        approvals.append(
+            DevelopmentRewardApprovalSignature(
+                authority_id=authority_id,
+                signature="ed25519:"
+                + private_key.sign(
+                    activation_scope_extension_authorization_payload(
+                        extension_id=unsigned.extension_id,
+                        base_activation_id=unsigned.base_activation_id,
+                        base_approval_hash=unsigned.base_approval_hash,
+                        policy_hash=unsigned.policy_hash,
+                        base_effective_epoch=unsigned.base_effective_epoch,
+                        effective_epoch=unsigned.effective_epoch,
+                        base_authorized_operation_types=unsigned.base_authorized_operation_types,
+                        additional_operation_types=unsigned.additional_operation_types,
+                        eligible_authorities=unsigned.eligible_authorities,
+                        quorum_threshold=unsigned.quorum_threshold,
+                        authority_id=authority_id,
+                        economic_effect_profile=unsigned.economic_effect_profile,
+                    )
+                ).hex(),
+            )
+        )
+    return build_development_reward_activation_scope_extension(
+        base_approval=approval,
+        effective_epoch=effective_epoch,
+        additional_operation_types=["DEVELOPMENT_REWARD_PAY_MATURITY"],
+        approvals=approvals,
     )
 
 
@@ -507,6 +555,106 @@ def _maturity_envelopes():
         reserve_envelope,
         build_maturity_payment(calculation.payments[1], "2030-01-01T00:00:04Z"),
         build_maturity_payment(calculation.payments[2], "2030-01-01T00:00:05Z"),
+    )
+
+
+def _old_scope_maturity_envelopes():
+    calculation = run_launch_simulation_matrix().scenarios[0].calculation
+    approval = _approval(
+        calculation.policy,
+        authorized_operation_types=[
+            "DEVELOPMENT_REWARD_CALCULATE",
+            "DEVELOPMENT_POOL_ALLOCATE",
+            "DEVELOPMENT_REWARD_RESERVE",
+            "DEVELOPMENT_REWARD_PAY_IMMEDIATE",
+            "DEVELOPMENT_REWARD_MARK_UNCLAIMED",
+        ],
+        economic_effect_profile="DEVELOPMENT_PAYMENTS",
+    )
+    commitment = build_development_reward_commitment(
+        calculation,
+        activation_approval=approval,
+        current_epoch=20,
+    )
+    epoch_tx = _epoch_transition(calculation)
+    epoch_operation_id = LedgerOperationEnvelope.model_validate(json.loads(epoch_tx)).operation_id
+    calculation_envelope = build_development_reward_operation(
+        DevelopmentRewardOperationRequest(
+            operation_type="DEVELOPMENT_REWARD_CALCULATE",
+            created_at="2030-01-01T00:00:01Z",
+            commitment=commitment,
+            activation_approval=approval,
+            calculation=calculation,
+        )
+    )
+    extension = _signed_scope_extension(approval)
+    extension_envelope = build_development_reward_activation_scope_extension_operation(
+        base_approval=approval,
+        extension=extension,
+        base_calculation_operation_id=calculation_envelope.operation_id,
+        created_at="2030-01-01T00:00:02Z",
+    )
+    allocation_envelope = build_development_reward_operation(
+        DevelopmentRewardOperationRequest(
+            operation_type="DEVELOPMENT_POOL_ALLOCATE",
+            created_at="2030-01-01T00:00:03Z",
+            commitment=commitment,
+            activation_approval=approval,
+            calculation=calculation,
+            amount_q_atoms=calculation.pool.base_allocation_q_atoms,
+            calculation_operation_id=calculation_envelope.operation_id,
+            source_epoch_transition_operation_id=epoch_operation_id,
+            pool_budget_reference="epoch:20:GENERAL_DEVELOPMENT",
+        )
+    )
+    schedule = calculation.schedules[0]
+    reserve_envelope = build_development_reward_operation(
+        DevelopmentRewardOperationRequest(
+            operation_type="DEVELOPMENT_REWARD_RESERVE",
+            created_at="2030-01-01T00:00:04Z",
+            commitment=commitment,
+            activation_approval=approval,
+            calculation=calculation,
+            amount_q_atoms=schedule.gross_reward_q_atoms,
+            calculation_operation_id=calculation_envelope.operation_id,
+            pool_allocation_id=allocation_envelope.payload["pool_allocation"]["allocation_id"],
+            pool_allocation_operation_id=allocation_envelope.operation_id,
+            reward_id=schedule.reward_id,
+        )
+    )
+    payment = calculation.payments[1]
+    payment_envelope = build_development_reward_operation(
+        DevelopmentRewardOperationRequest(
+            operation_type="DEVELOPMENT_REWARD_PAY_MATURITY",
+            created_at="2030-01-01T00:00:05Z",
+            commitment=commitment,
+            activation_approval=approval,
+            calculation=calculation,
+            activation_scope_extension=extension,
+            activation_scope_extension_operation_id=extension_envelope.operation_id,
+            amount_q_atoms=payment.amount_q_atoms,
+            calculation_operation_id=calculation_envelope.operation_id,
+            pool_allocation_id=allocation_envelope.payload["pool_allocation"]["allocation_id"],
+            pool_allocation_operation_id=allocation_envelope.operation_id,
+            reserve_id=reserve_envelope.payload["reward_reserve"]["reserve_id"],
+            reserve_operation_id=reserve_envelope.operation_id,
+            source_epoch_transition_operation_id=epoch_operation_id,
+            reward_id=payment.reward_id,
+            contributor_id=payment.contributor_id,
+            recipient_wallet=payment.wallet_address,
+            role=payment.role,
+            payment_hash=payment.payment_hash,
+            payment_stage=payment.payment_stage,
+        )
+    )
+    return (
+        calculation,
+        epoch_tx,
+        calculation_envelope,
+        extension_envelope,
+        allocation_envelope,
+        reserve_envelope,
+        payment_envelope,
     )
 
 
@@ -1006,6 +1154,190 @@ def test_builder_emits_source_bound_maturity_payment_envelope():
     assert stage_one.payload["activation_id"] == approval.activation_id
     assert stage_one.payload["commitment"]["commitment_hash"] == commitment.commitment_hash
     assert strict_operation_coverage_error(stage_one.operation_type) is None
+
+
+def test_old_activation_requires_signed_scope_extension_for_maturity_payment():
+    calculation = run_launch_simulation_matrix().scenarios[0].calculation
+    operation_types = [
+        "DEVELOPMENT_REWARD_CALCULATE",
+        "DEVELOPMENT_POOL_ALLOCATE",
+        "DEVELOPMENT_REWARD_RESERVE",
+    ]
+    approval = _approval(
+        calculation.policy,
+        authorized_operation_types=operation_types,
+        economic_effect_profile="DEVELOPMENT_PAYMENTS",
+    )
+    commitment = build_development_reward_commitment(
+        calculation,
+        activation_approval=approval,
+        current_epoch=20,
+    )
+    extension = _signed_scope_extension(approval)
+    verify_development_reward_activation_scope_extension(extension, base_approval=approval)
+    extension_operation = build_development_reward_activation_scope_extension_operation(
+        base_approval=approval,
+        extension=extension,
+        base_calculation_operation_id="calculation-operation-id",
+        created_at="2030-01-01T00:00:01Z",
+    )
+    payment = calculation.payments[1]
+    with pytest.raises(ValueError, match="DEVELOPMENT_OPERATION_NOT_AUTHORIZED"):
+        build_development_reward_operation(
+            DevelopmentRewardOperationRequest(
+                operation_type="DEVELOPMENT_REWARD_PAY_MATURITY",
+                created_at="2030-01-01T00:00:02Z",
+                commitment=commitment,
+                activation_approval=approval,
+                calculation=calculation,
+                calculation_operation_id="calculation-operation-id",
+                pool_allocation_id="allocation-id",
+                pool_allocation_operation_id="allocation-operation-id",
+                reserve_id="reserve-id",
+                reserve_operation_id="reserve-operation-id",
+                source_epoch_transition_operation_id="epoch-transition-id",
+                reward_id=payment.reward_id,
+                contributor_id=payment.contributor_id,
+                recipient_wallet=payment.wallet_address,
+                role=payment.role,
+                payment_hash=payment.payment_hash,
+                payment_stage=payment.payment_stage,
+                amount_q_atoms=payment.amount_q_atoms,
+            )
+        )
+    payment_operation = build_development_reward_operation(
+        DevelopmentRewardOperationRequest(
+            operation_type="DEVELOPMENT_REWARD_PAY_MATURITY",
+            created_at="2030-01-01T00:00:02Z",
+            commitment=commitment,
+            activation_approval=approval,
+            calculation=calculation,
+            activation_scope_extension=extension,
+            activation_scope_extension_operation_id=extension_operation.operation_id,
+            calculation_operation_id="calculation-operation-id",
+            pool_allocation_id="allocation-id",
+            pool_allocation_operation_id="allocation-operation-id",
+            reserve_id="reserve-id",
+            reserve_operation_id="reserve-operation-id",
+            source_epoch_transition_operation_id="epoch-transition-id",
+            reward_id=payment.reward_id,
+            contributor_id=payment.contributor_id,
+            recipient_wallet=payment.wallet_address,
+            role=payment.role,
+            payment_hash=payment.payment_hash,
+            payment_stage=payment.payment_stage,
+            amount_q_atoms=payment.amount_q_atoms,
+        )
+    )
+
+    assert payment_operation.payload["activation_scope_extension"]["extension_id"] == extension.extension_id
+    assert payment_operation.payload["activation_scope_extension_operation_id"] == extension_operation.operation_id
+
+
+def test_scope_extension_is_ledger_finalized_and_replay_protected():
+    calculation = run_launch_simulation_matrix().scenarios[0].calculation
+    approval = _approval(
+        calculation.policy,
+        authorized_operation_types=[
+            "DEVELOPMENT_REWARD_CALCULATE",
+            "DEVELOPMENT_POOL_ALLOCATE",
+            "DEVELOPMENT_REWARD_RESERVE",
+        ],
+        economic_effect_profile="DEVELOPMENT_PAYMENTS",
+    )
+    commitment = build_development_reward_commitment(
+        calculation,
+        activation_approval=approval,
+        current_epoch=20,
+    )
+    calculation_operation = build_development_reward_operation(
+        DevelopmentRewardOperationRequest(
+            operation_type="DEVELOPMENT_REWARD_CALCULATE",
+            created_at="2030-01-01T00:00:01Z",
+            commitment=commitment,
+            activation_approval=approval,
+            calculation=calculation,
+        )
+    )
+    extension = _signed_scope_extension(approval)
+    extension_operation = build_development_reward_activation_scope_extension_operation(
+        base_approval=approval,
+        extension=extension,
+        base_calculation_operation_id=calculation_operation.operation_id,
+        created_at="2030-01-01T00:00:02Z",
+    )
+    ledger = LedgerOperationService()
+    ledger.apply_consensus_development_reward_calculate(calculation_operation)
+    result = ledger.apply_consensus_development_reward_activation_scope_extend(
+        extension_operation,
+        finalized_operation_ids={calculation_operation.operation_id},
+    )
+
+    assert result["result"]["emitted_events"] == ["DevelopmentRewardActivationScopeExtended"]
+    with pytest.raises(ValueError, match="DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_ALREADY_FINALIZED"):
+        ledger.validate_consensus_development_reward_activation_scope_extend(
+            extension_operation,
+            finalized_operation_ids={calculation_operation.operation_id},
+        )
+
+
+def test_old_scope_extension_allows_maturity_payment_after_finalized_boundary():
+    (
+        calculation,
+        epoch_tx,
+        calculation_envelope,
+        extension_envelope,
+        allocation_envelope,
+        reserve_envelope,
+        payment_envelope,
+    ) = _old_scope_maturity_envelopes()
+    ledger = LedgerOperationService()
+    engine = ExecutionEngine(
+        ledger_service=ledger,
+        admission_validator=AdmissionValidator(current_time="2030-01-01T00:00:00Z"),
+        strict_operation_coverage=True,
+    )
+    for height, tx in (
+        (1, epoch_tx),
+        (2, json.dumps(calculation_envelope.model_dump(mode="json")).encode("utf-8")),
+        (3, json.dumps(extension_envelope.model_dump(mode="json")).encode("utf-8")),
+        (4, json.dumps(allocation_envelope.model_dump(mode="json")).encode("utf-8")),
+        (5, json.dumps(reserve_envelope.model_dump(mode="json")).encode("utf-8")),
+    ):
+        result = engine.execute_block(
+            block_height=height,
+            block_hash=bytes([height + 120]) * 32,
+            txs=[tx],
+        )
+        assert result.operations_executed == 1, result.execution_events
+        assert result.operations_rejected == 0, result.execution_events
+
+    result = engine.execute_block(
+        block_height=6,
+        block_hash=b"Z" * 32,
+        txs=[json.dumps(payment_envelope.model_dump(mode="json")).encode("utf-8")],
+    )
+
+    assert result.operations_executed == 1, result.execution_events
+    assert result.operations_rejected == 0, result.execution_events
+    assert result.execution_events[0].emitted_events == ["DevelopmentRewardPaidMaturity"]
+    assert ledger.wallet_q_atom_balance("q1scenario") == calculation.payments[1].amount_q_atoms
+
+
+def test_scope_extension_cannot_reauthorize_existing_operation():
+    calculation = run_launch_simulation_matrix().scenarios[0].calculation
+    approval = _approval(
+        calculation.policy,
+        authorized_operation_types=["DEVELOPMENT_REWARD_CALCULATE"],
+        economic_effect_profile="DEVELOPMENT_PAYMENTS",
+    )
+    with pytest.raises(ValueError, match="DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_OPERATION_SCOPE_INVALID"):
+        build_development_reward_activation_scope_extension(
+            base_approval=approval,
+            effective_epoch=20,
+            additional_operation_types=["DEVELOPMENT_REWARD_CALCULATE"],
+            approvals=[],
+        )
 
 
 def test_strict_execution_applies_maturity_payment_after_boundary():

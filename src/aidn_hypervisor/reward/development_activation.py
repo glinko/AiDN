@@ -25,6 +25,7 @@ from aidn_hypervisor.reward.development_rollout import (
 )
 
 DEVELOPMENT_ACTIVATION_VERSION = "eco-0007-activation.v1"
+DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_VERSION = "eco-0007-activation-scope-extension.v1"
 
 
 def _hash_payload(domain: str, payload: Any) -> str:
@@ -185,6 +186,90 @@ class DevelopmentRewardActivationApproval(BaseModel, frozen=True):
         return self.approval_hash == activation_approval_hash(self)
 
 
+class DevelopmentRewardActivationScopeExtension(BaseModel, frozen=True):
+    """An authority-signed additive scope for an existing commitment.
+
+    The base activation remains immutable. An extension can only add operation
+    types and must retain the exact authority set, policy and economic scope.
+    """
+
+    extension_version: str = DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_VERSION
+    extension_id: str = Field(min_length=1)
+    base_activation_id: str = Field(min_length=1)
+    base_approval_hash: str = Field(min_length=1)
+    policy_hash: str = Field(min_length=1)
+    base_effective_epoch: int = Field(ge=0)
+    effective_epoch: int = Field(ge=0)
+    base_authorized_operation_types: list[str] = Field(min_length=1)
+    additional_operation_types: list[str] = Field(min_length=1)
+    eligible_authorities: list[DevelopmentRewardAuthority] = Field(min_length=1)
+    quorum_threshold: int = Field(ge=1)
+    approvals: list[DevelopmentRewardApprovalSignature] = Field(default_factory=list)
+    economic_effect_profile: Literal[
+        "POOL_ALLOCATION",
+        "DEVELOPMENT_RESERVES",
+        "DEVELOPMENT_PAYMENTS",
+    ] = "DEVELOPMENT_PAYMENTS"
+    state: Literal["APPROVED", "REVOKED"] = "APPROVED"
+    extension_hash: str | None = None
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> DevelopmentRewardActivationScopeExtension:
+        if self.extension_version != DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_VERSION:
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_VERSION_INVALID")
+        if self.effective_epoch < self.base_effective_epoch:
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_EPOCH_INVALID")
+        base_operations = [item.strip() for item in self.base_authorized_operation_types]
+        additions = [item.strip() for item in self.additional_operation_types]
+        if (
+            any(not item for item in base_operations)
+            or len(set(base_operations)) != len(base_operations)
+            or any(not item for item in additions)
+            or len(set(additions)) != len(additions)
+            or set(base_operations) & set(additions)
+        ):
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_OPERATION_SCOPE_INVALID")
+        if any(not item.startswith("DEVELOPMENT_") for item in additions):
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_OPERATION_SCOPE_INVALID")
+        authority_ids = [item.authority_id for item in self.eligible_authorities]
+        if len(set(authority_ids)) != len(authority_ids):
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_AUTHORITY_DUPLICATE")
+        if self.quorum_threshold > len(authority_ids):
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_QUORUM_INVALID")
+        approval_ids = [item.authority_id for item in self.approvals]
+        if len(set(approval_ids)) != len(approval_ids):
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_APPROVAL_DUPLICATE")
+        if self.extension_hash is not None and not self.extension_hash.strip():
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_HASH_INVALID")
+        return self
+
+    def unsigned_payload(self) -> dict[str, Any]:
+        return {
+            "extension_version": self.extension_version,
+            "extension_id": self.extension_id,
+            "base_activation_id": self.base_activation_id,
+            "base_approval_hash": self.base_approval_hash,
+            "policy_hash": self.policy_hash,
+            "base_effective_epoch": self.base_effective_epoch,
+            "effective_epoch": self.effective_epoch,
+            "base_authorized_operation_types": sorted(self.base_authorized_operation_types),
+            "additional_operation_types": sorted(self.additional_operation_types),
+            "eligible_authorities": [
+                item.model_dump(mode="json")
+                for item in sorted(self.eligible_authorities, key=lambda item: item.authority_id)
+            ],
+            "quorum_threshold": self.quorum_threshold,
+            "approvals": [
+                item.model_dump(mode="json") for item in sorted(self.approvals, key=lambda item: item.authority_id)
+            ],
+            "economic_effect_profile": self.economic_effect_profile,
+            "state": self.state,
+        }
+
+    def verify_integrity(self) -> bool:
+        return self.extension_hash == activation_scope_extension_hash(self)
+
+
 class DevelopmentRewardActivationDecision(BaseModel, frozen=True):
     activation_id: str = Field(min_length=1)
     approval_hash: str = Field(min_length=1)
@@ -298,6 +383,193 @@ def activation_approval_hash(approval: DevelopmentRewardActivationApproval) -> s
         "aidn.eco-0007.activation-approval-record.v1",
         approval.unsigned_payload(),
     )
+
+
+def activation_scope_extension_id_for(
+    *,
+    base_activation_id: str,
+    base_approval_hash: str,
+    policy_hash: str,
+    base_effective_epoch: int,
+    effective_epoch: int,
+    base_authorized_operation_types: list[str],
+    additional_operation_types: list[str],
+    eligible_authorities: list[DevelopmentRewardAuthority],
+    quorum_threshold: int,
+    economic_effect_profile: str,
+) -> str:
+    return _hash_payload(
+        "aidn.eco-0007.activation-scope-extension-id.v1",
+        {
+            "base_activation_id": base_activation_id,
+            "base_approval_hash": base_approval_hash,
+            "policy_hash": policy_hash,
+            "base_effective_epoch": base_effective_epoch,
+            "effective_epoch": effective_epoch,
+            "base_authorized_operation_types": sorted(base_authorized_operation_types),
+            "additional_operation_types": sorted(additional_operation_types),
+            "eligible_authorities": [
+                item.model_dump(mode="json")
+                for item in sorted(eligible_authorities, key=lambda item: item.authority_id)
+            ],
+            "quorum_threshold": quorum_threshold,
+            "economic_effect_profile": economic_effect_profile,
+        },
+    )
+
+
+def activation_scope_extension_authorization_payload(
+    *,
+    extension_id: str,
+    base_activation_id: str,
+    base_approval_hash: str,
+    policy_hash: str,
+    base_effective_epoch: int,
+    effective_epoch: int,
+    base_authorized_operation_types: list[str],
+    additional_operation_types: list[str],
+    eligible_authorities: list[DevelopmentRewardAuthority],
+    quorum_threshold: int,
+    authority_id: str,
+    economic_effect_profile: str,
+) -> bytes:
+    payload = {
+        "extension_id": extension_id,
+        "base_activation_id": base_activation_id,
+        "base_approval_hash": base_approval_hash,
+        "policy_hash": policy_hash,
+        "base_effective_epoch": base_effective_epoch,
+        "effective_epoch": effective_epoch,
+        "base_authorized_operation_types": sorted(base_authorized_operation_types),
+        "additional_operation_types": sorted(additional_operation_types),
+        "eligible_authorities": [
+            item.model_dump(mode="json")
+            for item in sorted(eligible_authorities, key=lambda item: item.authority_id)
+        ],
+        "quorum_threshold": quorum_threshold,
+        "authority_id": authority_id,
+        "economic_effect_profile": economic_effect_profile,
+    }
+    return json.dumps(
+        {"domain": "aidn.eco-0007.activation-scope-extension.v1", "payload": payload},
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def activation_scope_extension_hash(
+    extension: DevelopmentRewardActivationScopeExtension,
+) -> str:
+    return _hash_payload(
+        "aidn.eco-0007.activation-scope-extension-record.v1",
+        extension.unsigned_payload(),
+    )
+
+
+def build_development_reward_activation_scope_extension(
+    *,
+    base_approval: DevelopmentRewardActivationApproval,
+    effective_epoch: int,
+    additional_operation_types: list[str],
+    approvals: list[DevelopmentRewardApprovalSignature],
+) -> DevelopmentRewardActivationScopeExtension:
+    verify_development_reward_activation_approval(base_approval)
+    base_operations = sorted(base_approval.authorized_operation_types)
+    additions = sorted(item.strip() for item in additional_operation_types)
+    extension_id = activation_scope_extension_id_for(
+        base_activation_id=base_approval.activation_id,
+        base_approval_hash=base_approval.approval_hash or "",
+        policy_hash=base_approval.policy_hash,
+        base_effective_epoch=base_approval.effective_epoch,
+        effective_epoch=effective_epoch,
+        base_authorized_operation_types=base_operations,
+        additional_operation_types=additions,
+        eligible_authorities=base_approval.eligible_authorities,
+        quorum_threshold=base_approval.quorum_threshold,
+        economic_effect_profile=base_approval.economic_effect_profile,
+    )
+    extension = DevelopmentRewardActivationScopeExtension(
+        extension_id=extension_id,
+        base_activation_id=base_approval.activation_id,
+        base_approval_hash=base_approval.approval_hash or "",
+        policy_hash=base_approval.policy_hash,
+        base_effective_epoch=base_approval.effective_epoch,
+        effective_epoch=effective_epoch,
+        base_authorized_operation_types=base_operations,
+        additional_operation_types=additions,
+        eligible_authorities=base_approval.eligible_authorities,
+        quorum_threshold=base_approval.quorum_threshold,
+        approvals=approvals,
+        economic_effect_profile=base_approval.economic_effect_profile,
+    )
+    return extension.model_copy(update={"extension_hash": activation_scope_extension_hash(extension)})
+
+
+def verify_development_reward_activation_scope_extension(
+    extension: DevelopmentRewardActivationScopeExtension,
+    *,
+    base_approval: DevelopmentRewardActivationApproval,
+) -> None:
+    verify_development_reward_activation_approval(base_approval)
+    if extension.state != "APPROVED":
+        raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_REVOKED")
+    if not extension.verify_integrity():
+        raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_HASH_INVALID")
+    if (
+        extension.base_activation_id != base_approval.activation_id
+        or extension.base_approval_hash != base_approval.approval_hash
+        or extension.policy_hash != base_approval.policy_hash
+        or extension.base_effective_epoch != base_approval.effective_epoch
+        or extension.base_authorized_operation_types != sorted(base_approval.authorized_operation_types)
+        or extension.economic_effect_profile != base_approval.economic_effect_profile
+    ):
+        raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_BASE_MISMATCH")
+    expected_id = activation_scope_extension_id_for(
+        base_activation_id=extension.base_activation_id,
+        base_approval_hash=extension.base_approval_hash,
+        policy_hash=extension.policy_hash,
+        base_effective_epoch=extension.base_effective_epoch,
+        effective_epoch=extension.effective_epoch,
+        base_authorized_operation_types=extension.base_authorized_operation_types,
+        additional_operation_types=extension.additional_operation_types,
+        eligible_authorities=extension.eligible_authorities,
+        quorum_threshold=extension.quorum_threshold,
+        economic_effect_profile=extension.economic_effect_profile,
+    )
+    if extension.extension_id != expected_id:
+        raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_ID_INVALID")
+    if extension.eligible_authorities != base_approval.eligible_authorities:
+        raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_AUTHORITY_SET_INVALID")
+    if extension.quorum_threshold != base_approval.quorum_threshold:
+        raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_QUORUM_INVALID")
+    authority_by_id = {item.authority_id: item for item in extension.eligible_authorities}
+    if len(extension.approvals) < extension.quorum_threshold:
+        raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_QUORUM_MISSING")
+    for item in extension.approvals:
+        authority = authority_by_id.get(item.authority_id)
+        if authority is None or not item.signature.startswith("ed25519:"):
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_SIGNATURE_INVALID")
+        try:
+            Ed25519PublicKey.from_public_bytes(_public_key_bytes(authority.public_key)).verify(
+                bytes.fromhex(item.signature.removeprefix("ed25519:")),
+                activation_scope_extension_authorization_payload(
+                    extension_id=extension.extension_id,
+                    base_activation_id=extension.base_activation_id,
+                    base_approval_hash=extension.base_approval_hash,
+                    policy_hash=extension.policy_hash,
+                    base_effective_epoch=extension.base_effective_epoch,
+                    effective_epoch=extension.effective_epoch,
+                    base_authorized_operation_types=extension.base_authorized_operation_types,
+                    additional_operation_types=extension.additional_operation_types,
+                    eligible_authorities=extension.eligible_authorities,
+                    quorum_threshold=extension.quorum_threshold,
+                    authority_id=item.authority_id,
+                    economic_effect_profile=extension.economic_effect_profile,
+                ),
+            )
+        except (InvalidSignature, ValueError, TypeError) as error:
+            raise ValueError("DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_SIGNATURE_INVALID") from error
 
 
 def build_development_reward_activation_approval(
@@ -432,7 +704,9 @@ class DevelopmentRewardActivationGate:
 
 __all__ = [
     "DEVELOPMENT_ACTIVATION_VERSION",
+    "DEVELOPMENT_ACTIVATION_SCOPE_EXTENSION_VERSION",
     "DevelopmentRewardActivationApproval",
+    "DevelopmentRewardActivationScopeExtension",
     "DevelopmentRewardActivationDecision",
     "DevelopmentRewardActivationGate",
     "DevelopmentRewardApprovalSignature",
@@ -441,7 +715,12 @@ __all__ = [
     "activation_authorization_payload",
     "activation_decision_hash",
     "activation_id_for",
+    "activation_scope_extension_authorization_payload",
+    "activation_scope_extension_hash",
+    "activation_scope_extension_id_for",
     "build_development_reward_activation_approval",
+    "build_development_reward_activation_scope_extension",
     "development_reward_policy_hash",
+    "verify_development_reward_activation_scope_extension",
     "verify_development_reward_activation_approval",
 ]

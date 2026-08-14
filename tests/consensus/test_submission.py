@@ -311,11 +311,16 @@ def test_reconcile_finality_requires_matching_chain_and_is_idempotent():
     )
 
     class Source:
+        calls = 0
+
         def finality_evidence(self, operation_id: str):
+            self.calls += 1
             return evidence
 
-    assert svc.reconcile_finality(env.operation_id, finality_source=Source()) is not None
-    assert svc.reconcile_finality(env.operation_id, finality_source=Source()) is not None
+    source = Source()
+    assert svc.reconcile_finality(env.operation_id, finality_source=source) is not None
+    assert svc.reconcile_finality(env.operation_id, finality_source=source) is not None
+    assert source.calls == 1
     assert svc.is_finalized(env.operation_id)
     assert svc.get_submission(env.operation_id).status == SubmissionStatus.FINALIZED
     assert svc.get_metrics()["total_finalized"] == 1

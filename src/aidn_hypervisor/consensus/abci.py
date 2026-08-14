@@ -1497,6 +1497,11 @@ class AIDNABCIApplication:
                 )
             elif envelope.operation_type == "DEVELOPMENT_REWARD_CALCULATE":
                 self.ledger.apply_consensus_development_reward_calculate(envelope)
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_ACTIVATION_SCOPE_EXTEND":
+                self.ledger.apply_consensus_development_reward_activation_scope_extend(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
             elif envelope.operation_type == "DEVELOPMENT_POOL_ALLOCATE":
                 self.ledger.apply_consensus_development_pool_allocate(
                     envelope,
@@ -1783,6 +1788,11 @@ class AIDNABCIApplication:
                 )
             elif envelope.operation_type == "DEVELOPMENT_REWARD_CALCULATE":
                 self.ledger.validate_consensus_development_reward_calculate(envelope)
+            elif envelope.operation_type == "DEVELOPMENT_REWARD_ACTIVATION_SCOPE_EXTEND":
+                self.ledger.validate_consensus_development_reward_activation_scope_extend(
+                    envelope,
+                    finalized_operation_ids=finalized_operation_ids,
+                )
             elif envelope.operation_type == "DEVELOPMENT_POOL_ALLOCATE":
                 self.ledger.validate_consensus_development_pool_allocate(
                     envelope,

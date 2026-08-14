@@ -547,6 +547,12 @@ class ConsensusService:
         record = self._submissions.get(operation_id)
         if record is None:
             return None
+        # Finality was already verified for this in-memory submission.  Do
+        # not ask a stateful light client to re-verify an older block during a
+        # later polling pass; recovery after a process restart reconstructs a
+        # non-finalized record and performs the external proof again.
+        if record.status == SubmissionStatus.FINALIZED:
+            return record
         try:
             evidence = finality_source.finality_evidence(operation_id)
         except Exception:

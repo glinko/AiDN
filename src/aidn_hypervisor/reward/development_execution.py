@@ -113,6 +113,7 @@ class DevelopmentRewardBatchExecutor:
     ) -> tuple[DevelopmentRewardBatchStage, bool]:
         if not self._consensus.is_enabled:
             record = self._consensus.submit_operation(envelope, retry_existing=True)
+            self._record_submission(record)
             finalized = record.status == SubmissionStatus.FINALIZED
             return self._stage(
                 index,
@@ -123,7 +124,9 @@ class DevelopmentRewardBatchExecutor:
 
         self._stage_pending(envelope)
         record = self._consensus.restore_submission(envelope)
+        self._record_submission(record)
         finalized = self._reconcile(envelope.operation_id)
+        self._record_submission(record)
         if finalized:
             self._discard_pending(envelope.operation_id)
             return self._stage(index, envelope, record, status="FINALIZED"), True
@@ -138,7 +141,9 @@ class DevelopmentRewardBatchExecutor:
             ), False
 
         record = self._consensus.submit_operation(envelope, retry_existing=True)
+        self._record_submission(record)
         finalized = self._reconcile(envelope.operation_id)
+        self._record_submission(record)
         if finalized:
             self._discard_pending(envelope.operation_id)
             return self._stage(index, envelope, record, status="FINALIZED"), True
@@ -208,6 +213,20 @@ class DevelopmentRewardBatchExecutor:
     def _discard_pending(self, operation_id: str) -> None:
         if self._pending_envelope_store is not None:
             self._pending_envelope_store.discard_pending_consensus_envelopes(operation_id)
+
+    def _record_submission(self, record: SubmissionRecord) -> None:
+        """Persist transport identity and lifecycle when the store supports it.
+
+        Pending envelopes are intentionally disposable after finality.  A
+        separate submission journal can retain the tx hash and observed state
+        so a later process can verify an already committed operation without
+        rebroadcasting it.  Older stores do not implement this optional hook.
+        """
+        if self._pending_envelope_store is None:
+            return
+        record_submission = getattr(self._pending_envelope_store, "record_submission", None)
+        if callable(record_submission):
+            record_submission(record)
 
     @staticmethod
     def _stage(

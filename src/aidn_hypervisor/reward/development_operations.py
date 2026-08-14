@@ -20,7 +20,9 @@ from aidn_hypervisor.consensus.coverage import operation_coverage
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.reward.development_activation import (
     DevelopmentRewardActivationApproval,
+    DevelopmentRewardActivationScopeExtension,
     verify_development_reward_activation_approval,
+    verify_development_reward_activation_scope_extension,
 )
 from aidn_hypervisor.reward.development_adjustments import DevelopmentRewardStateSnapshot
 from aidn_hypervisor.reward.development_bounty import (
@@ -117,6 +119,8 @@ class DevelopmentRewardOperationRequest(BaseModel, frozen=True):
     created_at: str = Field(min_length=1)
     commitment: DevelopmentRewardCommitment
     activation_approval: DevelopmentRewardActivationApproval | None = None
+    activation_scope_extension: DevelopmentRewardActivationScopeExtension | None = None
+    activation_scope_extension_operation_id: str | None = None
     calculation: DevelopmentRewardCalculation | None = None
     target_epoch: int | None = Field(default=None, ge=0)
     pool_id: str = Field(default=DEVELOPMENT_POOL_ID, min_length=1)
@@ -291,6 +295,21 @@ class DevelopmentRewardOperationRequest(BaseModel, frozen=True):
                 not self.source_epoch_transition_operation_id or not self.source_epoch_transition_operation_id.strip()
             ):
                 raise ValueError("DEVELOPMENT_OPERATION_EPOCH_TRANSITION_REQUIRED")
+            if self.activation_scope_extension is not None and (
+                not self.activation_scope_extension_operation_id
+                or not self.activation_scope_extension_operation_id.strip()
+            ):
+                raise ValueError("DEVELOPMENT_OPERATION_SCOPE_EXTENSION_OPERATION_REQUIRED")
+            if self.activation_scope_extension is not None and self.activation_approval is not None:
+                try:
+                    verify_development_reward_activation_scope_extension(
+                        self.activation_scope_extension,
+                        base_approval=self.activation_approval,
+                    )
+                except ValueError as error:
+                    raise ValueError("DEVELOPMENT_OPERATION_SCOPE_EXTENSION_INVALID") from error
+                if self.operation_type not in self.activation_scope_extension.additional_operation_types:
+                    raise ValueError("DEVELOPMENT_OPERATION_SCOPE_EXTENSION_OPERATION_INVALID")
         if self.operation_type in _UNCLAIMED_OPERATIONS:
             if self.recipient_wallet is not None:
                 raise ValueError("DEVELOPMENT_OPERATION_UNCLAIMED_WALLET_FORBIDDEN")
@@ -465,6 +484,19 @@ class DevelopmentRewardOperationBuilder:
             or approval.policy_hash != commitment.policy_hash
         ):
             raise ValueError("DEVELOPMENT_OPERATION_ACTIVATION_MISMATCH")
+
+        if (
+            request.operation_type == "DEVELOPMENT_REWARD_PAY_MATURITY"
+            and request.operation_type not in approval.authorized_operation_types
+        ):
+            if request.activation_scope_extension is None or not request.activation_scope_extension_operation_id:
+                raise ValueError("DEVELOPMENT_OPERATION_NOT_AUTHORIZED")
+            verify_development_reward_activation_scope_extension(
+                request.activation_scope_extension,
+                base_approval=approval,
+            )
+            if request.operation_type not in request.activation_scope_extension.additional_operation_types:
+                raise ValueError("DEVELOPMENT_OPERATION_NOT_AUTHORIZED")
 
         target_epoch = request.target_epoch if request.target_epoch is not None else commitment.epoch
         if request.operation_type == "DEVELOPMENT_POOL_CARRYOVER":
@@ -697,6 +729,21 @@ class DevelopmentRewardOperationBuilder:
             payload["calculation_commitment_id"] = calculation_commitment_id
             payload["finalized_commitment_id"] = finalized_commitment_id
         payload["payload_hash"] = canonical_hash(payload)
+        evidence_references = {
+            commitment.commitment_id,
+            commitment.commitment_hash,
+            commitment.calculation_root,
+            approval.activation_id,
+            approval.approval_hash,
+        }
+        if request.activation_scope_extension is not None:
+            evidence_references.update(
+                {
+                    request.activation_scope_extension.extension_id,
+                    request.activation_scope_extension.extension_hash or "",
+                    request.activation_scope_extension_operation_id or "",
+                }
+            )
         return LedgerOperationEnvelope(
             operation_type=request.operation_type,
             operation_version=DEVELOPMENT_REWARD_CONSENSUS_OPERATION_VERSION,
@@ -706,15 +753,7 @@ class DevelopmentRewardOperationBuilder:
             created_at=request.created_at,
             target_epoch=str(commitment.epoch),
             payload=payload,
-            evidence_references=sorted(
-                {
-                    commitment.commitment_id,
-                    commitment.commitment_hash,
-                    commitment.calculation_root,
-                    approval.activation_id,
-                    approval.approval_hash,
-                }
-            ),
+            evidence_references=sorted(evidence_references),
         )
 
 
