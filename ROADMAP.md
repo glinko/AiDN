@@ -50,9 +50,12 @@ Completed in this slice:
   `epoch/schedule-rebase` query. The operator procedure is documented in
   [the rebase runbook](./docs/development/controlled-localnet-epoch-schedule-rebase.md).
 
-Controlled-localnet recovery is accepted. The next controlled-localnet gate is
-economic, not schedule recovery: authorize a future non-zero Development Pool
-allocation before attempting a production reward batch.
+Controlled-localnet recovery is accepted. The first controlled-localnet
+RFC-0068 contribution payout is now finalized. The non-zero Development Pool
+allocation and its ECO-0007 preflight are recorded in
+[the Epoch 1 acceptance record](./docs/development/controlled-localnet-epoch-1-eco0005-acceptance-2026-08-13.md),
+and the complete live payout path is recorded in
+[the live payout acceptance](./docs/development/controlled-localnet-epoch-1-eco0007-live-payout-acceptance-2026-08-13.md).
 
 ## 2026-08-13 Multi-validator Epoch Transition Quorum Gate
 
@@ -86,12 +89,28 @@ Live-network acceptance:
 - [x] Build the exact authority-signed `EPOCH_TRANSITION` from that quorum
   report and finalize it through canonical consensus. The transition includes
   explicit schedule and manifest evidence references.
-- [x] Re-run the ECO-0007 preflight after transition finality. It agrees across
-  all three validators and returns `NO_BUDGET` with `0 q_atoms`, so no payout
-  plan is created.
-- [ ] Execute the first independently reproducible ECO-0007 production reward
-  batch after a non-zero pool allocation and finalized RFC-0068 attestations
-  exist.
+- [x] Re-run the ECO-0007 preflight after the zero-budget calibration
+  transition; it agreed across all three validators and returned `NO_BUDGET`.
+- [x] Derive and finalize the first non-zero controlled-localnet Epoch 1
+  manifest and `EPOCH_TRANSITION` from the fixed ECO-0005 profile. The
+  `GENERAL_DEVELOPMENT` budget is `250 Q` and the transition is finalized on
+  all three validators; see the Epoch 1 acceptance record linked above.
+- [x] Verify a `READY` ECO-0007 preflight against that finalized transition,
+  with one pool budget reference and one preflight hash across `3/3` RPCs.
+- [x] Add a read-only RFC-0068 intake tool that derives merge diff evidence,
+  verifies the exact merged-commit Wallet claim and historical Wallet binding,
+  and emits a hash-bound attestation request without writing evidence or Q.
+- [x] Add the two-phase authority-signing handoff: intake emits exact
+  canonical authority payloads, and a separate tool attaches independently
+  produced signatures while recomputing the evidence root. Server-side public
+  key and threshold verification remains mandatory.
+- [x] Execute and independently reproduce the first controlled-localnet
+  ECO-0007 production reward batch after a real finalized RFC-0068
+  contribution and verified Wallet binding. The live payout, validator
+  quorum, restart recovery and replay evidence is recorded in the
+  [payout acceptance](./docs/development/controlled-localnet-epoch-1-eco0007-live-payout-acceptance-2026-08-13.md).
+- [ ] Repeat the same batch gate under a production/public authority policy
+  and externally operated validator set.
 
 ## 2026-08-13 Quorum-bound Epoch Transition Artifact
 
@@ -110,10 +129,12 @@ Completed in this slice:
 - [x] Preserve the legacy payload builder for compatibility and fixtures while
   documenting it as non-production for manifest-backed transitions.
 
-Live acceptance is complete for the controlled-localnet calibration epoch. The
-quorum-bound builder and submitter have been exercised against the finalized
-manifest and schedule references; see the Epoch 0 acceptance record linked
-above. Production reward activation remains a separate gate.
+Live acceptance is complete for the controlled-localnet calibration epoch and
+for the first non-zero Epoch 1 profile. The quorum-bound builder and submitter
+were exercised against finalized manifest, schedule and pool references; see
+the Epoch 0 and Epoch 1 acceptance records. Production payout still requires
+the production/public authority policy, independent RFC-0068 evidence and
+externally operated validators.
 
 ## 2026-08-13 Canonical Epoch Result Manifest
 
@@ -140,10 +161,10 @@ Completed in this slice:
   evidence roots, create pool budgets or export authority private keys.
 
 Controlled-localnet acceptance is complete for the zero-budget calibration
-epoch. The finalized manifest and transition create no Wallet or emission
-side effect. The ECO-0007 production batch gate correctly remains closed with
-`DEVELOPMENT_REWARD_POOL_BUDGET_ZERO` until a governed non-zero pool is
-available.
+epoch and the first non-zero ECO-0005-derived epoch. The finalized manifest
+and transition open a bounded `250 Q` Development Pool but create no
+contributor Wallet credit. The ECO-0007 production batch gate remains closed
+until finalized RFC-0068 contribution and Wallet evidence is available.
 
 ## 2026-08-12 Protocol Authority Boundary
 
@@ -180,10 +201,16 @@ Current economic-network gate:
   intentionally `0 q_atoms`.
 - [x] Re-run the quorum preflight after transition finality. It returns the
   same `NO_BUDGET` result on all three validators and refuses payout planning.
-- [ ] Authorize a future non-zero Development Pool allocation and finalize
-  RFC-0068 contribution attestations with verified Wallet bindings.
-- [ ] Build, independently reproduce and finalize the first real ECO-0007
-  development reward batch, including restart/reconciliation evidence.
+- [x] Authorize and finalize the controlled-localnet non-zero Development Pool
+  allocation, with a fixed ECO-0005 profile, 2-of-3 activation preparation,
+  and a `READY` 3/3 ECO-0007 preflight.
+- [x] Finalize a controlled-localnet RFC-0068 contribution attestation with a
+  verified Wallet binding and an eligible protected-branch merge; see the live
+  payout acceptance record.
+- [x] Build, independently reproduce and finalize the first controlled-localnet
+  ECO-0007 development reward batch, including restart/reconciliation evidence.
+- [ ] Repeat RFC-0068 and ECO-0007 finality under a production/public authority
+  policy and externally operated validators.
 
 It should stay current and answer four questions:
 
@@ -1263,6 +1290,37 @@ This work is intentionally outside the functional MVP. It must not alter current
     batch to the approved multi-RPC finality configuration, persists exact
     in-flight envelope diagnostics, and exits successfully only after every
     ordered operation is finalized. It never creates keys or credits local Q.
+30. Added the controlled-localnet ECO-0005 live evidence profile. It derives
+    the fixed `5000 Q` base emission and `5%` Development Share from the
+    checked-in document hash and public authority policy, producing exactly
+    `250 Q` without accepting an arbitrary CLI budget.
+31. Added live Epoch 1 manifest collection from the finalized predecessor
+    manifest, threshold signing and multi-RPC finality acceptance for the
+    non-zero `EPOCH_TRANSITION`. The controlled localnet now exposes a
+    canonical `250 Q` `GENERAL_DEVELOPMENT` pool budget.
+32. Added the controlled-localnet `DEVELOPMENT_PAYMENTS` activation builder
+    and bounded production profile preparation. It verifies external authority
+    seeds against the public policy, emits no private material and never
+    broadcasts.
+33. Added the controlled-localnet RFC-0068 acceptance runner. It creates a
+    real protected-branch merge commit in a clean clone, verifies the merged
+    Wallet claim, attaches independent authority signatures, closes the
+    challenge boundary, and finalizes the contribution without exporting keys.
+34. Executed and independently reproduced the first ECO-0007 controlled-
+    localnet reward batch. Four ordered consensus operations finalized with
+    identical results on validators `128`, `129` and `130`; the immediate
+    payout was `1.2712 Q` and the remaining `1.9068 Q` was reserved for
+    maturity stages.
+35. Verified executor restart/reconciliation and clean replay for that batch.
+    Recovery reused the original operation IDs, cleared pending state, and
+    did not create a second payment. Full evidence is in the
+    [live payout acceptance](./docs/development/controlled-localnet-epoch-1-eco0007-live-payout-acceptance-2026-08-13.md).
+36. Added the controlled-localnet contributor Wallet profile for
+    `wallet-5320047bb01d` and made the RFC-0068 acceptance runner support an
+    externally stored, public-key-verified Wallet seed. The profile is bound to
+    the `2-of-3` authority policy observed identically on validators `128`,
+    `129` and `130`; the external-wallet acceptance path finalized successfully
+    without exporting private material or submitting Q.
 
 ### Current post-MVP implementation gate
 
@@ -1308,11 +1366,22 @@ This work is intentionally outside the functional MVP. It must not alter current
 - [x] Add a resumable operator execution CLI with fresh preflight checks and
   multi-RPC finality binding; keep live execution fail-closed on stale batch or
   unavailable validators.
+- [x] Add the controlled-localnet contributor Wallet profile and fail-closed
+  external-key verification for RFC-0068 acceptance. The profile is test-only;
+  public-network contribution attribution still requires an independently
+  verified contributor identity and production authority policy.
+- [ ] Execute a new ECO-0007 live reward batch using the verified contributor
+  Wallet profile, then record the exact consensus finality and maturity reserve
+  without treating the controlled operator Wallet as an independent identity.
 - [x] Roll out the ECO-0007-aware ABCI image sequentially to the controlled
   validators and verify health, preserved state mounts, rollback containers,
   CometBFT quorum and the live read-only preflight; see
   [validator rollout acceptance](./docs/development/eco-0007-validator-rollout-acceptance-2026-08-12.md).
-- [ ] Activate a production ECO-0007 reward profile and execute a finalized contribution payout batch against a real epoch pool.
+- [x] Activate the controlled-localnet ECO-0007 reward profile and execute a
+  finalized contribution payout batch against the real `250 Q` epoch pool;
+  see [live payout acceptance](./docs/development/controlled-localnet-epoch-1-eco0007-live-payout-acceptance-2026-08-13.md).
+- [ ] Activate a production/public ECO-0007 reward profile and execute a
+  finalized contribution payout batch against a production/public epoch pool.
 - [x] Public multi-validator profiles are signed, hash-bound, quorum-checked, and projected into the existing CometBFT finality configuration.
 - [x] Generate and verify the current Implementation Profile and execute the
   checked-in FIX-0001 ABCI vector deterministically.
@@ -1429,7 +1498,13 @@ Every meaningful architecture or milestone change should update this file in the
   network under a production/public authority policy.
 - [ ] Approve and distribute one identical public authority policy hash.
 - [ ] Add/enable Epoch Engine live payload generation from finalized roots.
-- [ ] Finalize the first real `EPOCH_TRANSITION` with a `GENERAL_DEVELOPMENT` budget.
-- [ ] Run ECO-0007 preflight, build the first reward batch, and verify multi-RPC payment finality.
+- [x] Finalize the first controlled-localnet `EPOCH_TRANSITION` with a
+  `GENERAL_DEVELOPMENT` budget; see the linked Epoch 1 acceptance record
+  above.
+- [x] Run ECO-0007 preflight, build the first controlled-localnet reward
+  batch, and verify multi-RPC payment finality; see the live payout
+  acceptance record above.
+- [ ] Finalize the equivalent `EPOCH_TRANSITION` and ECO-0007 payout under a
+  production/public authority policy and externally operated validators.
 
 Operational details are in `docs/development/protocol-authority-and-epoch-transition-operations.md`.

@@ -92,6 +92,97 @@ def contributor_wallet_claim_payload(claim: ContributorWalletClaim) -> bytes:
     return canonical_json(claim.signed_payload()).encode("utf-8")
 
 
+def contribution_attestation_authorization_payload(
+    *,
+    repository_id: str,
+    contribution_id: str,
+    pull_request_id: str,
+    merge_commit_hash: str,
+    contribution_epoch: int,
+    contribution_class: ContributionClass,
+    source_evidence_root: str,
+    scoring_evidence_root: str,
+    role_allocations: list[ContributionRoleAllocation],
+    authority_id: str,
+) -> bytes:
+    """Return the canonical payload signed by a repository authority."""
+
+    return canonical_json(
+        {
+            "domain": "aidn.contribution-attestation.v1",
+            "repository_id": repository_id,
+            "contribution_id": contribution_id,
+            "pull_request_id": pull_request_id,
+            "merge_commit_hash": merge_commit_hash,
+            "contribution_epoch": contribution_epoch,
+            "contribution_class": contribution_class,
+            "source_evidence_root": source_evidence_root,
+            "scoring_evidence_root": scoring_evidence_root,
+            "role_allocations": [item.model_dump(mode="json") for item in role_allocations],
+            "authority_id": authority_id,
+        }
+    ).encode("utf-8")
+
+
+def verify_attestation_authority_signatures(
+    *,
+    repository: EligibleRepository,
+    contribution_id: str,
+    pull_request_id: str,
+    merge_commit_hash: str,
+    contribution_epoch: int,
+    contribution_class: ContributionClass,
+    source_evidence_root: str,
+    scoring_evidence_root: str,
+    role_allocations: list[ContributionRoleAllocation],
+    authorities: list[AttestationAuthority],
+) -> None:
+    """Verify repository-authority signatures against its public key registry."""
+
+    if not repository.attestation_authority_public_keys:
+        raise ValueError("REPOSITORY_ATTESTATION_AUTHORITY_KEYS_REQUIRED")
+    authority_ids = [item.authority_id for item in authorities]
+    if len(set(authority_ids)) != len(authority_ids):
+        raise ValueError("REPOSITORY_ATTESTATION_AUTHORITY_DUPLICATE")
+    required_authorities = (
+        2
+        if (
+            contribution_class == "SECURITY"
+            or repository.attestation_policy_id in {"MAINTAINER_THRESHOLD", "GOVERNANCE_COMMITTEE"}
+        )
+        else 1
+    )
+    if len(authority_ids) < required_authorities:
+        raise ValueError("REPOSITORY_ATTESTATION_THRESHOLD_NOT_MET")
+    allowed_ids = set(repository.attestation_authority_public_keys)
+    if repository.attestation_authority_ids:
+        allowed_ids &= set(repository.attestation_authority_ids)
+    for authority in authorities:
+        public_key = repository.attestation_authority_public_keys.get(authority.authority_id)
+        if authority.authority_id not in allowed_ids or public_key is None:
+            raise ValueError("REPOSITORY_ATTESTATION_AUTHORITY_INVALID")
+        try:
+            key = Ed25519PublicKey.from_public_bytes(
+                _prefixed_hex(public_key, label="attestation authority public key", size=32)
+            )
+            key.verify(
+                _prefixed_hex(authority.signature, label="attestation authority signature", size=64),
+                contribution_attestation_authorization_payload(
+                    repository_id=repository.repository_id,
+                    contribution_id=contribution_id,
+                    pull_request_id=pull_request_id,
+                    merge_commit_hash=merge_commit_hash,
+                    contribution_epoch=contribution_epoch,
+                    contribution_class=contribution_class,
+                    source_evidence_root=source_evidence_root,
+                    scoring_evidence_root=scoring_evidence_root,
+                    role_allocations=role_allocations,
+                    authority_id=authority.authority_id,
+                ),
+            )
+        except (InvalidSignature, ValueError, TypeError) as error:
+            raise ValueError("REPOSITORY_ATTESTATION_AUTHORITY_SIGNATURE_INVALID") from error
+
 def _parse_datetime(value: str) -> datetime:
     parsed = datetime.fromisoformat(value)
     if parsed.tzinfo is None:
@@ -549,7 +640,13 @@ class ContributionAccountingService:
             raise ValueError("CONTRIBUTION_WALLET_CLAIM_INVALID") from error
         if claim.contributor_id != primary_contributor_id:
             raise ValueError("CONTRIBUTION_WALLET_CLAIM_CONTRIBUTOR_MISMATCH")
-        contributor = self.store.contributors.get(primary_contributor_id)
+        self._verify_wallet_claim_binding(claim)
+        return claim
+
+    def _verify_wallet_claim_binding(self, claim: ContributorWalletClaim) -> None:
+        """Verify a claim against the registered historical Wallet binding."""
+
+        contributor = self.store.contributors.get(claim.contributor_id)
         if contributor is None:
             raise ContributionNotFoundError("CONTRIBUTOR_NOT_REGISTERED")
         if not contributor.has_platform_account(claim.source_platform_account):
@@ -578,9 +675,8 @@ class ContributionAccountingService:
             raise ValueError("CONTRIBUTION_WALLET_CLAIM_BINDING_MISMATCH")
         if claim.binding_hash is not None and claim.binding_hash != binding.binding_hash:
             raise ValueError("CONTRIBUTION_WALLET_CLAIM_BINDING_MISMATCH")
-        return claim
 
-    def attest_merge(
+    def prepare_attestation_context(
         self,
         *,
         repository_id: str,
@@ -595,7 +691,6 @@ class ContributionAccountingService:
         contribution_epoch: int,
         contribution_class: ContributionClass,
         file_changes: list[ContributionFileChange],
-        attestation_authorities: list[AttestationAuthority],
         source_platform_evidence_hash: str,
         repository_path: Path | str,
         coauthors: list[str] | None = None,
@@ -604,7 +699,9 @@ class ContributionAccountingService:
         factor_values: ContributionFactorValues | None = None,
         role_allocations: list[ContributionRoleAllocation] | None = None,
         logical_deliverable: str | None = None,
-    ) -> ContributionAttestation:
+    ) -> dict[str, Any]:
+        """Prepare the exact evidence roots used by ``attest_merge``."""
+
         repository = self.store.repositories.get(repository_id)
         if repository is None:
             raise ContributionNotFoundError("REPOSITORY_NOT_ELIGIBLE")
@@ -636,6 +733,15 @@ class ContributionAccountingService:
             item if isinstance(item, ContributionFileChange) else ContributionFileChange.model_validate(item)
             for item in file_changes
         ]
+        if factor_values is not None and not isinstance(factor_values, ContributionFactorValues):
+            factor_values = ContributionFactorValues.model_validate(factor_values)
+        if role_allocations is not None:
+            role_allocations = [
+                item
+                if isinstance(item, ContributionRoleAllocation)
+                else ContributionRoleAllocation.model_validate(item)
+                for item in role_allocations
+            ]
         factors = factor_values or ContributionFactorValues()
         scoring = score_contribution_changes(normalized_changes, profile, factors)
         coauthors = list(coauthors or [])
@@ -655,7 +761,6 @@ class ContributionAccountingService:
             "protected_branch_tip": git_evidence["protected_branch_tip"],
             "verification_method": git_evidence["verification_method"],
         }
-        merge_event_hash = canonical_hash(merge_payload)
         merge_event = ContributionMergeEvent(
             merge_event_id=canonical_hash(
                 {
@@ -665,12 +770,11 @@ class ContributionAccountingService:
                 }
             ),
             **merge_payload,
-            merge_event_hash=merge_event_hash,
+            merge_event_hash=canonical_hash(merge_payload),
         )
         existing_event = self.store.merge_events.get(merge_event.merge_event_id)
-        if existing_event is not None and existing_event.merge_event_hash != merge_event_hash:
+        if existing_event is not None and existing_event.merge_event_hash != merge_event.merge_event_hash:
             raise ContributionConflictError("CONTRIBUTION_MERGE_EVENT_CONFLICT")
-
         contribution_id = canonical_hash(
             {
                 "repository_id": repository_id,
@@ -678,7 +782,116 @@ class ContributionAccountingService:
                 "contribution_group_id": contribution_group_id,
             }
         )
-        authorities = list(attestation_authorities)
+        allocations = self._normalize_allocations(
+            role_allocations=role_allocations,
+            primary_contributor_id=primary_contributor_id,
+            contribution_id=contribution_id,
+        )
+        self._validate_role_allocations(allocations)
+        for allocation in allocations:
+            contributor = self.store.contributors.get(allocation.contributor_id)
+            if contributor is None:
+                raise ContributionNotFoundError("CONTRIBUTOR_NOT_REGISTERED")
+            if contributor.identity_state != "ACTIVE":
+                raise ValueError("CONTRIBUTOR_IDENTITY_NOT_ACTIVE")
+        if sum(item.allocation_basis_points for item in allocations) > BASIS_POINTS:
+            raise ValueError("CONTRIBUTION_ALLOCATION_INVALID")
+        source_evidence_root = canonical_hash(
+            {
+                "merge_event": merge_event.model_dump(mode="json"),
+                "git_evidence": git_evidence,
+                "file_changes": [item.model_dump(mode="json") for item in normalized_changes],
+                "wallet_claim": wallet_claim.model_dump(mode="json") if wallet_claim else None,
+            }
+        )
+        scoring_evidence_root = canonical_hash(
+            {
+                "profile_hash": profile.profile_hash,
+                "scoring": scoring,
+                "factors": factors.model_dump(mode="json"),
+            }
+        )
+        return {
+            "repository": repository,
+            "profile": profile,
+            "primary": primary,
+            "git_evidence": git_evidence,
+            "wallet_claim": wallet_claim,
+            "normalized_changes": normalized_changes,
+            "factors": factors,
+            "scoring": scoring,
+            "merge_event": merge_event,
+            "contribution_id": contribution_id,
+            "allocations": allocations,
+            "source_evidence_root": source_evidence_root,
+            "scoring_evidence_root": scoring_evidence_root,
+            "logical_deliverable": logical_deliverable,
+        }
+
+    def attest_merge(
+        self,
+        *,
+        repository_id: str,
+        pull_request_id: str,
+        merge_commit_hash: str,
+        base_branch: str,
+        source_commit_hash: str | None,
+        merged_at: str | None,
+        merge_actor: str,
+        pull_request_author: str,
+        primary_contributor_id: str,
+        contribution_epoch: int,
+        contribution_class: ContributionClass,
+        file_changes: list[ContributionFileChange],
+        attestation_authorities: list[AttestationAuthority],
+        source_platform_evidence_hash: str,
+        repository_path: Path | str,
+        coauthors: list[str] | None = None,
+        contribution_group_id: str | None = None,
+        reward_metadata: dict[str, Any] | None = None,
+        factor_values: ContributionFactorValues | None = None,
+        role_allocations: list[ContributionRoleAllocation] | None = None,
+        logical_deliverable: str | None = None,
+    ) -> ContributionAttestation:
+        prepared = self.prepare_attestation_context(
+            repository_id=repository_id,
+            pull_request_id=pull_request_id,
+            merge_commit_hash=merge_commit_hash,
+            base_branch=base_branch,
+            source_commit_hash=source_commit_hash,
+            merged_at=merged_at,
+            merge_actor=merge_actor,
+            pull_request_author=pull_request_author,
+            primary_contributor_id=primary_contributor_id,
+            contribution_epoch=contribution_epoch,
+            contribution_class=contribution_class,
+            file_changes=file_changes,
+            source_platform_evidence_hash=source_platform_evidence_hash,
+            repository_path=repository_path,
+            coauthors=coauthors,
+            contribution_group_id=contribution_group_id,
+            reward_metadata=reward_metadata,
+            factor_values=factor_values,
+            role_allocations=role_allocations,
+            logical_deliverable=logical_deliverable,
+        )
+        repository = prepared["repository"]
+        profile = prepared["profile"]
+        primary = prepared["primary"]
+        git_evidence = prepared["git_evidence"]
+        wallet_claim = prepared["wallet_claim"]
+        normalized_changes = prepared["normalized_changes"]
+        factors = prepared["factors"]
+        scoring = prepared["scoring"]
+        merge_event = prepared["merge_event"]
+        contribution_id = prepared["contribution_id"]
+        allocations = prepared["allocations"]
+        source_evidence_root = prepared["source_evidence_root"]
+        scoring_evidence_root = prepared["scoring_evidence_root"]
+        authorities = [
+            item if isinstance(item, AttestationAuthority) else AttestationAuthority.model_validate(item)
+            for item in attestation_authorities
+        ]
         required_authorities = (
             2
             if (
@@ -694,42 +907,26 @@ class ContributionAccountingService:
         ):
             raise ValueError("REPOSITORY_ATTESTATION_AUTHORITY_INVALID")
 
-        allocations = self._normalize_allocations(
-            role_allocations=role_allocations,
-            primary_contributor_id=primary_contributor_id,
-            contribution_id=contribution_id,
-        )
-        self._validate_role_allocations(allocations)
-        for allocation in allocations:
-            contributor = self.store.contributors.get(allocation.contributor_id)
-            if contributor is None:
-                raise ContributionNotFoundError("CONTRIBUTOR_NOT_REGISTERED")
-            if contributor.identity_state != "ACTIVE":
-                raise ValueError("CONTRIBUTOR_IDENTITY_NOT_ACTIVE")
-        allocation_total = sum(item.allocation_basis_points for item in allocations)
-        if allocation_total > BASIS_POINTS:
-            raise ValueError("CONTRIBUTION_ALLOCATION_INVALID")
-
-        source_evidence_root = canonical_hash(
-            {
-                "merge_event": merge_event.model_dump(mode="json"),
-                "git_evidence": git_evidence,
-                "file_changes": [item.model_dump(mode="json") for item in normalized_changes],
-                "wallet_claim": wallet_claim.model_dump(mode="json") if wallet_claim else None,
-            }
-        )
         if contribution_id in self.store.attestations:
             existing = self.store.attestations[contribution_id]
             if existing.source_evidence_root == source_evidence_root:
                 return existing
             raise ContributionConflictError("CONTRIBUTION_ALREADY_ATTESTED")
-        scoring_evidence_root = canonical_hash(
-            {
-                "profile_hash": profile.profile_hash,
-                "scoring": scoring,
-                "factors": factors.model_dump(mode="json"),
-            }
-        )
+        authority_signature_state = "UNVERIFIED"
+        if repository.attestation_authority_public_keys:
+            verify_attestation_authority_signatures(
+                repository=repository,
+                contribution_id=contribution_id,
+                pull_request_id=pull_request_id,
+                merge_commit_hash=git_evidence["merge_commit_hash"],
+                contribution_epoch=contribution_epoch,
+                contribution_class=contribution_class,
+                source_evidence_root=source_evidence_root,
+                scoring_evidence_root=scoring_evidence_root,
+                role_allocations=allocations,
+                authorities=authorities,
+            )
+            authority_signature_state = "VERIFIED"
         wallet_state = "VERIFIED" if wallet_claim or primary.current_wallet_address else "UNCLAIMED"
         attestation_payload = {
             "contribution_id": contribution_id,
@@ -749,6 +946,7 @@ class ContributionAccountingService:
             "wallet_claim": wallet_claim.model_dump(mode="json") if wallet_claim else None,
             "eligibility_state": "ELIGIBLE",
             "wallet_state": wallet_state,
+            "authority_signature_state": authority_signature_state,
             "challenge_until_epoch": contribution_epoch + 1,
             "maturity_stage_one_epoch": contribution_epoch + 4,
             "maturity_stage_two_epoch": contribution_epoch + 12,
@@ -756,7 +954,7 @@ class ContributionAccountingService:
             "source_evidence_root": source_evidence_root,
             "scoring_evidence_root": scoring_evidence_root,
             "attestation_authorities": [item.model_dump(mode="json") for item in authorities],
-            "merge_event_hash": merge_event_hash,
+            "merge_event_hash": merge_event.merge_event_hash,
             "attested_at": self._now_iso(),
         }
         attestation = ContributionAttestation(
@@ -843,6 +1041,40 @@ class ContributionAccountingService:
         if attestation is None:
             raise ContributionNotFoundError("CONTRIBUTION_NOT_FOUND")
         return attestation
+
+    def verify_production_attestation(self, attestation: ContributionAttestation) -> None:
+        """Reproduce the repository authority gate before an ECO-0007 plan."""
+
+        repository = self.store.repositories.get(attestation.repository_id)
+        if repository is None:
+            raise ContributionNotFoundError("REPOSITORY_NOT_ELIGIBLE")
+        if attestation.eligibility_state != "FINALIZED":
+            raise ValueError("DEVELOPMENT_CONTRIBUTION_NOT_FINALIZED")
+        if attestation.wallet_state != "VERIFIED":
+            raise ValueError("DEVELOPMENT_CONTRIBUTION_WALLET_UNVERIFIED")
+        claim = attestation.wallet_claim
+        if claim is None:
+            raise ValueError("DEVELOPMENT_CONTRIBUTION_WALLET_CLAIM_REQUIRED")
+        if claim.contributor_id not in {item.contributor_id for item in attestation.role_allocations}:
+            raise ValueError("DEVELOPMENT_CONTRIBUTION_WALLET_CLAIM_ALLOCATION_MISMATCH")
+        self._verify_wallet_claim_binding(claim)
+        stored = self.store.attestations.get(attestation.contribution_id)
+        if stored is None:
+            raise ContributionNotFoundError("CONTRIBUTION_NOT_FOUND")
+        if stored.model_dump(mode="json") != attestation.model_dump(mode="json"):
+            raise ValueError("DEVELOPMENT_CONTRIBUTION_ATTESTATION_STALE")
+        verify_attestation_authority_signatures(
+            repository=repository,
+            contribution_id=attestation.contribution_id,
+            pull_request_id=attestation.pull_request_id,
+            merge_commit_hash=attestation.merge_commit_hash,
+            contribution_epoch=attestation.contribution_epoch,
+            contribution_class=attestation.contribution_class,
+            source_evidence_root=attestation.source_evidence_root,
+            scoring_evidence_root=attestation.scoring_evidence_root,
+            role_allocations=attestation.role_allocations,
+            authorities=attestation.attestation_authorities,
+        )
 
     def finalize_contribution(self, *, contribution_id: str, current_epoch: int) -> ContributionAttestation:
         current = self.get_attestation(contribution_id)

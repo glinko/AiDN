@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import pytest
+
 from aidn_hypervisor.consensus.epoch_result_evidence import (
+    CONTROLLED_LOCALNET_ECO_0005,
     CONTROLLED_LOCALNET_NO_WORK,
+    ControlledLocalnetEco0005Profile,
     EpochResultEvidenceBundle,
+    build_controlled_localnet_eco0005_evidence,
+    build_controlled_localnet_eco0005_profile,
     build_controlled_localnet_no_work_evidence,
     build_manifest_from_evidence,
 )
@@ -79,6 +85,49 @@ def test_manifest_is_bound_to_the_observed_boundary() -> None:
     assert manifest.epoch_number == 0
     assert manifest.closing_height == 100
     assert manifest.pool_budgets == {"GENERAL_DEVELOPMENT": 0}
+
+
+def test_controlled_eco0005_profile_derives_the_fixed_development_budget() -> None:
+    profile = build_controlled_localnet_eco0005_profile(
+        network_id="aidn-localnet-1",
+        chain_id="chain-test",
+        effective_epoch=0,
+        epoch_schedule_hash="sha256:schedule",
+        authority_policy_hash="sha256:authority",
+        source_document="docs/product/ECO-0005.md",
+        source_document_version="0.3",
+        source_document_hash="sha256:eco0005",
+    )
+    bundle = build_controlled_localnet_eco0005_evidence(
+        report=_report(),
+        profile=profile,
+        start_height=40,
+        start_time="2026-08-13T00:00:00Z",
+        epoch_schedule=_schedule(),
+    )
+
+    assert bundle.source_kind == CONTROLLED_LOCALNET_ECO_0005
+    assert bundle.pool_budgets == {"GENERAL_DEVELOPMENT": 250_000_000}
+    assert bundle.verify_integrity()
+    assert any(item.startswith("controlled-localnet:eco-0005:") for item in bundle.source_references)
+
+
+def test_controlled_eco0005_profile_rejects_unapproved_pool_inputs() -> None:
+    profile = build_controlled_localnet_eco0005_profile(
+        network_id="aidn-localnet-1",
+        chain_id="chain-test",
+        effective_epoch=0,
+        epoch_schedule_hash="sha256:schedule",
+        authority_policy_hash="sha256:authority",
+        source_document="docs/product/ECO-0005.md",
+        source_document_version="0.3",
+        source_document_hash="sha256:eco0005",
+    )
+
+    with pytest.raises(ValueError, match="CONTROLLED_LOCALNET_ECO_0005_UNAPPROVED_POOL_INPUT"):
+        ControlledLocalnetEco0005Profile.model_validate(
+            profile.model_dump(mode="json") | {"carryover_in_q_atoms": 1}
+        )
 
 
 def test_no_work_builder_rejects_unrelated_missing_inputs() -> None:

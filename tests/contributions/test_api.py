@@ -72,6 +72,14 @@ def test_contribution_api_returns_stable_not_found_code():
     assert response.json()["error"]["code"] == "CONTRIBUTION_NOT_FOUND"
 
 
+def test_intake_route_precedes_parameterized_attestation_route():
+    router = build_contribution_router(ContributionAccountingService())
+    routes = [route.path for route in router.routes]
+    assert routes.index("/api/v1/contributions/attestations/intake") < routes.index(
+        "/api/v1/contributions/attestations/{contribution_id}"
+    )
+
+
 def test_main_application_wires_contribution_router():
     response = TestClient(build_app()).get("/api/v1/contributions/status")
     assert response.status_code == 200

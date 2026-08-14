@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from aidn_hypervisor.contributions.intake import validate_attestation_request_package
 from aidn_hypervisor.contributions.models import (
     AttestationAuthority,
     ContributionClass,
@@ -75,6 +76,19 @@ class MergeAttestationRequest(BaseModel):
     factor_values: ContributionFactorValues = Field(default_factory=ContributionFactorValues)
     role_allocations: list[ContributionRoleAllocation] | None = None
     logical_deliverable: str | None = None
+
+
+class AttestationIntakePackage(BaseModel):
+    schema_version: Literal["aidn.rfc-0068-attestation-intake.v1"]
+    mode: Literal["SIGNED_REQUEST_READY_FOR_SUBMISSION"]
+    request: MergeAttestationRequest
+    wallet_claim: dict[str, Any] = Field(min_length=1)
+    evidence: dict[str, Any] = Field(min_length=1)
+    evidence_root: str = Field(min_length=1)
+    git_evidence: dict[str, str] = Field(default_factory=dict)
+    attestation_context: dict[str, Any] | None = None
+    attestation_context_hash: str | None = None
+    signed_authority_ids: list[str] = Field(default_factory=list)
 
 
 class ChallengeRequest(BaseModel):
@@ -190,6 +204,7 @@ def build_contribution_router(
                 source_epoch_transition_operation_id=payload.source_epoch_transition_operation_id,
                 pool_budget_reference=payload.pool_budget_reference,
                 created_at=payload.created_at,
+                require_production_authority=True,
             ).model_dump(mode="json")
         except (ContributionNotFoundError, ValueError) as error:
             return _error_response(error)
@@ -215,6 +230,7 @@ def build_contribution_router(
                 source_epoch_transition_operation_id=payload.source_epoch_transition_operation_id,
                 pool_budget_reference=payload.pool_budget_reference,
                 created_at=payload.created_at,
+                require_production_authority=True,
             )
             batch = build_development_reward_production_batch(
                 profile=payload.production_profile,
@@ -276,6 +292,18 @@ def build_contribution_router(
     @router.get("/attestations")
     async def attestations() -> list[dict[str, Any]]:
         return [item.model_dump(mode="json") for item in service.list_attestations()]
+
+    @router.post("/attestations/intake", response_model=None)
+    async def attest_intake(payload: AttestationIntakePackage) -> dict[str, Any] | JSONResponse:
+        """Accept a signed intake package and replay all canonical evidence checks."""
+
+        try:
+            package = payload.model_dump(mode="json")
+            request_data = validate_attestation_request_package(package)
+            request = MergeAttestationRequest.model_validate(request_data)
+            return service.attest_merge(**request.model_dump()).model_dump(mode="json")
+        except (ContributionNotFoundError, ContributionConflictError, ValueError) as error:
+            return _error_response(error)
 
     @router.get("/attestations/{contribution_id}", response_model=None)
     async def get_attestation(contribution_id: str) -> dict[str, Any] | JSONResponse:

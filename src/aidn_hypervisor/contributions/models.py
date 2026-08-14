@@ -151,6 +151,7 @@ class EligibleRepository(BaseModel):
         min_length=1,
     )
     attestation_authority_ids: list[str] = Field(default_factory=list)
+    attestation_authority_public_keys: dict[str, str] = Field(default_factory=dict)
     active_from_epoch: int = Field(default=0, ge=0)
     active_until_epoch: int | None = Field(default=None, ge=0)
     repository_hash: str = Field(min_length=1)
@@ -317,6 +318,7 @@ class ContributionAttestation(BaseModel):
     wallet_claim: ContributorWalletClaim | None = None
     eligibility_state: ContributionEligibilityState = "PENDING"
     wallet_state: Literal["VERIFIED", "UNCLAIMED"] = "UNCLAIMED"
+    authority_signature_state: Literal["UNVERIFIED", "VERIFIED"] = "UNVERIFIED"
     challenge_until_epoch: int = Field(ge=0)
     maturity_stage_one_epoch: int = Field(ge=0)
     maturity_stage_two_epoch: int = Field(ge=0)

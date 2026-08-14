@@ -23,6 +23,9 @@ The service currently provides:
 - generated, vendor, lockfile, binary, and formatting exclusion;
 - contribution groups and bounded role allocations;
 - maintainer attestation thresholds, including two authorities for security work;
+- a repository-scoped public key registry and Ed25519 verification for
+  production-bound attestation authorities; legacy evidence-only records may
+  remain unverified until they are re-attested;
 - challenge windows and immutable attestation replacement history;
 - stage-one and stage-two maturity records with explicit revert classifications;
 - atomic JSON persistence independent from the Hypervisor Ledger snapshot;
@@ -83,6 +86,13 @@ The response includes:
 5. Submit the signed binding and source-platform confirmation hash.
 6. Commit `.aidn/contributor-wallet.json` in the contribution and submit a
    merge attestation with the local checkout path and changed-file evidence.
+   `tools/prepare-rfc0068-attestation.py` can perform the protected-branch,
+   exact-commit, diff and historical Wallet-binding checks and write a
+   read-only request package before submission. Use `--attestation-authority-id`
+   to emit exact authority signing payloads first; signatures are supplied by
+   the independent authorities in a second step. Use
+   `tools/attach-rfc0068-authority-signatures.py` to attach them without
+   hand-editing the package.
 7. Wait until `challenge_until_epoch` has closed, resolve any open challenge, and finalize the attestation.
 8. Request an ECO-0007 preview for the finalized attestation batch.
 9. Obtain the required Governance activation and finalized epoch pool evidence
@@ -131,6 +141,14 @@ it returns ordered envelopes but does not submit them to consensus.
 `wallet_address` is evidence of a binding, not a payment destination. A
 contribution without a verified Wallet remains attributable with
 `wallet_state: UNCLAIMED`.
+
+Before an ECO-0007 consensus plan is built, the service re-runs the production
+gate: the attestation must be finalized, the exact merged commit must contain a
+valid signed `.aidn/contributor-wallet.json` claim bound to the historical
+Wallet binding, and repository authority signatures must verify against the
+registered public-key registry. An evidence-only attestation or a current
+identity Wallet without the merged claim can still be previewed, but cannot be
+paid.
 
 The reward plan is therefore safe to inspect or hand to a consensus-aware
 operator, but no HTTP request in this router can directly credit a Wallet.

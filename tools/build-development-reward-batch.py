@@ -18,6 +18,7 @@ from aidn_hypervisor.reward.development_activation import DevelopmentRewardActiv
 from aidn_hypervisor.reward.development_contribution_service import DevelopmentContributionRewardService
 from aidn_hypervisor.reward.development_distribution import DevelopmentPoolInput
 from aidn_hypervisor.reward.development_preflight_quorum import (
+    DEVELOPMENT_REWARD_PREFLIGHT_QUORUM_VERSION,
     DevelopmentRewardPreflightQuorum,
     build_development_reward_preflight_quorum,
 )
@@ -51,10 +52,11 @@ def main() -> None:
     approval = DevelopmentRewardActivationApproval.model_validate_json(
         args.activation_approval.read_text(encoding="utf-8")
     )
-    preflight_payload = json.loads(args.preflight_quorum.read_text(encoding="utf-8"))
+    # PowerShell's default UTF-8 output includes a BOM on Windows.
+    preflight_payload = json.loads(args.preflight_quorum.read_text(encoding="utf-8-sig"))
     if not isinstance(preflight_payload, dict):
         raise ValueError("preflight quorum input must be a JSON object")
-    if "quorum_hash" in preflight_payload:
+    if preflight_payload.get("schema_version") == DEVELOPMENT_REWARD_PREFLIGHT_QUORUM_VERSION:
         preflight_quorum = DevelopmentRewardPreflightQuorum.model_validate(preflight_payload)
     else:
         preflight_quorum = build_development_reward_preflight_quorum(preflight_payload)
@@ -73,6 +75,7 @@ def main() -> None:
         source_epoch_transition_operation_id=args.source_epoch_transition_operation_id,
         pool_budget_reference=args.pool_budget_reference,
         created_at=args.created_at,
+        require_production_authority=True,
     )
     batch = build_development_reward_production_batch(
         profile=profile,

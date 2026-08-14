@@ -1,0 +1,17 @@
+{
+  "profile_id": "controlled-localnet-operator-wallet-127-v1",
+  "scope": "CONTROLLED_LOCALNET_TESTS_AND_CONTRIBUTION_ACCEPTANCE",
+  "network_id": "aidn-localnet-1",
+  "chain_id": "chain-Anm7Jk",
+  "wallet_address": "wallet-5320047bb01d",
+  "wallet_public_key": "ed25519:c17c775a8a0402e695733ed4458dab309dbef2829bf19763ad02ae66bb165e03",
+  "authority_policy_hash": "sha256:40c7c0371dca2160043bcd05e37ceb3d8cc8ab33d67bc21b451c95b3e45625a4",
+  "authority_threshold": 2,
+  "authority_rpc_urls": [
+    "http://192.168.88.128:26657",
+    "http://192.168.88.129:26657",
+    "http://192.168.88.130:26657"
+  ],
+  "private_key_storage": "external-only",
+  "production_status": "CONTROLLED_LOCALNET_ONLY"
+}

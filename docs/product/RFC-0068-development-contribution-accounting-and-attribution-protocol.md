@@ -72,6 +72,8 @@ eligible_repository:
   additional_reward_branches:
   contribution_profile_id:
   attestation_policy_id:
+  attestation_authority_ids:
+  attestation_authority_public_keys:
   active_from_epoch:
   active_until_epoch:
   repository_hash:
@@ -168,6 +170,28 @@ payment. Payment, unclaimed, maturity, and correction state belongs to separate
 `ECO-0007` reward records. A later Wallet rotation creates a new claim in a
 later contribution and does not rewrite prior attribution.
 
+### Production Attestation Gate
+
+An evidence-only attestation MAY be used for preview and review, but it SHALL
+NOT be used to build an ECO-0007 payment plan. A production-bound attestation
+SHALL satisfy all of the following:
+
+* the attestation is `FINALIZED` and its challenge window is closed;
+* `wallet_state` is `VERIFIED`;
+* a signed `.aidn/contributor-wallet.json` claim is present in the exact
+  `merge_commit_hash`, not merely in the working tree or PR description;
+* the claim signature, claim hash, and historical Wallet binding verify against
+  the evidence store;
+* every attestation authority signature verifies against the repository's
+  registered public-key registry and threshold policy;
+* the claim contributor appears in the attested role allocation.
+
+The production boundary SHALL re-run these checks immediately before a
+consensus plan is created. A cached `authority_signature_state` flag or a
+current identity Wallet alone is not sufficient. If the merged claim is absent
+or cannot be reproduced, the contribution remains eligible for non-paying
+review/preview but MUST be rejected from payment planning.
+
 ## 6. Attestation and Attribution
 
 Canonical attribution starts with a Contribution Attestation:
@@ -192,6 +216,7 @@ contribution_attestation:
   source_evidence_root:
   scoring_evidence_root:
   attestation_authorities:
+  authority_signature_state:
   attestation_signatures:
   attested_at:
   attestation_hash:
@@ -355,6 +380,8 @@ CONTRIBUTOR_WALLET_MISMATCH
 CONTRIBUTOR_IDENTITY_CONFLICT
 REPOSITORY_NOT_ELIGIBLE
 REPOSITORY_ATTESTATION_AUTHORITY_INVALID
+REPOSITORY_ATTESTATION_AUTHORITY_KEYS_REQUIRED
+REPOSITORY_ATTESTATION_AUTHORITY_SIGNATURE_INVALID
 CONTRIBUTION_NOT_FOUND
 CONTRIBUTION_ALREADY_ATTESTED
 CONTRIBUTION_MERGE_NOT_VERIFIED
@@ -376,6 +403,11 @@ CONTRIBUTION_MATURITY_REDUCED
 CONTRIBUTION_REWARD_UNCLAIMED
 CONTRIBUTION_GAMING_DETECTED
 CONTRIBUTION_LICENSE_VIOLATION
+DEVELOPMENT_CONTRIBUTION_NOT_FINALIZED
+DEVELOPMENT_CONTRIBUTION_WALLET_UNVERIFIED
+DEVELOPMENT_CONTRIBUTION_WALLET_CLAIM_REQUIRED
+DEVELOPMENT_CONTRIBUTION_WALLET_CLAIM_ALLOCATION_MISMATCH
+DEVELOPMENT_CONTRIBUTION_ATTESTATION_STALE
 ```
 
 The following are invariant:

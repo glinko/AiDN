@@ -218,10 +218,16 @@ class DevelopmentContributionRewardService:
         source_epoch_transition_operation_id: str,
         pool_budget_reference: str,
         created_at: str,
+        require_production_authority: bool = False,
     ) -> DevelopmentRewardOperationPlan:
         """Build the canonical operation sequence; do not submit it here."""
 
         calculation = preview.calculation
+        if require_production_authority:
+            for contribution_id in preview.contribution_ids:
+                self.contribution_service.verify_production_attestation(
+                    self.contribution_service.get_attestation(contribution_id)
+                )
         if preview.commitment.calculation_root != calculation.calculation_root:
             raise ValueError("DEVELOPMENT_REWARD_PREVIEW_COMMITMENT_MISMATCH")
         if calculation.pool.pool_in_q_atoms != calculation.pool.base_allocation_q_atoms:
