@@ -193,9 +193,69 @@ exact envelopes without broadcasting and verified their existing finality at
 blocks `72115` and `72172`; no new operation ID or transaction identity was
 created. Both pending execution files were removed only after finality.
 
-This closes the controlled-localnet ECO-0007 maturity gate. It remains a
-controlled testnet result and does not establish public authority,
-permissionless validator diversity or external organizational independence.
+Stage one was independently finalized and verified. The remaining reserved
+stage-two payment was intentionally held until the canonical Epoch Engine
+reached its exact maturity boundary; the completion evidence is recorded below.
+
+## Canonical Epoch Advancement And Stage Two
+
+The current chain had reached closing epoch `5`, but no result manifest existed
+for that boundary. The operator did not invent roots or pool budgets. Instead,
+the controlled-localnet no-work builder derived a manifest from the finalized
+epoch-4 anchor, and the same procedure was repeated for epochs `6` through
+`12`. Every manifest and transition was signed by the configured 2-of-3
+authority policy and finalized through the three validator RPCs.
+
+The final transition was:
+
+- Closing epoch: `12`
+- Opening epoch: `13`
+- Transition operation:
+  `a41b7d26d9e7b4b49ef595eab7e90c03041a5f77da932b50dcd36d102e7c6232`
+- Transition finality block: `74953`
+- Manifest operation:
+  `c739d857c4ea1fcf7e0bbe65e72a48edbcc79797f89a854147437816035dfb64`
+- Manifest hash:
+  `sha256:522dd3f7b8726ccebfb2c911c6e59fb18928520c3443a8706db19f00ddc49cc2`
+- Manifest finality block: `74950`
+
+The complete epoch-5 through epoch-12 artifact chain is retained in the
+external evidence archive under `%USERPROFILE%\.aidn\controlled-localnet-20260813\epoch-*`.
+
+The reserved stage-two payment then used the exact finalized opening-epoch-13
+transition above:
+
+- Payment operation:
+  `83055581cbab0018e3546eae99dd3ad9755263e67a760d3ad53d7f1d5695a7bf`
+- Payment transaction:
+  `81F29E245B2ED3F5209B8609000E1BEBFBF8A344D33413CE4762823675F3878E`
+- Payment finality block: `74988`
+- Payment stage: `MATURITY_STAGE_TWO`
+- Amount: `953400 q_atoms = 0.9534 Q`
+- Recipient: `wallet-5320047bb01d`
+- Reward ID:
+  `sha256:2613d6a623b1f7f10eb7192dc57037fa592e31c19599ece82a6f2712a62a1624`
+- Source epoch transition operation:
+  `a41b7d26d9e7b4b49ef595eab7e90c03041a5f77da932b50dcd36d102e7c6232`
+
+The transaction returned `tx_result.code=0` and was found at block `74988` on
+all three validator RPCs. The post-stage-two canonical Wallet balance was:
+
+```text
+192.168.88.128: 142158000 q_atoms
+192.168.88.129: 142158000 q_atoms
+192.168.88.130: 142158000 q_atoms
+```
+
+The delta from the post-stage-one balance was exactly `953400 q_atoms`. A
+restart-style replay through the reusable maturity executor returned
+`FINALIZED` with the same operation ID, transaction hash and block height; no
+second payment was created and the pending envelope was not replaced.
+
+This completes the controlled-localnet ECO-0007 maturity gate for the Wallet
+127 test profile. It remains a controlled testnet result and does not establish
+public authority, permissionless validator diversity or external organizational
+independence.
 
 ## External Evidence
 
