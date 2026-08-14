@@ -6,6 +6,7 @@ readonly DEFAULT_REF="b10433"
 readonly DEFAULT_PORT="8080"
 readonly REPOSITORY_URL="https://github.com/ggml-org/llama.cpp.git"
 readonly SERVICE_NAME="aidn-llamacpp.service"
+readonly CUDA_TOOLKIT_PACKAGE="cuda-toolkit-13-3"
 
 usage() {
   cat <<'EOF'
@@ -13,7 +14,7 @@ Usage: aidn-llamacpp-runtime-ubuntu.sh <install|start|status|stop> [options]
 
 Options:
   --ref REF         Pinned llama.cpp release/tag (default: b10433)
-  --backend MODE    cpu or cuda (default: cpu)
+  --backend MODE    cpu or cuda (default: cpu; cuda provisions CUDA Toolkit 13.3)
   --root PATH       Operator-owned install root
   --model PATH      Absolute GGUF path; required only for start
 
@@ -29,6 +30,43 @@ require_ubuntu() {
   # shellcheck disable=SC1091
   source /etc/os-release
   [[ "${ID:-}" == "ubuntu" ]] || die "this installer supports Ubuntu only; detected ${ID:-unknown}"
+}
+
+find_nvcc() {
+  if command -v nvcc >/dev/null 2>&1; then
+    command -v nvcc
+    return 0
+  fi
+  local candidate
+  for candidate in /usr/local/cuda/bin/nvcc /usr/local/cuda-*/bin/nvcc; do
+    [[ -x "$candidate" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
+}
+
+ensure_cuda_toolkit() {
+  local nvcc_path=""
+  nvcc_path="$(find_nvcc || true)"
+  if [[ -z "$nvcc_path" ]]; then
+    [[ "$(dpkg --print-architecture)" == "amd64" ]] \
+      || die "CUDA backend is supported only on amd64 Ubuntu hosts"
+    local temporary_dir
+    temporary_dir="$(mktemp -d)"
+    local distro="${ID}${VERSION_ID//./}"
+    local keyring="$temporary_dir/cuda-keyring.deb"
+    curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+      "https://developer.download.nvidia.com/compute/cuda/repos/$distro/x86_64/cuda-keyring_1.1-1_all.deb" \
+      -o "$keyring"
+    sudo dpkg -i "$keyring"
+    rm -rf -- "$temporary_dir"
+    sudo apt-get update
+    sudo apt-get install -y --no-install-recommends "$CUDA_TOOLKIT_PACKAGE"
+    nvcc_path="$(find_nvcc || true)"
+  fi
+  [[ -n "$nvcc_path" ]] || die "CUDA toolkit installation did not provide nvcc"
+  export PATH="$(dirname "$nvcc_path"):$PATH"
 }
 
 valid_absolute_path() {
@@ -84,7 +122,7 @@ case "$action" in
     sudo apt-get update
     sudo apt-get install -y --no-install-recommends build-essential ca-certificates cmake curl git libcurl4-openssl-dev
     if [[ "$backend" == "cuda" ]]; then
-      command -v nvcc >/dev/null 2>&1 || die "CUDA backend requires an existing CUDA toolkit with nvcc"
+      ensure_cuda_toolkit
     fi
     mkdir -p "$root_path" "$root_path/bin"
     if [[ -d "$source_dir/.git" ]]; then

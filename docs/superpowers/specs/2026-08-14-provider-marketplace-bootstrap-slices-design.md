@@ -45,7 +45,7 @@ CometBFT. It still needs post-install wallet and agent onboarding.
 | --- | --- | --- | --- | --- |
 | Whisper | ASR webservice image `v1.9.1` | Pull/start hardened Docker container | `127.0.0.1:9000` | Choose Whisper model after runtime install |
 | Ollama | `0.32.12` | Official Linux installer plus systemd override | `127.0.0.1:11434` | Pull selected model after runtime is ready |
-| llama.cpp | `b10433` | Build pinned source with CMake, user systemd service | `127.0.0.1:8080` | Attach an absolute GGUF artifact before start |
+| llama.cpp | `b10433` | Build pinned source with CMake; CUDA profile provisions NVIDIA CUDA Toolkit 13.3, user systemd service | `127.0.0.1:8080` | Attach an absolute GGUF artifact before start |
 | vLLM | `0.27.1` | Isolated `uv` environment, first profile is NVIDIA CUDA | `127.0.0.1:8000` | Select a Hugging Face model before start |
 
 Whisper itself does not define an official HTTP server. The first managed
