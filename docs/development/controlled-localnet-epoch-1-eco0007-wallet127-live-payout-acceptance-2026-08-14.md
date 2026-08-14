@@ -138,8 +138,64 @@ After the fix:
 - the pending envelope file was cleared after finality.
 
 This proves controlled restart/reconciliation and replay safety for the batch.
-It does not prove maturity-stage payment, public authority, external validator
-operation or independent organizational identity.
+The original batch still does not by itself prove maturity-stage payment,
+public authority, external validator operation or independent organizational
+identity. The additional live gate below records the separately finalized
+scope extension and stage-one payment.
+
+## Activation Scope Extension And Maturity Payment
+
+The original activation approval intentionally remains immutable. A separate
+future-effective scope extension was finalized before the reserved maturity
+payment was submitted:
+
+- Scope extension operation:
+  `761c3312c6cf6d1093c38d3ce7bd8c7b1665020a13d4496cb89e3a3763f0a36d`
+- Scope extension ID:
+  `sha256:61157891a302fff09e9f72440aa5e5014f5558d905024afa9cb0cb22fb4e0ff3`
+- Scope extension hash:
+  `sha256:63f26d5fd784a16c11ba1fcfc36ba3e0f1fea72892943f2dd8301057eb277f78`
+- Scope extension transaction:
+  `6D94453A12EE81B85E559B6411490737387308C1D50D1786FEC20BEEDF060AB4`
+- Scope extension finality block: `72115`
+
+The exact stage-one payment then referenced the finalized extension operation,
+the reserved payment hash and the finalized epoch boundary:
+
+- Payment operation:
+  `2727f2ee4206d5066b13603c4178720db16e8df3f58bd96af89da4eee1ee0d89`
+- Payment transaction:
+  `2199175CFFD6BE0ADCF43DEFD8345BBB4C94A3F6AA6D74A10DB4FFB4342D1602`
+- Payment finality block: `72172`
+- Payment stage: `MATURITY_STAGE_ONE`
+- Amount: `953400 q_atoms = 0.9534 Q`
+- Recipient: `wallet-5320047bb01d`
+- Source epoch transition operation:
+  `892cc574d4b926f8e723a0eed8bd6e33b2e676f7e6d9533881e2b453ba819a95`
+
+Both transactions returned `tx_result.code=0` and were independently found
+on all three validator RPCs. The configured finality threshold is `2-of-3`;
+the post-finality observations reached `3/3` agreement. At the verification
+height `72177`, all validators reported the same block ID, AppHash and
+`catching_up=false`.
+
+The canonical Wallet balance after stage-one payment was:
+
+```text
+192.168.88.128: 141204600 q_atoms
+192.168.88.129: 141204600 q_atoms
+192.168.88.130: 141204600 q_atoms
+```
+
+The balance delta from the post-immediate-payout value `140251200 q_atoms`
+was exactly `953400 q_atoms`. A restart-style replay check restored both
+exact envelopes without broadcasting and verified their existing finality at
+blocks `72115` and `72172`; no new operation ID or transaction identity was
+created. Both pending execution files were removed only after finality.
+
+This closes the controlled-localnet ECO-0007 maturity gate. It remains a
+controlled testnet result and does not establish public authority,
+permissionless validator diversity or external organizational independence.
 
 ## External Evidence
 

@@ -24,10 +24,21 @@ Completed in this slice:
   stage-one envelope offline with real authority seeds. Both builders report
   `broadcast=false` and never export private material.
 
-Live gate still pending: deploy the compatible ABCI implementation to validators
-`128`, `129` and `130`, finalize the exact extension through the RPC quorum, then
-submit the previously reserved stage-one payment and verify the canonical Wallet
-delta and replay behavior.
+Controlled-localnet live gate completed:
+
+- [x] Deploy the compatible ABCI implementation to validators `128`, `129` and
+  `130` without resetting the chain. All three validators reached the same
+  committed state and remained `catching_up=false`.
+- [x] Finalize the exact scope extension through the configured `2-of-3`
+  multi-RPC quorum at block `72115`.
+- [x] Submit the previously reserved stage-one maturity payment and finalize it
+  at block `72172`; the canonical Wallet 127 delta is exactly `953400 q_atoms`.
+- [x] Verify the final transaction identities and `tx_result.code=0` on all
+  three validator RPCs, then perform restart-style replay reconciliation without
+  rebroadcasting or creating a second payment.
+
+The detailed live evidence is in
+[the Wallet 127 acceptance record](./docs/development/controlled-localnet-epoch-1-eco0007-wallet127-live-payout-acceptance-2026-08-14.md).
 
 ## 2026-08-13 Canonical Epoch Schedule Commitment
 
