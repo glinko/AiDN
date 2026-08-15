@@ -91,6 +91,11 @@ reverse proxy or a private management network for the dashboard.
 This changes only the Hypervisor Dashboard/API listener. Provider runtimes
 (Ollama, llama.cpp, and vLLM) remain loopback-only.
 
+The supported bootstrap enables the browser-paired Dashboard over the selected
+HTTP boundary so the Settings control is usable without first provisioning a
+TLS proxy. Treat a LAN bind as trusted-network-only and keep the endpoint off
+the public Internet.
+
 After pairing the browser, the same boundary can be changed in **Settings →
 Dashboard listener**. Select **Loopback only** or **LAN · 0.0.0.0**, then apply
 the listener. The Hypervisor writes the reviewed host value to

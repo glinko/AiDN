@@ -52,6 +52,7 @@ def test_release_operator_bootstrap_uses_safe_defaults_and_user_systemd() -> Non
     assert "Dashboard network: loopback only" in script
     assert "hypervisor-bind-host" in script
     assert "AIDN_HYPERVISOR_RESTART_ON_BIND_CHANGE=true" in script
+    assert "AIDN_DASHBOARD_ACCESS_ALLOW_INSECURE_LAN=true" in script
     assert "127.0.0.1|0.0.0.0" in script
     assert "--enable-registry" in script
     assert "systemctl --user enable --now" in script

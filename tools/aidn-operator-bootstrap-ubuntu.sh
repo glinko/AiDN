@@ -641,6 +641,9 @@ export AIDN_HYPERVISOR_API_HOST="\$api_host"
 export AIDN_HYPERVISOR_API_PORT=$api_port_q
 export AIDN_HYPERVISOR_BIND_HOST_PATH="\$bind_host_path"
 export AIDN_HYPERVISOR_RESTART_ON_BIND_CHANGE=true
+# The supported bootstrap uses browser pairing over the selected local or
+# trusted-LAN HTTP boundary. Provider runtimes remain loopback-only.
+export AIDN_DASHBOARD_ACCESS_ALLOW_INSECURE_LAN=true
 export AIDN_NODE_ID=$(shell_quote "$operator_id")
 export AIDN_OPERATOR_ID=$(shell_quote "$operator_id")
 export AIDN_RESOURCE_PROBE_MODE=auto
