@@ -170,7 +170,7 @@ class ProviderRuntimeBroker:
     def __init__(
         self,
         *,
-        socket_path: Path,
+        socket_path: str,
         dispatcher_path: Path,
         allowed_uid: int,
         allowed_gid: int,
@@ -209,15 +209,20 @@ class ProviderRuntimeBroker:
             return _error_response(f"provider runtime broker rejected request: {error}")
 
     def serve(self) -> None:
-        self.socket_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            self.socket_path.unlink()
-        except FileNotFoundError:
-            pass
+        abstract_socket = self.socket_path.startswith("@")
+        filesystem_socket = None if abstract_socket else Path(self.socket_path)
+        if filesystem_socket is not None:
+            filesystem_socket.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                filesystem_socket.unlink()
+            except FileNotFoundError:
+                pass
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
-            server.bind(str(self.socket_path))
-            os.chown(self.socket_path, self.allowed_uid, self.allowed_gid)
-            os.chmod(self.socket_path, 0o660)
+            address = "\x00" + self.socket_path[1:] if abstract_socket else self.socket_path
+            server.bind(address)
+            if filesystem_socket is not None:
+                os.chown(filesystem_socket, self.allowed_uid, self.allowed_gid)
+                os.chmod(filesystem_socket, 0o660)
             server.listen(8)
             server.settimeout(1.0)
             stopping = False
@@ -247,15 +252,16 @@ class ProviderRuntimeBroker:
                         # long-lived root broker must remain available for the next
                         # request.
                         continue
-        try:
-            self.socket_path.unlink()
-        except FileNotFoundError:
-            pass
+        if filesystem_socket is not None:
+            try:
+                filesystem_socket.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--socket", required=True, type=Path)
+    parser.add_argument("--socket", required=True)
     parser.add_argument("--dispatcher", required=True, type=Path)
     parser.add_argument("--allowed-uid", required=True, type=int)
     parser.add_argument("--allowed-gid", required=True, type=int)

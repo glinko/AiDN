@@ -1,4 +1,5 @@
 import json
+import os
 import socket
 import threading
 from pathlib import Path
@@ -157,6 +158,38 @@ def test_unix_socket_runner_round_trips_one_bounded_request(tmp_path: Path) -> N
     }
 
 
+def test_unix_socket_runner_supports_linux_abstract_addresses() -> None:
+    if not hasattr(socket, "AF_UNIX") or os.name == "nt":
+        pytest.skip("Linux abstract Unix sockets are unavailable on this platform")
+    socket_name = "@aidn-test-provider-runtime"
+    received: dict = {}
+    ready = threading.Event()
+
+    def serve_once() -> None:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            server.bind("\x00" + socket_name[1:])
+            server.listen(1)
+            ready.set()
+            connection, _address = server.accept()
+            with connection:
+                frame = connection.recv(4096).split(b"\n", 1)[0]
+                received.update(json.loads(frame.decode("utf-8")))
+                connection.sendall(b'{"returncode":0,"stdout":"ready\\n","stderr":""}\n')
+
+    thread = threading.Thread(target=serve_once, daemon=True)
+    thread.start()
+    assert ready.wait(timeout=2)
+
+    result = UnixSocketProviderRuntimeCommandRunner(socket_path=socket_name).run(
+        argv=["/usr/libexec/aidn-provider-runtime/aidn-provider-runtime-ubuntu.sh", "ollama", "status"],
+        timeout_seconds=30,
+    )
+    thread.join(timeout=2)
+
+    assert result == RuntimeCommandResult(returncode=0, stdout="ready\n", stderr="")
+    assert received["argv"][1:] == ["ollama", "status"]
+
+
 def test_default_provider_executor_requires_explicit_host_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
     from aidn_hypervisor.main import _build_default_provider_installation_executor
 
@@ -168,7 +201,7 @@ def test_default_provider_executor_requires_explicit_host_opt_in(monkeypatch: py
         "AIDN_PROVIDER_RUNTIME_DISPATCHER",
         "/usr/libexec/aidn-provider-runtime/aidn-provider-runtime-ubuntu.sh",
     )
-    monkeypatch.setenv("AIDN_PROVIDER_RUNTIME_BROKER_SOCKET", "/run/aidn/provider-runtime.sock")
+    monkeypatch.setenv("AIDN_PROVIDER_RUNTIME_BROKER_SOCKET", "@aidn-provider-runtime-1000")
     executor = _build_default_provider_installation_executor()
 
     assert executor is not None

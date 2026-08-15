@@ -695,11 +695,9 @@ def _build_default_provider_installation_executor():
             "/usr/libexec/aidn-provider-runtime/aidn-provider-runtime-ubuntu.sh",
         )
     )
-    socket_path = Path(
-        os.getenv(
-            "AIDN_PROVIDER_RUNTIME_BROKER_SOCKET",
-            "/run/aidn/provider-runtime.sock",
-        )
+    socket_path = os.getenv(
+        "AIDN_PROVIDER_RUNTIME_BROKER_SOCKET",
+        "@aidn-provider-runtime",
     )
     broker = AllowlistedProviderRuntimeBroker(
         dispatcher_path=dispatcher_path,

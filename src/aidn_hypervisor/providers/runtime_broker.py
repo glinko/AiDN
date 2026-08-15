@@ -164,8 +164,8 @@ class UnixSocketProviderRuntimeCommandRunner:
 
     _MAX_FRAME_BYTES = 128 * 1024
 
-    def __init__(self, *, socket_path: Path) -> None:
-        self.socket_path = socket_path
+    def __init__(self, *, socket_path: Path | str) -> None:
+        self.socket_path = str(socket_path)
 
     def run(self, *, argv: list[str], timeout_seconds: int) -> RuntimeCommandResult:
         request = json.dumps(
@@ -184,7 +184,12 @@ class UnixSocketProviderRuntimeCommandRunner:
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
                 client.settimeout(timeout_seconds + 5)
-                client.connect(str(self.socket_path))
+                address = (
+                    "\x00" + self.socket_path[1:]
+                    if self.socket_path.startswith("@")
+                    else self.socket_path
+                )
+                client.connect(address)
                 client.sendall(request)
                 client.shutdown(socket.SHUT_WR)
                 chunks: list[bytes] = []

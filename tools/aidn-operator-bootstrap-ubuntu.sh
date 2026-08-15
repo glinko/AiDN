@@ -464,10 +464,10 @@ commit="$(git -C "$install_dir" rev-parse HEAD)"
 runtime_broker_root='/usr/libexec/aidn-provider-runtime'
 runtime_dispatcher="$runtime_broker_root/aidn-provider-runtime-ubuntu.sh"
 runtime_broker_script="$runtime_broker_root/aidn-provider-runtime-broker.py"
-runtime_broker_socket='/run/aidn/provider-runtime.sock'
 runtime_broker_service='aidn-provider-runtime-broker.service'
 operator_uid="$(id -u "$USER")"
 operator_gid="$(id -g "$USER")"
+runtime_broker_socket="@aidn-provider-runtime-$operator_uid"
 "${sudo_cmd[@]}" install -d -o root -g root -m 0755 "$runtime_broker_root"
 for runtime_file in \
   aidn-provider-runtime-ubuntu.sh \
@@ -625,7 +625,7 @@ export AIDN_SECRET_MANAGER_MASTER_KEY="\$(tr -d '\r\n' < "\$data/registry-replic
 export AIDN_MCP_REMOTE_ENABLED=true
 export AIDN_ENABLE_PROVIDER_RUNTIME_INSTALL=true
 export AIDN_PROVIDER_RUNTIME_DISPATCHER=/usr/libexec/aidn-provider-runtime/aidn-provider-runtime-ubuntu.sh
-export AIDN_PROVIDER_RUNTIME_BROKER_SOCKET=/run/aidn/provider-runtime.sock
+export AIDN_PROVIDER_RUNTIME_BROKER_SOCKET=$runtime_broker_socket
 export PYTHONUNBUFFERED=1
 EOF
 if [[ "$consensus_mode" != 'disabled' ]]; then
