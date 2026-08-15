@@ -609,11 +609,15 @@ fi
 
 mkdir -p "$data_dir/logs" "$HOME/.config/systemd/user"
 chmod 700 "$data_dir/logs" "$HOME/.config/systemd" "$HOME/.config/systemd/user"
+bind_host_path="$data_dir/hypervisor-bind-host"
+printf '%s\n' "$api_host" > "$bind_host_path"
+chmod 600 "$bind_host_path"
 wrapper="$data_dir/run-hypervisor.sh"
 repo_q="$(shell_quote "$install_dir")"
 data_q="$(shell_quote "$data_dir")"
 registry_q="$(shell_quote "$registry_config")"
 python_q="$(shell_quote "$python_bin")"
+bind_host_q="$(shell_quote "$bind_host_path")"
 api_host_q="$(shell_quote "$api_host")"
 api_port_q="$(shell_quote "$api_port")"
 cat > "$wrapper" <<EOF
@@ -623,8 +627,20 @@ repo=$repo_q
 data=$data_q
 registry_config=$registry_q
 python_bin=$python_q
+bind_host_path=$bind_host_q
+api_host=$api_host_q
+if [[ -f "\$bind_host_path" ]]; then
+  configured_host="\$(tr -d '\r\n' < "\$bind_host_path")"
+  case "\$configured_host" in
+    127.0.0.1|0.0.0.0) api_host="\$configured_host" ;;
+  esac
+fi
 export AIDN_HYPERVISOR_STATE_PATH="\$data/hypervisor-state.json"
 export AIDN_HYPERVISOR_BUNDLES_PATH="\$data/bundles.json"
+export AIDN_HYPERVISOR_API_HOST="\$api_host"
+export AIDN_HYPERVISOR_API_PORT=$api_port_q
+export AIDN_HYPERVISOR_BIND_HOST_PATH="\$bind_host_path"
+export AIDN_HYPERVISOR_RESTART_ON_BIND_CHANGE=true
 export AIDN_NODE_ID=$(shell_quote "$operator_id")
 export AIDN_OPERATOR_ID=$(shell_quote "$operator_id")
 export AIDN_RESOURCE_PROBE_MODE=auto
@@ -659,7 +675,7 @@ export AIDN_REGISTRY_REPLICATION_CONFIG="$registry_config"
 EOF
 fi
 cat >> "$wrapper" <<EOF
-exec "\$python_bin" -m uvicorn aidn_hypervisor.main:build_app --factory --host $api_host_q --port $api_port_q
+exec "\$python_bin" -m uvicorn aidn_hypervisor.main:build_app --factory --host "\$api_host" --port $api_port_q
 EOF
 chmod 700 "$wrapper"
 

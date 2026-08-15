@@ -118,6 +118,8 @@ const statusClassNames: Record<string, string> = {
   completed: 'border-emerald-300/25 bg-emerald-300/10 text-emerald-200',
   force_settled: 'border-amber-300/30 bg-amber-300/10 text-amber-200',
   running: 'border-cyan-300/25 bg-cyan-300/10 text-cyan-200',
+  loopback_active: 'border-cyan-300/25 bg-cyan-300/10 text-cyan-200',
+  lan_active: 'border-amber-300/30 bg-amber-300/10 text-amber-200',
   created: 'border-sky-300/25 bg-sky-300/10 text-sky-200',
   pending: 'border-amber-300/25 bg-amber-300/10 text-amber-200',
   stopped: 'border-slate-300/20 bg-slate-300/8 text-slate-300',
@@ -1580,6 +1582,7 @@ function SettingsAccessWorkspace() {
   const [draftScopes, setDraftScopes] = useState<string[]>([])
   const [draftAutoApprovedScopes, setDraftAutoApprovedScopes] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [networkMessage, setNetworkMessage] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
 
   async function refreshAccess() {
@@ -1616,6 +1619,43 @@ function SettingsAccessWorkspace() {
     } catch (cause) {
       setError(cause instanceof DashboardApiError ? cause.message : 'Pairing was rejected.')
     } finally { setBusy(null) }
+  }
+
+  async function updateNetworkAccess(mode: 'loopback' | 'lan') {
+    if (!status?.network_access.apply_supported || !status.session.active) return
+    setBusy('network')
+    setError(null)
+    setNetworkMessage(null)
+    try {
+      const result = await dashboardApi.updateDashboardNetworkAccess(mode)
+      setStatus((current) => current ? { ...current, network_access: result } : current)
+      if (result.restart_scheduled) {
+        setNetworkMessage(mode === 'lan'
+          ? 'LAN listener accepted. The Hypervisor is restarting and will bind 0.0.0.0 after the service comes back.'
+          : 'Loopback-only listener accepted. This LAN tab will disconnect when the service restarts; use the host or an SSH tunnel to reconnect.')
+      } else if (result.restart_required) {
+        setNetworkMessage(`Saved ${mode === 'lan' ? 'LAN' : 'loopback'} access. Restart the Hypervisor service to apply the new listener.`)
+      } else {
+        setNetworkMessage(`Dashboard is already using ${mode === 'lan' ? 'LAN' : 'loopback'} access.`)
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Dashboard network access update failed.')
+    } finally { setBusy(null) }
+  }
+
+  function selectNetworkMode(mode: 'loopback' | 'lan') {
+    setNetworkMessage(null)
+    setStatus((current) => current ? {
+      ...current,
+      network_access: {
+        ...current.network_access,
+        mode,
+        configured_mode: mode,
+        configured_host: mode === 'lan' ? '0.0.0.0' : '127.0.0.1',
+        restart_required: current.network_access.effective_mode !== mode,
+        restart_scheduled: false,
+      },
+    } : current)
   }
 
   async function issueCredential() {
@@ -1751,7 +1791,24 @@ function SettingsAccessWorkspace() {
       {error ? <PanelError title="Access action was not completed" detail={error} onRetry={() => void refreshAccess()} /> : null}
       {!status ? <PanelSkeleton rows={4} /> : null}
       {status ? <>
-        {status.transport.insecure_lan ? <Card className="border-amber-300/25 bg-amber-300/[0.04] py-0 shadow-none"><CardContent className="flex gap-3 p-4"><ShieldCheck className="mt-0.5 size-4 shrink-0 text-amber-200" /><div><p className="text-sm font-semibold text-amber-100">Private LAN transport</p><p className="mt-1 text-xs leading-5 text-amber-100/75">This node explicitly allows browser access over HTTP. Do not expose this dashboard outside the controlled LAN; production access requires HTTPS.</p></div></CardContent></Card> : null}
+         {status.transport.insecure_lan ? <Card className="border-amber-300/25 bg-amber-300/[0.04] py-0 shadow-none"><CardContent className="flex gap-3 p-4"><ShieldCheck className="mt-0.5 size-4 shrink-0 text-amber-200" /><div><p className="text-sm font-semibold text-amber-100">Private LAN transport</p><p className="mt-1 text-xs leading-5 text-amber-100/75">This node explicitly allows browser access over HTTP. Do not expose this dashboard outside the controlled LAN; production access requires HTTPS.</p></div></CardContent></Card> : null}
+         <Card className="border-border/80 bg-card py-0 shadow-none">
+           <CardHeader className="border-b border-border/70 px-5 py-4">
+             <div className="flex flex-wrap items-start justify-between gap-3">
+               <div><p className="eyebrow">Dashboard listener</p><CardTitle className="mt-1 text-lg font-semibold">Choose the access boundary</CardTitle><p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">Loopback keeps the UI on this host. LAN binds 0.0.0.0 so trusted devices on the local network can open it; the service restarts to apply the change.</p></div>
+               <StatusBadge value={status.network_access.effective_mode === 'lan' ? 'LAN active' : 'loopback active'} />
+             </div>
+           </CardHeader>
+           <CardContent className="space-y-4 p-5">
+             <div className="grid gap-3 sm:grid-cols-2">
+               <label className={cn('flex cursor-pointer gap-3 rounded-lg border p-4 transition', status.network_access.mode === 'loopback' ? 'border-cyan-300/50 bg-cyan-300/[0.07]' : 'border-border/70 bg-[#07111d] hover:border-cyan-300/30')}><input type="radio" name="dashboard-network-access" value="loopback" checked={status.network_access.mode === 'loopback'} onChange={() => selectNetworkMode('loopback')} disabled={!status.session.active || busy === 'network'} className="mt-1 size-4 accent-cyan-300" /><span><span className="block font-medium text-slate-100">Loopback only</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">127.0.0.1 · only local browser sessions can reach the Dashboard.</span></span></label>
+               <label className={cn('flex cursor-pointer gap-3 rounded-lg border p-4 transition', status.network_access.mode === 'lan' ? 'border-amber-300/50 bg-amber-300/[0.07]' : 'border-border/70 bg-[#07111d] hover:border-amber-300/30')}><input type="radio" name="dashboard-network-access" value="lan" checked={status.network_access.mode === 'lan'} onChange={() => selectNetworkMode('lan')} disabled={!status.session.active || busy === 'network'} className="mt-1 size-4 accent-amber-300" /><span><span className="block font-medium text-amber-50">LAN · 0.0.0.0</span><span className="mt-1 block text-xs leading-5 text-amber-100/70">Reachable on the trusted LAN; keep this HTTP endpoint off the public Internet.</span></span></label>
+             </div>
+             <div className="flex flex-col gap-3 rounded-lg border border-border/70 bg-[#07111d] p-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="eyebrow">Current listener</p><p className="mt-1 font-mono text-sm text-slate-100">{status.network_access.effective_host}:{status.network_access.port}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{status.network_access.restart_required ? `Pending ${status.network_access.configured_mode === 'lan' ? 'LAN' : 'loopback'} configuration · restart required` : 'Effective and configured boundaries match.'}</p></div><Button className={status.network_access.mode === 'lan' ? 'bg-amber-200 text-[#191204] hover:bg-amber-100' : 'bg-cyan-300 text-[#06121d] hover:bg-cyan-200'} disabled={!status.session.active || !status.network_access.apply_supported || busy === 'network' || !status.network_access.restart_required} onClick={() => void updateNetworkAccess(status.network_access.mode)}>{busy === 'network' ? 'Applying...' : status.network_access.restart_required ? 'Apply listener' : 'Listener applied'}</Button></div>
+             {!status.network_access.apply_supported ? <p className="text-xs leading-5 text-amber-200">This process was not started by the supported operator bootstrap, so the listener file is unavailable. Re-run the bootstrap before changing the network boundary here.</p> : null}
+             {networkMessage ? <OperationNotice message={networkMessage} onDismiss={() => setNetworkMessage(null)} /> : null}
+           </CardContent>
+         </Card>
         {!status.enabled ? <PanelError title="Credential management is unavailable" detail="This Hypervisor was started without the encrypted local secret store. Re-run the supported operator bootstrap or configure the secret manager before enabling remote MCP access." /> : null}
         {status.enabled && !status.session.active ? <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Terminal-to-browser pairing</p><CardTitle className="mt-1 text-lg font-semibold">Trust this browser</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">On the Hypervisor host, run <code className="rounded bg-black/20 px-1.5 py-0.5 font-mono text-xs text-cyan-100">aidn-operator pair</code>. The one-time code creates a browser-bound session. The node stores only hashes of the browser key and session cookie; use Forget this browser to revoke it.</p></CardHeader><CardContent className="flex flex-col gap-3 p-5"><label className="grid gap-2"><span className="eyebrow">Pairing code</span><input value={pairingCode} onChange={(event) => setPairingCode(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void pair() }} autoComplete="one-time-code" placeholder="Paste code from the node terminal" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none transition focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Trust duration</span><select value={sessionDuration} onChange={(event) => setSessionDuration(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none transition focus:border-cyan-300"><option value="ten_minutes">10 minutes</option><option value="one_day">1 day</option><option value="thirty_days">30 days</option><option value="forever">Indefinitely</option></select></label><div className="flex justify-end"><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={!pairingCode.trim() || busy === 'pair'} onClick={() => void pair()}>{busy === 'pair' ? 'Pairing...' : 'Trust browser'}<ChevronRight /></Button></div></CardContent></Card> : null}
         {status.enabled && status.session.active ? <>

@@ -50,6 +50,7 @@ from aidn_hypervisor.mcp import (
 from aidn_hypervisor.mcp.credentials import McpCredentialStore
 from aidn_hypervisor.mcp.enrollment import McpEnrollmentService
 from aidn_hypervisor.operator_access import DashboardAccessService
+from aidn_hypervisor.dashboard_network_access import DashboardNetworkAccessService
 from aidn_hypervisor.operator_access_api import build_operator_access_router
 from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
@@ -295,6 +296,7 @@ def build_app(
         if mcp_credential_store is not None
         else None
     )
+    dashboard_network_access_service = DashboardNetworkAccessService()
     mcp_enrollment_service = (
         McpEnrollmentService(
             secret_manager=mcp_secret_manager,
@@ -306,6 +308,7 @@ def build_app(
     app.state.mcp_remote_gateway = mcp_remote_gateway
     app.state.mcp_credential_store = mcp_credential_store
     app.state.dashboard_access_service = dashboard_access_service
+    app.state.dashboard_network_access_service = dashboard_network_access_service
     app.state.mcp_enrollment_service = mcp_enrollment_service
     if mcp_remote_gateway.enabled:
         app.include_router(build_mcp_remote_router(mcp_remote_gateway))
@@ -322,6 +325,7 @@ def build_app(
             endpoint_publication_service=resolved_endpoint_publication_service,
             remote_endpoint_service=resolved_remote_endpoint_service,
             validation_service=resolved_validation_service,
+            network_access_service=dashboard_network_access_service,
         )
     )
 
@@ -445,6 +449,10 @@ def _is_validator_consensus_write_path(path: str, method: str | None = None) -> 
     ):
         return True
     if parts == ["operators", "dashboard", "access", "operations", "resources", "probe"]:
+        return True
+    if parts == ["operators", "dashboard", "access", "operations", "network"]:
+        # The Dashboard listener is constrained to the two reviewed host
+        # boundaries and is persisted for the bootstrap service wrapper.
         return True
     if tuple(parts) in {
         ("operators", "dashboard", "access", "operations", "wallet", "create"),

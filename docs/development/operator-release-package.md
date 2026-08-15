@@ -75,9 +75,9 @@ operator channel, then import it with the existing
 host firewall is deliberately not modified by the bootstrap; open TCP 9444
 only after reviewing the LAN policy.
 
-The API remains loopback-only in this mode. During the interactive wizard,
-the operator is asked whether to expose the Dashboard/API on the LAN; the
-default is `127.0.0.1` and answering yes selects `0.0.0.0`. A non-loopback API
+Registry enablement does not change the Dashboard listener. During the
+interactive wizard, the operator is asked whether to expose the Dashboard/API
+on the LAN; the default is `127.0.0.1` and answering yes selects `0.0.0.0`. A non-loopback API
 bind requires explicit approval because the MVP API does not provide a public
 authentication boundary. In non-interactive mode, use both flags explicitly:
 
@@ -91,6 +91,14 @@ reverse proxy or a private management network for the dashboard.
 This changes only the Hypervisor Dashboard/API listener. Provider runtimes
 (Ollama, llama.cpp, and vLLM) remain loopback-only.
 
+After pairing the browser, the same boundary can be changed in **Settings →
+Dashboard listener**. Select **Loopback only** or **LAN · 0.0.0.0**, then apply
+the listener. The Hypervisor writes the reviewed host value to
+`hypervisor-bind-host` and restarts its managed user service; no arbitrary bind
+address or shell command is accepted from the browser. If the process was not
+started by the supported bootstrap, the setting is read-only until the
+bootstrap-generated launcher is restored.
+
 ## Resulting layout
 
 For operator `operator-example-1`, defaults are:
@@ -100,6 +108,7 @@ For operator `operator-example-1`, defaults are:
 ~/.local/share/aidn/operator-example-1/            persistent state
   bootstrap-state.json                              secret-free summary
   resource-capacity.json                            CPU, RAM and visible GPU capacity
+  hypervisor-bind-host                              `127.0.0.1` or `0.0.0.0`, mode 0600
   operator-identity/                                local identity metadata
     operator-attestation-key.raw                    PRIVATE, mode 0600
     operator-identity.json                          PRIVATE metadata, mode 0600

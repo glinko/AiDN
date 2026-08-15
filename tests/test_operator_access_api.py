@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.mcp.credentials import McpCredentialStore
 from aidn_hypervisor.mcp.enrollment import McpEnrollmentService
+from aidn_hypervisor.dashboard_network_access import DashboardNetworkAccessService
 from aidn_hypervisor.operator_access import DashboardAccessService
 from aidn_hypervisor.operator_access_api import build_operator_access_router
 from aidn_hypervisor.queue import InMemoryTaskQueue
@@ -173,6 +174,39 @@ def test_credential_mutation_requires_pairing_and_reveals_only_new_value(tmp_pat
     revoked = client.delete(f"/operators/dashboard/access/credentials/{rotated.json()['credential_id']}")
     assert revoked.status_code == 204
     assert client.post("/operators/dashboard/access/logout").status_code == 204
+
+
+def test_dashboard_network_access_is_pair_bound_and_limited_to_loopback_or_lan(tmp_path) -> None:
+    manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
+    credentials = McpCredentialStore(secret_manager=manager)
+    access = DashboardAccessService(store=credentials)
+    network = DashboardNetworkAccessService(
+        path=tmp_path / "hypervisor-bind-host",
+        current_host="127.0.0.1",
+        restart_on_change=False,
+    )
+    app = FastAPI()
+    app.include_router(build_operator_access_router(
+        access_service=access,
+        credential_store=credentials,
+        allow_insecure_lan=True,
+        network_access_service=network,
+    ))
+    client = TestClient(app)
+    client.headers.update(_BROWSER_HEADERS)
+
+    assert client.post("/operators/dashboard/access/operations/network", json={"mode": "lan"}).status_code == 401
+    pairing = access.create_pairing(ttl_seconds=600)
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+
+    initial = client.get("/operators/dashboard/access/status")
+    assert initial.json()["network_access"]["effective_mode"] == "loopback"
+    changed = client.post("/operators/dashboard/access/operations/network", json={"mode": "lan"})
+    assert changed.status_code == 200
+    assert changed.json()["configured_host"] == "0.0.0.0"
+    assert changed.json()["restart_required"] is True
+    assert (tmp_path / "hypervisor-bind-host").read_text(encoding="utf-8").strip() == "0.0.0.0"
+    assert client.post("/operators/dashboard/access/operations/network", json={"mode": "public"}).status_code == 422
 
 
 def test_paired_operator_can_list_and_update_only_known_agent_permissions(tmp_path) -> None:

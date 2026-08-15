@@ -6,7 +6,7 @@ import hashlib
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Request
@@ -32,6 +32,7 @@ from aidn_hypervisor.mcp.permissions import (
     permission_catalog_payload,
 )
 from aidn_hypervisor.operator_access import DashboardAccessService
+from aidn_hypervisor.dashboard_network_access import DashboardNetworkAccessService
 from aidn_hypervisor.resource_probe import refresh_resource_probe_from_environment
 from aidn_hypervisor.wallet_identity import wallet_identity_registration_payload
 from aidn_hypervisor.wallet_reconciliation import reconcile_pending_wallet_transfers
@@ -142,6 +143,10 @@ class BundleRevisionOperationRequest(BaseModel):
     enabled: bool = False
 
 
+class DashboardNetworkAccessRequest(BaseModel):
+    mode: Literal["loopback", "lan"]
+
+
 def _credential_payload(credential: McpCredential, *, reveal: bool = False) -> dict:
     payload = asdict(credential)
     if not reveal:
@@ -162,9 +167,11 @@ def build_operator_access_router(
     endpoint_publication_service: Any | None = None,
     remote_endpoint_service: Any | None = None,
     validation_service: Any | None = None,
+    network_access_service: DashboardNetworkAccessService | None = None,
 ) -> APIRouter:
     """Build a browser-only credential management boundary."""
     router = APIRouter(prefix="/operators/dashboard/access")
+    network_access = network_access_service or DashboardNetworkAccessService()
 
     def session_expiry(request: Request) -> str | None:
         if access_service is None:
@@ -658,12 +665,30 @@ def build_operator_access_router(
                 "configured": operator_fingerprint is not None,
                 "fingerprint": operator_fingerprint,
             },
+            "network_access": network_access.status(),
             "credentials": (
                 []
                 if credential_store is None or not active
                 else [_credential_payload(item) for item in credential_store.list_credentials()]
             ),
         }
+
+    @router.post("/operations/network")
+    async def update_network_access(
+        payload: DashboardNetworkAccessRequest,
+        request: Request,
+    ) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        try:
+            result = network_access.set_mode(payload.mode)
+        except (OSError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(
+            status_code=202 if result.get("restart_scheduled") else 200,
+            content=result,
+        )
 
     @router.post("/pair", status_code=204)
     async def pair(payload: PairingRequest, request: Request, response: Response) -> Response:

@@ -38,11 +38,24 @@ export type AccessCredential = {
   token?: string
 }
 
+export type DashboardNetworkAccess = {
+  mode: 'loopback' | 'lan'
+  configured_mode: 'loopback' | 'lan'
+  effective_mode: 'loopback' | 'lan'
+  configured_host: string
+  effective_host: string
+  restart_required: boolean
+  restart_scheduled: boolean
+  apply_supported: boolean
+  port: number
+}
+
 export type DashboardAccessStatus = {
   enabled: boolean
   session: { active: boolean; expires_at: string | null }
   transport: { insecure_lan: boolean }
   operator_authority: { configured: boolean; fingerprint: string | null }
+  network_access: DashboardNetworkAccess
   credentials: AccessCredential[]
 }
 
@@ -194,6 +207,7 @@ export const dashboardApi = {
   remoteEndpoints: (signal?: AbortSignal): Promise<RemoteEndpointsDashboard> => readDashboard('/operators/dashboard/remote-endpoints', dashboardSchemas.remoteEndpoints, signal),
   events: (signal?: AbortSignal) => readDashboard('/operators/events?limit=24', dashboardSchemas.events, signal),
   accessStatus: (): Promise<DashboardAccessStatus> => writeDashboard('/operators/dashboard/access/status', { method: 'GET' }) as Promise<DashboardAccessStatus>,
+  updateDashboardNetworkAccess: (mode: DashboardNetworkAccess['mode']): Promise<DashboardNetworkAccess & { status: string }> => writeDashboard<DashboardNetworkAccess & { status: string }>('/operators/dashboard/access/operations/network', { method: 'POST', body: JSON.stringify({ mode }) }) as Promise<DashboardNetworkAccess & { status: string }>,
   pairDashboard: (code: string, duration: string) => writeDashboard('/operators/dashboard/access/pair', { method: 'POST', body: JSON.stringify({ code, duration }) }),
   createAgentCredential: (label: string, scopes?: string[], autoApprovedScopes?: string[]) => writeDashboard<AccessCredential>('/operators/dashboard/access/credentials', { method: 'POST', body: JSON.stringify({ label, ...(scopes ? { scopes } : {}), ...(autoApprovedScopes ? { auto_approved_scopes: autoApprovedScopes } : {}) }) }),
   agentPermissionCatalog: () => writeDashboard<AgentPermissionCatalog>('/operators/dashboard/access/permission-catalog', { method: 'GET' }),
