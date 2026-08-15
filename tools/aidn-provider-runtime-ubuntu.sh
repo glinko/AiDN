@@ -27,6 +27,20 @@ die() {
 
 provider="$1"
 shift
+# The production broker runs this immutable dispatcher as root but keeps the
+# operator's HOME and user-systemd runtime context for provider-local state.
+# These values are injected by the root-owned broker, never accepted from the
+# dashboard request.
+if [[ "$EUID" -eq 0 && -n "${AIDN_PROVIDER_RUNTIME_OPERATOR_HOME:-}" ]]; then
+  export HOME="$AIDN_PROVIDER_RUNTIME_OPERATOR_HOME"
+  export USER="${AIDN_PROVIDER_RUNTIME_OPERATOR_NAME:-${USER:-root}}"
+  export LOGNAME="$USER"
+  if [[ "${AIDN_PROVIDER_RUNTIME_OPERATOR_UID:-}" =~ ^[0-9]+$ ]]; then
+    export XDG_RUNTIME_DIR="/run/user/$AIDN_PROVIDER_RUNTIME_OPERATOR_UID"
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+  fi
+  export PATH="$HOME/.local/bin:/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin"
+fi
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 case "$provider" in

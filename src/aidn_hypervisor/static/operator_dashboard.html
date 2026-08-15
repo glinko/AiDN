@@ -4864,6 +4864,28 @@
       };
     }
 
+    function providerRuntimeHostMutationEnabled() {
+      const capabilities = providerInstallationExecutor().sandbox_capabilities || {};
+      return Boolean(
+        capabilities.host_mutation &&
+        (capabilities.supported_execution_modes || []).includes("UNSANDBOXED_HOST")
+      );
+    }
+
+    function providerRuntimeModeLabel() {
+      const capabilities = providerInstallationExecutor().sandbox_capabilities || {};
+      if (providerRuntimeHostMutationEnabled()) {
+        return "Host install / allowlisted broker";
+      }
+      return `Preview only / ${(capabilities.supported_execution_modes || ["RECORDED_ONLY"])[0]}`;
+    }
+
+    function providerRuntimeApplyDescription() {
+      return providerRuntimeHostMutationEnabled()
+        ? "Apply dispatches the reviewed provider installer through the root-owned local broker. It installs the runtime on this Ubuntu node; model downloads and service configuration remain separate steps."
+        : "Apply records the approved provider inventory through the declarative executor. It does not run shell, Docker, downloads, or plugin installer code in this mode.";
+    }
+
     function providerSecretRequirements(provider) {
       return provider?.secret_requirements || [];
     }
@@ -7035,10 +7057,10 @@
           <section class="subpanel">
             <div class="panel-heading">Plugin directory</div>
             <div class="subpanel-copy">
-              Apply approved plan uses the controlled executor in this MVP. It records declarative actions through
+              Apply approved plan uses the controlled executor. On a provisioned Ubuntu node it dispatches the pinned runtime through the root-owned local broker; otherwise it records the declarative action only. It uses
               <code>${providerInstallationApprovalsPath}</code> and
               <code>${providerInstallationJobsPath}</code>, then creates local provider inventory state. It does
-              not run shell, Docker, downloads, or plugin installer code.
+              not accept arbitrary commands or installer paths.
             </div>
             <div class="table-shell" style="margin-top: 14px;">
               <div class="table-head">
@@ -7046,7 +7068,7 @@
                 <div>Trust</div>
                 <div>Capabilities</div>
                 <div>Permissions</div>
-                <div>Install plan preview</div>
+                <div>Install plan / runtime</div>
                 <div>Action</div>
               </div>
               ${
@@ -7075,7 +7097,7 @@
                             </div>
                             <div class="row-meta">${capabilitySummary || "-"}</div>
                             <div class="row-meta">${permissionSummary || "No elevated permissions"}</div>
-                            <div class="row-meta">${canInstallProvider ? `Preview only / ${escapeHtml(sandboxPolicy.execution_mode || "RECORDED_ONLY")}` : "Attach only"}</div>
+                            <div class="row-meta">${canInstallProvider ? escapeHtml(providerRuntimeHostMutationEnabled() ? providerRuntimeModeLabel() : `Preview only / ${sandboxPolicy.execution_mode || "RECORDED_ONLY"}`) : "Attach only"}</div>
                             <button class="row-action ${active ? "selected" : ""}" type="button">${active ? "Selected" : "Configure"}</button>
                           </div>
                         `;
@@ -9462,6 +9484,7 @@
       const installationExecutor = providerInstallationExecutor();
       const executorSandboxCapabilities =
         installationExecutor.sandbox_capabilities || {};
+      const hostRuntimeEnabled = providerRuntimeHostMutationEnabled();
       const upgradeReview = providerUpgradeReview(provider);
       const canInstallProvider = (provider.plugin_capability_flags || []).includes(
         "CAN_INSTALL_PROVIDER"
@@ -9557,7 +9580,7 @@
           </div>
           <section class="subpanel" style="padding: 16px; margin-top: 10px;">
             <div class="panel-heading">Managed Provider Apply</div>
-            <div class="inspector-copy">Approve and apply a declarative provider plan through the controlled executor. This creates local Provider Instance inventory state only; it does not run shell, Docker, downloads, or plugin installer code.</div>
+            <div class="inspector-copy">${escapeHtml(providerRuntimeApplyDescription())}</div>
             ${
               canInstallProvider
                 ? ""
@@ -9692,11 +9715,11 @@
             </div>
             <div class="wallet-inline-actions" style="margin-top: 10px;">
               <button class="secondary-button" type="button" data-provider-action="run-installation-diagnostics" ${canRunInstallationDiagnostics ? "" : "disabled"}>${state.providerDiagnosticsPendingId === provider.plugin_id ? "Running Diagnostics..." : "Run Dry-Run Diagnostics"}</button>
-              <button class="secondary-button" type="button" data-provider-action="apply-installation" ${canApplyInstallation ? "" : "disabled"}>${state.providerActionPending === "apply-installation" ? "Applying..." : (latestJob?.approval_id === latestApproval?.approval_id && latestJob?.status === "SUCCEEDED" && latestJob?.rollback_status !== "COMPLETED" ? "Already Applied" : "Apply Latest Approval")}</button>
+              <button class="secondary-button" type="button" data-provider-action="apply-installation" ${canApplyInstallation ? "" : "disabled"}>${state.providerActionPending === "apply-installation" ? (hostRuntimeEnabled ? "Installing..." : "Applying...") : (latestJob?.approval_id === latestApproval?.approval_id && latestJob?.status === "SUCCEEDED" && latestJob?.rollback_status !== "COMPLETED" ? (hostRuntimeEnabled ? "Already Installed" : "Already Applied") : (hostRuntimeEnabled ? "Install Provider" : "Apply Latest Approval"))}</button>
               <button class="secondary-button" type="button" data-provider-action="rollback-installation" ${canRollbackLatestInstallation ? "" : "disabled"}>${state.providerActionPending === `rollback-installation:${latestJob?.job_id || ""}` ? "Rolling Back..." : "Rollback Latest Job"}</button>
             </div>
             <div class="notice" style="margin-top: 10px;">
-              Apply records the approved provider inventory; it does not start a host process in this MVP. After a successful apply the dashboard runs an explicit provider health check. If it fails, start the declared service and use <strong>Check Health</strong> in the Provider Instances table before discovering models.
+              ${hostRuntimeEnabled ? "The reviewed runtime installer runs on this Ubuntu node through the broker. Model downloads and model discovery remain separate; after installation the dashboard runs an explicit provider health check." : "Apply records the approved provider inventory; it does not start a host process in this mode. After a successful apply the dashboard runs an explicit provider health check."} If the health check is not ready, inspect the provider service and use <strong>Check Health</strong> in the Provider Instances table before discovering models.
             </div>
             ${renderProviderActionMessage()}
             <div class="request-history" style="margin-top: 10px;">
@@ -11954,7 +11977,9 @@
         });
         state.providerMessage = {
           kind: "good",
-          text: `Approved declarative install plan ${approval.approval_id}. Apply it to create controlled local provider inventory state.`,
+          text: providerRuntimeHostMutationEnabled()
+            ? `Approved install plan ${approval.approval_id}. Install the provider to run the reviewed runtime action on this node.`
+            : `Approved declarative install plan ${approval.approval_id}. Apply it to create controlled local provider inventory state.`,
         };
         await refreshBootstrapPayloads();
       } catch (error) {
@@ -12403,7 +12428,9 @@
               }
             : {
                 kind: "warn",
-                text: `Apply job ${job.job_id} finished and provider inventory ${job.provider_instance_id} was recorded, but health is not ready. Start the declared provider service and retry Check Health.`,
+                text: providerRuntimeHostMutationEnabled()
+                  ? `Install job ${job.job_id} finished, but provider ${job.provider_instance_id} is not healthy yet. Check the runtime service and retry Check Health; model setup remains separate.`
+                  : `Apply job ${job.job_id} finished and provider inventory ${job.provider_instance_id} was recorded, but health is not ready. Start the declared provider service and retry Check Health.`,
               };
         } else {
           state.providerMessage = {

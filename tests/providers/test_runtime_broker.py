@@ -1,3 +1,6 @@
+import json
+import socket
+import threading
 from pathlib import Path
 
 import pytest
@@ -6,6 +9,7 @@ from aidn_hypervisor.providers.models import ProviderRuntimeInvocation
 from aidn_hypervisor.providers.runtime_broker import (
     AllowlistedProviderRuntimeBroker,
     RuntimeCommandResult,
+    UnixSocketProviderRuntimeCommandRunner,
 )
 
 
@@ -110,3 +114,63 @@ def test_runtime_broker_bounds_timeout_and_output() -> None:
     assert result.status == "FAILED"
     assert len(result.details["stdout"]) == 64 * 1024
     assert len(result.details["stderr"]) == 64 * 1024
+
+
+def test_unix_socket_runner_round_trips_one_bounded_request(tmp_path: Path) -> None:
+    if not hasattr(socket, "AF_UNIX"):
+        pytest.skip("Unix domain sockets are unavailable on this platform")
+    socket_path = tmp_path / "provider-runtime.sock"
+    received: dict = {}
+    ready = threading.Event()
+
+    def serve_once() -> None:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            server.bind(str(socket_path))
+            server.listen(1)
+            ready.set()
+            connection, _ = server.accept()
+            with connection:
+                frame = connection.recv(4096).split(b"\n", 1)[0]
+                received.update(json.loads(frame.decode("utf-8")))
+                connection.sendall(
+                    b'{"returncode":0,"stdout":"ready\\n","stderr":""}\n'
+                )
+
+    thread = threading.Thread(target=serve_once, daemon=True)
+    thread.start()
+    assert ready.wait(timeout=2)
+
+    result = UnixSocketProviderRuntimeCommandRunner(socket_path=socket_path).run(
+        argv=["/usr/libexec/aidn-provider-runtime/aidn-provider-runtime-ubuntu.sh", "ollama", "status"],
+        timeout_seconds=30,
+    )
+    thread.join(timeout=2)
+
+    assert result == RuntimeCommandResult(returncode=0, stdout="ready\n", stderr="")
+    assert received == {
+        "argv": [
+            "/usr/libexec/aidn-provider-runtime/aidn-provider-runtime-ubuntu.sh",
+            "ollama",
+            "status",
+        ],
+        "timeout_seconds": 30,
+    }
+
+
+def test_default_provider_executor_requires_explicit_host_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    from aidn_hypervisor.main import _build_default_provider_installation_executor
+
+    monkeypatch.delenv("AIDN_ENABLE_PROVIDER_RUNTIME_INSTALL", raising=False)
+    assert _build_default_provider_installation_executor() is None
+
+    monkeypatch.setenv("AIDN_ENABLE_PROVIDER_RUNTIME_INSTALL", "true")
+    monkeypatch.setenv(
+        "AIDN_PROVIDER_RUNTIME_DISPATCHER",
+        "/usr/libexec/aidn-provider-runtime/aidn-provider-runtime-ubuntu.sh",
+    )
+    monkeypatch.setenv("AIDN_PROVIDER_RUNTIME_BROKER_SOCKET", "/run/aidn/provider-runtime.sock")
+    executor = _build_default_provider_installation_executor()
+
+    assert executor is not None
+    assert executor.executor_id == "allowlisted-provider-runtime-v1"
+    assert isinstance(executor._broker.runner, UnixSocketProviderRuntimeCommandRunner)

@@ -458,6 +458,53 @@ git -C "$install_dir" checkout --detach FETCH_HEAD
 commit="$(git -C "$install_dir" rev-parse HEAD)"
 "$uv_bin" --directory "$install_dir" sync --all-extras --frozen
 
+# Install the reviewed Provider runtime dispatcher and its root-owned broker.
+# The Hypervisor talks to the broker over a UID-restricted Unix socket; it
+# never receives sudo, shell, or generic subprocess capability itself.
+runtime_broker_root='/usr/libexec/aidn-provider-runtime'
+runtime_dispatcher="$runtime_broker_root/aidn-provider-runtime-ubuntu.sh"
+runtime_broker_script="$runtime_broker_root/aidn-provider-runtime-broker.py"
+runtime_broker_socket='/run/aidn/provider-runtime.sock'
+runtime_broker_service='aidn-provider-runtime-broker.service'
+operator_uid="$(id -u "$USER")"
+operator_gid="$(id -g "$USER")"
+"${sudo_cmd[@]}" install -d -o root -g root -m 0755 "$runtime_broker_root"
+for runtime_file in \
+  aidn-provider-runtime-ubuntu.sh \
+  aidn-whisper-runtime-ubuntu.sh \
+  aidn-ollama-runtime-ubuntu.sh \
+  aidn-llamacpp-runtime-ubuntu.sh \
+  aidn-vllm-runtime-ubuntu.sh \
+  aidn-provider-runtime-broker.py; do
+  [[ -f "$install_dir/tools/$runtime_file" ]] || die "runtime broker file is missing: $install_dir/tools/$runtime_file"
+  "${sudo_cmd[@]}" install -o root -g root -m 0755 \
+    "$install_dir/tools/$runtime_file" "$runtime_broker_root/$runtime_file"
+done
+runtime_unit_tmp="$(mktemp)"
+cat > "$runtime_unit_tmp" <<EOF
+[Unit]
+Description=AiDN root-owned Provider runtime broker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 $runtime_broker_script --socket $runtime_broker_socket --dispatcher $runtime_dispatcher --allowed-uid $operator_uid --allowed-gid $operator_gid --operator-home $HOME --operator-name $USER
+Restart=always
+RestartSec=2
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+"${sudo_cmd[@]}" install -o root -g root -m 0644 "$runtime_unit_tmp" "/etc/systemd/system/$runtime_broker_service"
+rm -f "$runtime_unit_tmp"
+if [[ "$no_start" != 'true' ]]; then
+  "${sudo_cmd[@]}" systemctl daemon-reload
+  "${sudo_cmd[@]}" systemctl enable --now "$runtime_broker_service"
+fi
+
 node_root="$(bash "$install_dir/tools/install-node-runtime-ubuntu.sh" \
   --output-dir "$data_dir/tooling/node")"
 bash "$install_dir/tools/build-operator-dashboard.sh" \
@@ -576,6 +623,9 @@ export AIDN_RESOURCE_CAPACITY_PATH="\$data/resource-capacity.json"
 export AIDN_SECRET_MANAGER_PATH="\$data/registry-replication/secrets.json"
 export AIDN_SECRET_MANAGER_MASTER_KEY="\$(tr -d '\r\n' < "\$data/registry-replication/master-key.b64")"
 export AIDN_MCP_REMOTE_ENABLED=true
+export AIDN_ENABLE_PROVIDER_RUNTIME_INSTALL=true
+export AIDN_PROVIDER_RUNTIME_DISPATCHER=/usr/libexec/aidn-provider-runtime/aidn-provider-runtime-ubuntu.sh
+export AIDN_PROVIDER_RUNTIME_BROKER_SOCKET=/run/aidn/provider-runtime.sock
 export PYTHONUNBUFFERED=1
 EOF
 if [[ "$consensus_mode" != 'disabled' ]]; then

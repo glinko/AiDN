@@ -2,10 +2,12 @@
 
 This module deliberately separates command construction from process
 execution. The Hypervisor can validate and test the exact argv without ever
-starting a host process; production wiring must supply an explicitly chosen
-runner (eventually the root-owned local broker).
+starting a host process; production wiring supplies the explicit Unix-socket
+runner for the root-owned local broker.
 """
 
+import json
+import socket
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -149,4 +151,77 @@ class SubprocessProviderRuntimeCommandRunner:
             returncode=completed.returncode,
             stdout=completed.stdout,
             stderr=completed.stderr,
+        )
+
+
+class UnixSocketProviderRuntimeCommandRunner:
+    """Send one reviewed argv to the root-owned local runtime broker.
+
+    The Hypervisor process stays inside its user-systemd sandbox.  Privileged
+    package, Docker, and CUDA work is performed by the separate broker service;
+    this client only speaks a bounded JSON-lines protocol over a Unix socket.
+    """
+
+    _MAX_FRAME_BYTES = 128 * 1024
+
+    def __init__(self, *, socket_path: Path) -> None:
+        self.socket_path = socket_path
+
+    def run(self, *, argv: list[str], timeout_seconds: int) -> RuntimeCommandResult:
+        request = json.dumps(
+            {
+                "argv": argv,
+                "timeout_seconds": timeout_seconds,
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ).encode("utf-8") + b"\n"
+        if len(request) > self._MAX_FRAME_BYTES:
+            return RuntimeCommandResult(
+                returncode=126,
+                stderr="provider runtime broker request is too large",
+            )
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+                client.settimeout(timeout_seconds + 5)
+                client.connect(str(self.socket_path))
+                client.sendall(request)
+                client.shutdown(socket.SHUT_WR)
+                chunks: list[bytes] = []
+                total = 0
+                while True:
+                    chunk = client.recv(16 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > self._MAX_FRAME_BYTES:
+                        return RuntimeCommandResult(
+                            returncode=126,
+                            stderr="provider runtime broker response is too large",
+                        )
+                    chunks.append(chunk)
+        except (OSError, TimeoutError) as error:
+            return RuntimeCommandResult(
+                returncode=127,
+                stderr=f"provider runtime broker unavailable: {error}",
+            )
+
+        try:
+            response = json.loads(b"".join(chunks).decode("utf-8"))
+            returncode = response["returncode"]
+            stdout = response.get("stdout", "")
+            stderr = response.get("stderr", "")
+            if not isinstance(returncode, int):
+                raise ValueError("broker returncode must be an integer")
+            if not isinstance(stdout, str) or not isinstance(stderr, str):
+                raise ValueError("broker output fields must be strings")
+        except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError) as error:
+            return RuntimeCommandResult(
+                returncode=126,
+                stderr=f"invalid provider runtime broker response: {error}",
+            )
+        return RuntimeCommandResult(
+            returncode=returncode,
+            stdout=stdout,
+            stderr=stderr,
         )

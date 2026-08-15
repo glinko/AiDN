@@ -151,6 +151,7 @@ class HypervisorService:
         base_emission_q: float = 5000.0,
         epoch_reward_pool_shares: dict | None = None,
         provider_inventory=None,
+        provider_installation_executor=None,
         plugin_package_store: PluginPackageStore | None = None,
         plugin_host_secret_manager=None,
         runtime_protocol_store=None,
@@ -174,6 +175,7 @@ class HypervisorService:
         self.provider_inventory = provider_inventory or ProviderInventoryService(
             plugins=self.plugins,
             store=InMemoryProviderInventoryStore(),
+            installation_executor=provider_installation_executor,
             package_store=plugin_package_store,
             plugin_host_secret_manager=plugin_host_secret_manager,
         )

@@ -59,6 +59,11 @@ from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.plugins.vllm import VllmPlugin
 from aidn_hypervisor.plugins.whisper import WhisperPlugin
 from aidn_hypervisor.process_manager import ProviderProcessManager
+from aidn_hypervisor.providers.executor import AllowlistedProviderRuntimeInstallationExecutor
+from aidn_hypervisor.providers.runtime_broker import (
+    AllowlistedProviderRuntimeBroker,
+    UnixSocketProviderRuntimeCommandRunner,
+)
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.registry.deployment import (
     build_registry_replication_runtime,
@@ -664,12 +669,43 @@ def _build_default_service(
         bundle_registry=_default_bundle_registry(plugins),
         registry_service=registry_service,
         plugin_host_secret_manager=plugin_host_secret_manager,
+        provider_installation_executor=_build_default_provider_installation_executor(),
         node_id=os.getenv("AIDN_NODE_ID", os.getenv("AIDN_CONSENSUS_NODE_ID", "node-local")),
         operator_id=os.getenv("AIDN_OPERATOR_ID", os.getenv("AIDN_CONSENSUS_NODE_ID", "operator-local")),
     )
     if state_store is not None:
         service.restore_state(state_store.load())
     return service
+
+
+def _build_default_provider_installation_executor():
+    """Enable live provider installs only when the host broker opts in.
+
+    Development and test processes retain the recorded/sandbox executor by
+    default.  A production Ubuntu bootstrap explicitly enables this path and
+    points it at the root-owned dispatcher plus Unix socket broker.
+    """
+
+    enabled = os.getenv("AIDN_ENABLE_PROVIDER_RUNTIME_INSTALL", "").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        return None
+    dispatcher_path = Path(
+        os.getenv(
+            "AIDN_PROVIDER_RUNTIME_DISPATCHER",
+            "/usr/libexec/aidn-provider-runtime/aidn-provider-runtime-ubuntu.sh",
+        )
+    )
+    socket_path = Path(
+        os.getenv(
+            "AIDN_PROVIDER_RUNTIME_BROKER_SOCKET",
+            "/run/aidn/provider-runtime.sock",
+        )
+    )
+    broker = AllowlistedProviderRuntimeBroker(
+        dispatcher_path=dispatcher_path,
+        runner=UnixSocketProviderRuntimeCommandRunner(socket_path=socket_path),
+    )
+    return AllowlistedProviderRuntimeInstallationExecutor(broker)
 
 
 def _build_default_endpoint_service(
