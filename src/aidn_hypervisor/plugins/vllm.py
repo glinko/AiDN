@@ -18,6 +18,7 @@ class VllmPlugin(ProviderPlugin):
             "plugin_version": self.plugin_version,
             "display_name": "vLLM OpenAI-compatible",
             "publisher": "AiDN Built-in",
+            "package_digest": "sha256:a40d4f7c40e38b84d57894e7fb8bdd1aaaeb4adf96d319de1ec34cd0df424ed3",
             "provider_type": "vllm",
             "provider_families": ["vllm", "openai-compatible"],
             "plugin_capability_flags": [

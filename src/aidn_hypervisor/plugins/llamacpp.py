@@ -28,6 +28,7 @@ class LlamaCppPlugin(ProviderPlugin):
             "plugin_version": self.plugin_version,
             "display_name": "llama.cpp OpenAI-compatible",
             "publisher": "AiDN Built-in",
+            "package_digest": "sha256:d59dfb2694f413e63109cc2abfad814be469787f804fc348a85594290df8798a",
             "provider_type": "llama.cpp",
             "provider_families": ["llama.cpp", "openai-compatible"],
             "plugin_capability_flags": [

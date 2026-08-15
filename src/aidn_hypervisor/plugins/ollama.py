@@ -29,6 +29,7 @@ class OllamaPlugin(ProviderPlugin):
             "plugin_version": self.plugin_version,
             "display_name": "Ollama",
             "publisher": "AiDN Built-in",
+            "package_digest": "sha256:42dc8eff04ff8b320d4ae4df43d0e8100db887337927b799912da94837338320",
             "provider_type": "ollama",
             "provider_families": ["ollama"],
             "plugin_capability_flags": [
