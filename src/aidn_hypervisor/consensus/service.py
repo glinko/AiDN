@@ -209,6 +209,30 @@ class ConsensusService:
                 "peer_count": peer_count,
                 "listening": bool(net_result.get("listening", False)),
             }
+            raw_peers = net_result.get("peers")
+            if isinstance(raw_peers, list):
+                peers: list[dict[str, object]] = []
+                for raw_peer in raw_peers[:32]:
+                    if not isinstance(raw_peer, dict):
+                        continue
+                    peer_node_info = raw_peer.get("node_info")
+                    if not isinstance(peer_node_info, dict):
+                        peer_node_info = {}
+                    connection_status = raw_peer.get("connection_status")
+                    if not isinstance(connection_status, dict):
+                        connection_status = {}
+                    peers.append(
+                        {
+                            "node_id": str(peer_node_info.get("id") or ""),
+                            "moniker": str(peer_node_info.get("moniker") or ""),
+                            "network": str(peer_node_info.get("network") or ""),
+                            "remote_ip": str(raw_peer.get("remote_ip") or ""),
+                            "direction": "outbound" if raw_peer.get("is_outbound") else "inbound",
+                            "sent_bytes": connection_status.get("SentBytes", 0),
+                            "received_bytes": connection_status.get("RecvBytes", 0),
+                        }
+                    )
+                payload["rpc"]["peers"] = peers
         except Exception as error:  # pragma: no cover - defensive RPC boundary
             payload["rpc"] = {
                 "available": False,

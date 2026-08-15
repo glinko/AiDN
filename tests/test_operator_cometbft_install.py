@@ -69,6 +69,33 @@ def test_install_argv_derives_paths_and_keeps_rpc_loopback(tmp_path, monkeypatch
         build_cometbft_install_argv(service, {"rpc_host": "0.0.0.0"})
 
 
+def test_install_argv_configures_peer_discovery_sources(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AIDN_HYPERVISOR_STATE_PATH", str(tmp_path / "hypervisor-state.json"))
+    service = _service(tmp_path)
+
+    plan, argv = build_cometbft_install_argv(
+        service,
+        {
+            "p2p_host": "0.0.0.0",
+            "external_address": "node-a.example:26656",
+            "seeds": "seed-a.example:26656,seed-b.example:26656",
+            "persistent_peers": "peer-a@10.0.0.2:26656",
+        },
+    )
+
+    assert plan.external_address == "node-a.example:26656"
+    assert plan.seeds == "seed-a.example:26656,seed-b.example:26656"
+    assert plan.persistent_peers == "peer-a@10.0.0.2:26656"
+    assert "--external-address" in argv
+    assert argv[argv.index("--seeds") + 1] == "seed-a.example:26656,seed-b.example:26656"
+    assert argv[argv.index("--persistent-peers") + 1] == "peer-a@10.0.0.2:26656"
+
+    with pytest.raises(ValueError, match="host:port"):
+        build_cometbft_install_argv(service, {"external_address": "not-an-endpoint"})
+    with pytest.raises(ValueError, match="peer ID"):
+        build_cometbft_install_argv(service, {"persistent_peers": "bad$id@10.0.0.2:26656"})
+
+
 def test_install_stages_pending_and_apply_activates_atomically(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("AIDN_HYPERVISOR_STATE_PATH", str(tmp_path / "hypervisor-state.json"))
     monkeypatch.setenv("AIDN_HYPERVISOR_RESTART_ON_BIND_CHANGE", "false")

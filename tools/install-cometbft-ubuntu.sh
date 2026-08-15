@@ -21,6 +21,9 @@ Options:
   --rpc-port PORT         RPC listen port (default: 26657)
   --p2p-host HOST         P2P listen host (default: 127.0.0.1)
   --p2p-port PORT         P2P listen port (default: 26656)
+  --external-address ADDR Advertised P2P host:port (optional)
+  --seeds LIST             Comma-separated seed peers (optional)
+  --persistent-peers LIST  Comma-separated persistent peers (optional)
   --abci-host HOST        AiDN ABCI host (default: 127.0.0.1)
   --abci-port PORT        AiDN ABCI port (default: 26658)
   --no-abci               Do not configure a local AiDN ABCI proxy
@@ -63,6 +66,9 @@ rpc_host='127.0.0.1'
 rpc_port='26657'
 p2p_host='127.0.0.1'
 p2p_port='26656'
+external_address=''
+seeds=''
+persistent_peers=''
 abci_host='127.0.0.1'
 abci_port='26658'
 no_start='false'
@@ -81,6 +87,9 @@ while [[ $# -gt 0 ]]; do
     --rpc-port) require_value "$1" "$@"; rpc_port="$2"; shift 2 ;;
     --p2p-host) require_value "$1" "$@"; p2p_host="$2"; shift 2 ;;
     --p2p-port) require_value "$1" "$@"; p2p_port="$2"; shift 2 ;;
+    --external-address) require_value "$1" "$@"; external_address="$2"; shift 2 ;;
+    --seeds) require_value "$1" "$@"; seeds="$2"; shift 2 ;;
+    --persistent-peers) require_value "$1" "$@"; persistent_peers="$2"; shift 2 ;;
     --abci-host) require_value "$1" "$@"; abci_host="$2"; shift 2 ;;
     --abci-port) require_value "$1" "$@"; abci_port="$2"; shift 2 ;;
     --no-abci) use_abci='false'; shift ;;
@@ -106,6 +115,50 @@ done
 [[ -n "$rpc_host" && "$rpc_host" != *[[:space:]]* ]] || die 'RPC host is invalid'
 [[ -n "$p2p_host" && "$p2p_host" != *[[:space:]]* ]] || die 'P2P host is invalid'
 [[ -n "$abci_host" && "$abci_host" != *[[:space:]]* ]] || die 'ABCI host is invalid'
+
+python3 - "$external_address" "$seeds" "$persistent_peers" <<'PY'
+import re
+import sys
+
+external_address, seeds, persistent_peers = sys.argv[1:]
+host = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$")
+ipv6 = re.compile(r"^[0-9A-Fa-f:]{2,45}$")
+identifier = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
+
+
+def endpoint(value: str, label: str) -> None:
+    if not value:
+        return
+    if any(character.isspace() for character in value):
+        raise SystemExit(f"{label} must be a host:port endpoint")
+    if value.startswith("["):
+        closing = value.find("]")
+        if closing < 2 or closing + 1 >= len(value) or value[closing + 1] != ":":
+            raise SystemExit(f"{label} must be a host:port endpoint")
+        target, port_text = value[1:closing], value[closing + 2 :]
+        valid_host = bool(ipv6.fullmatch(target))
+    else:
+        target, separator, port_text = value.rpartition(":")
+        valid_host = bool(separator and host.fullmatch(target))
+    if not valid_host or not port_text.isdigit() or not 1 <= int(port_text) <= 65535:
+        raise SystemExit(f"{label} must be a host:port endpoint")
+
+
+def peer_list(value: str, label: str) -> None:
+    entries = [item.strip() for item in re.split(r"[,\n\r]+", value) if item.strip()]
+    if len(entries) > 32:
+        raise SystemExit(f"{label} may contain at most 32 peers")
+    for entry in entries:
+        peer_endpoint = entry.rsplit("@", 1)[-1]
+        if "@" in entry and not identifier.fullmatch(entry.rsplit("@", 1)[0]):
+            raise SystemExit(f"{label} contains an invalid peer ID")
+        endpoint(peer_endpoint, label)
+
+
+endpoint(external_address, "external address")
+peer_list(seeds, "seeds")
+peer_list(persistent_peers, "persistent peers")
+PY
 
 if [[ "$EUID" -eq 0 ]]; then
   sudo_cmd=()
@@ -195,17 +248,39 @@ fi
 
 config_path="$home/config/config.toml"
 [[ -f "$config_path" ]] || die "CometBFT config is missing: $config_path"
-python3 - "$config_path" "$rpc_host" "$rpc_port" "$p2p_host" "$p2p_port" "$abci_host" "$abci_port" "$use_abci" "$moniker" <<'PY'
+python3 - "$config_path" "$rpc_host" "$rpc_port" "$p2p_host" "$p2p_port" "$external_address" "$seeds" "$persistent_peers" "$abci_host" "$abci_port" "$use_abci" "$moniker" <<'PY'
 import sys
 
-path, rpc_host, rpc_port, p2p_host, p2p_port, abci_host, abci_port, use_abci, moniker = sys.argv[1:]
+(
+    path,
+    rpc_host,
+    rpc_port,
+    p2p_host,
+    p2p_port,
+    external_address,
+    seeds,
+    persistent_peers,
+    abci_host,
+    abci_port,
+    use_abci,
+    moniker,
+) = sys.argv[1:]
 rpc_laddr = f"tcp://{rpc_host}:{rpc_port}"
 p2p_laddr = f"tcp://{p2p_host}:{p2p_port}"
 proxy_app = f"tcp://{abci_host}:{abci_port}" if use_abci == "true" else "nil"
 with open(path, encoding="utf-8") as stream:
     lines = stream.readlines()
 section = ""
-seen = {"proxy_app": False, "rpc_laddr": False, "p2p_laddr": False, "moniker": False}
+seen = {
+    "proxy_app": False,
+    "rpc_laddr": False,
+    "p2p_laddr": False,
+    "external_address": False,
+    "seeds": False,
+    "persistent_peers": False,
+    "pex": False,
+    "moniker": False,
+}
 result = []
 for line in lines:
     stripped = line.strip()
@@ -223,6 +298,18 @@ for line in lines:
     elif section == "p2p" and stripped.startswith("laddr ="):
         line = f'laddr = "{p2p_laddr}"\n'
         seen["p2p_laddr"] = True
+    elif section == "p2p" and stripped.startswith("external_address ="):
+        line = f'external_address = "{external_address}"\n'
+        seen["external_address"] = True
+    elif section == "p2p" and stripped.startswith("seeds ="):
+        line = f'seeds = "{seeds}"\n'
+        seen["seeds"] = True
+    elif section == "p2p" and stripped.startswith("persistent_peers ="):
+        line = f'persistent_peers = "{persistent_peers}"\n'
+        seen["persistent_peers"] = True
+    elif section == "p2p" and stripped.startswith("pex ="):
+        line = "pex = true\n"
+        seen["pex"] = True
     result.append(line)
 if not all(seen.values()):
     missing = ", ".join(key for key, value in seen.items() if not value)
@@ -278,8 +365,8 @@ if [[ "$EUID" -eq 0 && "$operator_uid" != '0' ]]; then
   chown "$operator_uid:$operator_gid" "$unit_path"
 fi
 
+user_systemctl daemon-reload
 if [[ "$no_start" != 'true' ]]; then
-  user_systemctl daemon-reload
   user_systemctl enable --now "$service_name"
   for _ in $(seq 1 30); do
     if curl --fail --silent "http://$rpc_host:$rpc_port/status" >/dev/null; then
@@ -294,7 +381,7 @@ if [[ "$no_start" != 'true' ]]; then
   started='true'
 fi
 
-python3 - "$version" "$home" "$binary_path" "$service_name" "$chain_id" "$rpc_host" "$rpc_port" "$p2p_host" "$p2p_port" "$abci_host" "$abci_port" "$use_abci" "$started" <<'PY'
+python3 - "$version" "$home" "$binary_path" "$service_name" "$chain_id" "$rpc_host" "$rpc_port" "$p2p_host" "$p2p_port" "$external_address" "$seeds" "$persistent_peers" "$abci_host" "$abci_port" "$use_abci" "$started" <<'PY'
 import json
 import sys
 
@@ -308,6 +395,9 @@ import sys
     rpc_port,
     p2p_host,
     p2p_port,
+    external_address,
+    seeds,
+    persistent_peers,
     abci_host,
     abci_port,
     use_abci,
@@ -322,6 +412,9 @@ print(json.dumps({
     "chain_id": chain_id,
     "rpc": f"http://{rpc_host}:{rpc_port}",
     "p2p": f"tcp://{p2p_host}:{p2p_port}",
+    "external_address": external_address,
+    "seeds": seeds,
+    "persistent_peers": persistent_peers,
     "abci": f"tcp://{abci_host}:{abci_port}" if use_abci == "true" else None,
     "started": started == "true",
 }, sort_keys=True))

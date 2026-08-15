@@ -13,6 +13,8 @@ import subprocess
 from collections.abc import Mapping, Sequence
 from urllib.parse import urlsplit, urlunsplit
 
+from aidn_hypervisor.operator_cometbft_install import load_active_cometbft_configuration
+
 _ALLOWED_ACTIONS = frozenset({"start", "stop", "restart"})
 _SERVICE_NAME = re.compile(r"^[A-Za-z0-9_.@-]+\.service$")
 
@@ -44,6 +46,39 @@ def _service_name(consensus: object) -> str | None:
     return value if _SERVICE_NAME.fullmatch(value) else None
 
 
+def _peer_items(value: object) -> list[str]:
+    raw = str(value or "")
+    items: list[str] = []
+    for candidate in re.split(r"[,\n\r]+", raw):
+        item = candidate.strip()
+        if item and item not in items:
+            items.append(item)
+    return items[:32]
+
+
+def _network_payload(service: object) -> dict[str, object]:
+    active = load_active_cometbft_configuration(service) or {}
+    seeds = _peer_items(active.get("seeds"))
+    persistent_peers = _peer_items(active.get("persistent_peers"))
+    return {
+        "p2p_host": str(active.get("p2p_host") or "127.0.0.1"),
+        "p2p_port": active.get("p2p_port") or 26656,
+        "external_address": str(active.get("external_address") or ""),
+        "pex": active.get("pex") is not False,
+        "seeds": seeds,
+        "persistent_peers": persistent_peers,
+        "configured_sources": [
+            source
+            for source, configured in (
+                ("persistent_peers", bool(persistent_peers)),
+                ("seeds", bool(seeds)),
+                ("pex", active.get("pex") is not False),
+            )
+            if configured
+        ],
+    }
+
+
 def build_operator_cometbft_payload(service) -> dict:
     """Return a non-secret CometBFT control/readiness projection."""
 
@@ -58,6 +93,7 @@ def build_operator_cometbft_payload(service) -> dict:
             "chain_id": None,
             "rpc_endpoint": "",
             "rpc": {"available": False, "reason": "consensus_service_unavailable"},
+            "network": _network_payload(service),
             "management": {"managed": False, "service": None, "control_supported": False},
             "metrics": {},
             "protocol_authority": {},
@@ -98,6 +134,7 @@ def build_operator_cometbft_payload(service) -> dict:
         "chain_id": status.get("chain_id") if isinstance(status, Mapping) else getattr(config, "chain_id", None),
         "rpc_endpoint": _safe_endpoint(getattr(config, "cometbft_endpoint", "")),
         "rpc": dict(rpc) if isinstance(rpc, Mapping) else {"available": False},
+        "network": _network_payload(service),
         "management": management_payload,
         "metrics": dict(metrics) if isinstance(metrics, Mapping) else {},
         "protocol_authority": dict(authority) if isinstance(authority, Mapping) else {},

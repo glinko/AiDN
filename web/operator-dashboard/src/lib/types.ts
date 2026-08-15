@@ -230,6 +230,7 @@ const cometBftDashboardSchema = z.object({
   chain_id: z.string().nullable().optional(),
   rpc_endpoint: stringValue,
   rpc: unknownRecord.default({}),
+  network: unknownRecord.default({}),
   management: unknownRecord.default({}),
   metrics: unknownRecord.default({}),
   protocol_authority: unknownRecord.default({}),

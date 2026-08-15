@@ -120,6 +120,12 @@ const statusClassNames: Record<string, string> = {
   completed: 'border-emerald-300/25 bg-emerald-300/10 text-emerald-200',
   force_settled: 'border-amber-300/30 bg-amber-300/10 text-amber-200',
   running: 'border-cyan-300/25 bg-cyan-300/10 text-cyan-200',
+  connected: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300',
+  waiting: 'border-amber-300/25 bg-amber-300/10 text-amber-200',
+  local_only: 'border-slate-300/20 bg-slate-300/8 text-slate-300',
+  persistent_peers: 'border-cyan-300/25 bg-cyan-300/10 text-cyan-200',
+  pex: 'border-cyan-300/25 bg-cyan-300/10 text-cyan-200',
+  seeds: 'border-cyan-300/25 bg-cyan-300/10 text-cyan-200',
   loopback_active: 'border-cyan-300/25 bg-cyan-300/10 text-cyan-200',
   lan_active: 'border-amber-300/30 bg-amber-300/10 text-amber-200',
   created: 'border-sky-300/25 bg-sky-300/10 text-sky-200',
@@ -2753,7 +2759,11 @@ function CometBftInstallWizard({ data, onRefresh, controlSupported, serviceName 
   const [chainId, setChainId] = useState('aidn-localnet-1')
   const [moniker, setMoniker] = useState('operator-local')
   const [p2pHost, setP2pHost] = useState<'127.0.0.1' | '0.0.0.0'>('127.0.0.1')
+  const [externalAddress, setExternalAddress] = useState('')
+  const [seeds, setSeeds] = useState('')
+  const [persistentPeers, setPersistentPeers] = useState('')
   const [acknowledged, setAcknowledged] = useState(false)
+  const [networkAcknowledged, setNetworkAcknowledged] = useState(false)
   const [busy, setBusy] = useState<'install' | 'apply' | 'start' | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
@@ -2764,6 +2774,9 @@ function CometBftInstallWizard({ data, onRefresh, controlSupported, serviceName 
     setChainId(getText(initialDefaults, 'chain_id') || 'aidn-localnet-1')
     setMoniker(getText(initialDefaults, 'moniker') || 'operator-local')
     setP2pHost(getText(initialDefaults, 'p2p_host') === '0.0.0.0' ? '0.0.0.0' : '127.0.0.1')
+    setExternalAddress(getText(initialDefaults, 'external_address'))
+    setSeeds(getText(initialDefaults, 'seeds'))
+    setPersistentPeers(getText(initialDefaults, 'persistent_peers'))
     setHydrated(true)
   }, [hydrated, install])
 
@@ -2774,8 +2787,10 @@ function CometBftInstallWizard({ data, onRefresh, controlSupported, serviceName 
   const chainValid = /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/.test(chainId)
   const monikerValid = /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/.test(moniker)
   const portsValid = new Set([rpcPort, p2pPort, abciPort]).size === 3
-  const readyToInstall = Boolean(install?.available) && !pending && chainValid && monikerValid && portsValid && acknowledged && busy === null
+  const networkConfigurationRequested = p2pHost === '0.0.0.0' || Boolean(externalAddress.trim() || seeds.trim() || persistentPeers.trim())
+  const readyToInstall = Boolean(install?.available) && !pending && chainValid && monikerValid && portsValid && acknowledged && (!networkConfigurationRequested || networkAcknowledged) && busy === null
   const paths = getRecord(install?.paths) ?? {}
+  const hasActiveConfiguration = Boolean(getRecord(install?.current))
 
   async function installRuntime() {
     if (!readyToInstall) return
@@ -2791,9 +2806,12 @@ function CometBftInstallWizard({ data, onRefresh, controlSupported, serviceName 
         rpc_port: rpcPort,
         p2p_host: p2pHost,
         p2p_port: p2pPort,
+        external_address: externalAddress.trim(),
+        seeds: seeds.trim(),
+        persistent_peers: persistentPeers.trim(),
         abci_host: '127.0.0.1',
         abci_port: abciPort,
-        acknowledge_network_scope: p2pHost === '0.0.0.0',
+        acknowledge_network_scope: networkConfigurationRequested,
       })
       setMessage('CometBFT is installed and staged. Apply the configuration to enable it in the Hypervisor.')
       await data.cometbftInstall.refetch()
@@ -2807,12 +2825,15 @@ function CometBftInstallWizard({ data, onRefresh, controlSupported, serviceName 
   async function applyConfiguration() {
     if (!pending || busy !== null) return
     setBusy('apply')
-    setMessage('Applying CometBFT configuration. The Hypervisor will restart and reconnect automatically...')
+    setMessage('Applying CometBFT configuration and restarting the managed consensus service...')
     try {
-      await dashboardApi.applyCometbft()
+      const result = getRecord(await dashboardApi.applyCometbft())
       window.setTimeout(() => {
         onRefresh()
       }, 1800)
+      setMessage(result?.cometbft_restarted === true
+        ? 'Network configuration applied. CometBFT restarted; refresh consensus evidence to verify peer dialing.'
+        : 'Network configuration staged. Start CometBFT after the Hypervisor reloads, then refresh consensus evidence.')
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : 'CometBFT configuration could not be applied.')
     } finally {
@@ -2860,8 +2881,18 @@ function CometBftInstallWizard({ data, onRefresh, controlSupported, serviceName 
         <div className="rounded-lg border border-border/70 bg-black/10 px-3 py-2"><p className="eyebrow">Fixed local ports</p><p className="mt-1 font-mono text-xs text-slate-300">RPC {rpcPort} · P2P {p2pPort} · ABCI {abciPort}</p><p className="mt-1 text-[11px] leading-4 text-muted-foreground">RPC and ABCI stay on loopback; only the P2P choice above can change scope.</p></div>
       </div>
       <div className="rounded-lg border border-border/70 bg-black/10 p-3"><p className="eyebrow">Host paths</p><p className="mt-1 break-all font-mono text-[11px] text-slate-400">{getText(paths, 'home') || 'Derived from Hypervisor state'} · {getText(paths, 'service') || 'user-systemd unit derived locally'}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">The browser cannot change these paths or submit arbitrary commands. Existing genesis state is validated and never overwritten.</p></div>
-      <label className="flex items-start gap-3 rounded-lg border border-amber-300/25 bg-amber-300/[0.045] p-3 text-sm text-amber-100/85"><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} disabled={busy !== null || Boolean(pending)} className="mt-0.5 size-4 accent-cyan-300" /><span>I understand this installs Ubuntu packages/Go modules and writes a user-systemd unit. Consensus remains disabled until I apply the staged configuration.</span></label>
-      <div className="flex flex-wrap gap-2"><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={!readyToInstall} onClick={() => void installRuntime()}><ServerCog />{busy === 'install' ? 'Installing...' : 'Install CometBFT'}</Button><Button variant="outline" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={!pending || busy !== null} onClick={() => void applyConfiguration()}><RotateCcw />{busy === 'apply' ? 'Applying & restarting...' : 'Apply configuration & restart'}</Button>{controlSupported && !pending ? <Button variant="outline" className="border-emerald-300/30 bg-emerald-300/[0.06] text-emerald-100" disabled={busy !== null} onClick={() => void startService()}><RadioTower />{busy === 'start' ? 'Starting...' : 'Start CometBFT'}</Button> : null}</div>
+      <div className="rounded-lg border border-cyan-300/15 bg-cyan-300/[0.025] p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow text-cyan-100">Peer discovery</p><p className="mt-1 text-sm font-medium text-slate-100">Give CometBFT a bootstrap path</p><p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">PEX exchanges addresses only after the first connection. Seeds are bootstrap hints; persistent peers are retried continuously. Enter one peer per line or separate entries with commas.</p></div><StatusBadge value={networkConfigurationRequested ? 'configured' : 'local only'} /></div>
+        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+          <label className="grid gap-2"><span className="eyebrow">External P2P address</span><input value={externalAddress} onChange={(event) => setExternalAddress(event.target.value)} disabled={busy !== null || Boolean(pending)} placeholder="node.example:26656" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none placeholder:text-slate-600 focus:border-cyan-300" /><span className="text-[11px] leading-4 text-muted-foreground">Advertised to peers; use a LAN IP or public DNS name, not the RPC address.</span></label>
+          <label className="grid gap-2"><span className="eyebrow">Seed peers</span><textarea value={seeds} onChange={(event) => setSeeds(event.target.value)} disabled={busy !== null || Boolean(pending)} rows={2} placeholder="seed-id@seed.example:26656" className="resize-y rounded-lg border border-input bg-[#07111d] px-3 py-2 font-mono text-xs text-white outline-none placeholder:text-slate-600 focus:border-cyan-300" /><span className="text-[11px] leading-4 text-muted-foreground">Used to discover more peers through CometBFT PEX.</span></label>
+          <label className="grid gap-2 lg:col-span-2"><span className="eyebrow">Persistent peers</span><textarea value={persistentPeers} onChange={(event) => setPersistentPeers(event.target.value)} disabled={busy !== null || Boolean(pending)} rows={2} placeholder="peer-id@192.168.88.21:26656" className="resize-y rounded-lg border border-input bg-[#07111d] px-3 py-2 font-mono text-xs text-white outline-none placeholder:text-slate-600 focus:border-cyan-300" /><span className="text-[11px] leading-4 text-muted-foreground">Use stable validator or bootstrap nodes. Format: <code className="font-mono text-cyan-100">node_id@host:26656</code>; IPv6 uses brackets.</span></label>
+        </div>
+        {networkConfigurationRequested ? <p className="mt-3 text-xs leading-5 text-amber-200/85">This changes network reachability or peer dialing. P2P still needs a firewall rule for TCP {p2pPort}; RPC and ABCI remain loopback-only.</p> : <p className="mt-3 text-xs leading-5 text-muted-foreground">No bootstrap peers are configured. This profile can produce a local chain, but it cannot join another validator network.</p>}
+      </div>
+       <label className="flex items-start gap-3 rounded-lg border border-amber-300/25 bg-amber-300/[0.045] p-3 text-sm text-amber-100/85"><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} disabled={busy !== null || Boolean(pending)} className="mt-0.5 size-4 accent-cyan-300" /><span>I understand this installs Ubuntu packages/Go modules and writes a user-systemd unit. Consensus remains disabled until I apply the staged configuration.</span></label>
+       {networkConfigurationRequested ? <label className="flex items-start gap-3 rounded-lg border border-cyan-300/25 bg-cyan-300/[0.045] p-3 text-sm text-cyan-50"><input type="checkbox" checked={networkAcknowledged} onChange={(event) => setNetworkAcknowledged(event.target.checked)} disabled={busy !== null || Boolean(pending)} className="mt-0.5 size-4 accent-cyan-300" /><span>I understand this opens the configured P2P listener and/or dials the listed peers. I will allow TCP {p2pPort} only on the intended network and will not expose RPC or ABCI.</span></label> : null}
+       <div className="flex flex-wrap gap-2"><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={!readyToInstall} onClick={() => void installRuntime()}><ServerCog />{busy === 'install' ? 'Staging...' : hasActiveConfiguration ? 'Stage network update' : 'Install CometBFT'}</Button><Button variant="outline" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={!pending || busy !== null} onClick={() => void applyConfiguration()}><RotateCcw />{busy === 'apply' ? 'Applying & restarting...' : 'Apply configuration & restart'}</Button>{controlSupported && !pending ? <Button variant="outline" className="border-emerald-300/30 bg-emerald-300/[0.06] text-emerald-100" disabled={busy !== null} onClick={() => void startService()}><RadioTower />{busy === 'start' ? 'Starting...' : 'Start CometBFT'}</Button> : null}</div>
       {p2pHost === '0.0.0.0' ? <p className="text-xs leading-5 text-amber-200/80">P2P will listen on the LAN. Keep RPC and ABCI loopback-only and expose the P2P port only on the trusted network.</p> : null}
     </CardContent>
   </Card>
@@ -2870,12 +2901,17 @@ function CometBftInstallWizard({ data, onRefresh, controlSupported, serviceName 
 function CometBftWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
   const consensus: CometBftDashboard | undefined = data.cometbft.data
   const rpc = getRecord(consensus?.rpc) ?? {}
+  const network = getRecord(consensus?.network) ?? {}
   const management = getRecord(consensus?.management) ?? {}
   const metrics = getRecord(consensus?.metrics) ?? {}
   const authority = getRecord(consensus?.protocol_authority) ?? {}
   const serviceName = getText(management, 'service')
   const controlSupported = management.control_supported === true && Boolean(serviceName)
   const rpcAvailable = rpc.available === true
+  const connectedPeers = recordList(rpc.peers)
+  const seeds = getTextList(network, 'seeds')
+  const persistentPeers = getTextList(network, 'persistent_peers')
+  const configuredSources = getTextList(network, 'configured_sources')
   const status = rpcAvailable ? 'ready' : consensus?.enabled ? 'blocked' : 'disabled'
   const consensusStep = data.readiness.data?.steps.find((step) => /consensus|cometbft/i.test(`${step.key} ${step.title}`))
   const [busy, setBusy] = useState<string | null>(null)
@@ -2945,11 +2981,27 @@ function CometBftWorkspace({ data, onNavigate, onRefresh }: { data: DashboardDat
             {consensusStep?.action ? <p className="text-xs leading-5 text-muted-foreground"><span className="font-semibold text-slate-300">Readiness next action:</span> {consensusStep.action.label} — {consensusStep.action.detail}</p> : null}
           </CardContent>
         </Card>
-      </div>
+       </div>
 
-      {data.cometbftInstall.data?.available && (!controlSupported || Boolean(data.cometbftInstall.data.pending) || !consensus.enabled || !rpcAvailable)
-        ? <CometBftInstallWizard data={data} onRefresh={onRefresh} controlSupported={controlSupported} serviceName={serviceName} />
-        : null}
+       <Card className="border-border/80 bg-card py-0 shadow-none">
+         <CardHeader className="border-b border-border/70 px-5 py-4">
+           <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow">Peer discovery</p><CardTitle className="mt-1 text-lg font-semibold">Bootstrap and PEX</CardTitle><p className="mt-1 text-sm leading-5 text-muted-foreground">Seeds and persistent peers establish the first connection; PEX can exchange additional addresses after that.</p></div><StatusBadge value={connectedPeers.length > 0 ? 'connected' : configuredSources.length > 0 ? 'waiting' : 'local only'} /></div>
+         </CardHeader>
+         <CardContent className="space-y-4 p-5">
+           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+             <NetworkFact label="P2P bind" value={`${getText(network, 'p2p_host') || '127.0.0.1'}:${operatorMetric(network.p2p_port || 26656)}`} detail="listener address" />
+             <NetworkFact label="Advertised" value={getText(network, 'external_address') || 'not declared'} detail="address shared with peers" />
+             <NetworkFact label="Seeds" value={formatCount(seeds.length)} detail="bootstrap hints" />
+             <NetworkFact label="Persistent peers" value={formatCount(persistentPeers.length)} detail="continuously retried" />
+           </div>
+           <div className="rounded-lg border border-border/70 bg-black/10 p-3"><p className="eyebrow">Configured sources</p><div className="mt-2 flex flex-wrap gap-2">{configuredSources.length > 0 ? configuredSources.map((source) => <StatusBadge key={source} value={source} />) : <span className="text-xs text-muted-foreground">No bootstrap source. A local-only node cannot discover remote peers by itself.</span>}</div></div>
+           {connectedPeers.length === 0 ? <div className="rounded-lg border border-amber-300/20 bg-amber-300/[0.035] p-3"><div className="flex items-center gap-2"><StatusBadge value={configuredSources.length > 0 ? 'waiting' : 'local only'} /><p className="text-sm font-medium text-slate-200">No connected peers</p></div><p className="mt-2 text-xs leading-5 text-muted-foreground">{configuredSources.length > 0 ? 'CometBFT is waiting for a seed or persistent peer. Check the peer address and firewall TCP 26656.' : 'Add a node_id@host:26656 persistent peer or seed in the install wizard, then stage and apply the network update.'}</p></div> : <div className="divide-y divide-border/70 rounded-lg border border-border/70">{connectedPeers.slice(0, 8).map((peer, index) => <div key={`${getText(peer, 'node_id') || 'peer'}:${index}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5"><div className="min-w-0"><p className="truncate font-mono text-xs text-slate-200">{getText(peer, 'node_id') || 'anonymous peer'}</p><p className="mt-0.5 truncate text-[11px] text-slate-500">{getText(peer, 'network') || getText(peer, 'remote_ip') || 'address not reported'}</p></div><StatusBadge value={getText(peer, 'direction') || 'connected'} /></div>)}</div>}
+         </CardContent>
+       </Card>
+
+       {data.cometbftInstall.data?.available
+         ? <CometBftInstallWizard data={data} onRefresh={onRefresh} controlSupported={controlSupported} serviceName={serviceName} />
+         : null}
 
       <Card className="border-border/80 bg-card py-0 shadow-none">
         <CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Network operations</p><CardTitle className="mt-1 text-lg font-semibold">Consensus-adjacent actions</CardTitle><p className="mt-1 text-sm leading-5 text-muted-foreground">Move to the canonical workspace for each network action. CometBFT control remains isolated from model execution and Endpoint lifecycle.</p></CardHeader>

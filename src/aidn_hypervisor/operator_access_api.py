@@ -164,6 +164,9 @@ class ConsensusInstallRequest(BaseModel):
     rpc_port: int = Field(default=26657, ge=1, le=65535)
     p2p_host: Literal["127.0.0.1", "0.0.0.0"] = "127.0.0.1"
     p2p_port: int = Field(default=26656, ge=1, le=65535)
+    external_address: str = Field(default="", max_length=256)
+    seeds: str = Field(default="", max_length=4096)
+    persistent_peers: str = Field(default="", max_length=4096)
     abci_host: Literal["127.0.0.1"] = "127.0.0.1"
     abci_port: int = Field(default=26658, ge=1, le=65535)
     acknowledge_network_scope: bool = False
@@ -720,8 +723,18 @@ def build_operator_access_router(
         denied = require_session(request)
         if denied is not None:
             return denied
-        if payload.p2p_host == "0.0.0.0" and not payload.acknowledge_network_scope:
-            return operation_error(ValueError("LAN P2P binding requires explicit network acknowledgement"))
+        network_configuration_requested = bool(
+            payload.p2p_host == "0.0.0.0"
+            or payload.external_address.strip()
+            or payload.seeds.strip()
+            or payload.persistent_peers.strip()
+        )
+        if network_configuration_requested and not payload.acknowledge_network_scope:
+            return operation_error(
+                ValueError(
+                    "P2P discovery configuration requires explicit network acknowledgement"
+                )
+            )
         try:
             result = install_cometbft_from_dashboard(
                 hypervisor_service,

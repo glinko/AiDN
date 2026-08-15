@@ -29,6 +29,10 @@ _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
 _VERSION = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+$")
 _VALID_MODES = frozenset({"validator", "non_validator"})
 _MAX_OUTPUT = 64 * 1024
+_MAX_PEERS = 32
+_MAX_PEER_TEXT = 4096
+_HOST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$")
+_IPV6 = re.compile(r"^[0-9A-Fa-f:]{2,45}$")
 
 
 class ConsensusRuntimeExecutor(Protocol):
@@ -57,6 +61,9 @@ class CometBftInstallPlan:
     rpc_port: int
     p2p_host: str
     p2p_port: int
+    external_address: str
+    seeds: str
+    persistent_peers: str
     abci_host: str
     abci_port: int
     home: str
@@ -80,6 +87,10 @@ class CometBftInstallPlan:
             "rpc_port": self.rpc_port,
             "p2p_host": self.p2p_host,
             "p2p_port": self.p2p_port,
+            "external_address": self.external_address,
+            "seeds": self.seeds,
+            "persistent_peers": self.persistent_peers,
+            "pex": True,
             "abci_host": self.abci_host,
             "abci_port": self.abci_port,
             "abci_state_path": f"{self.home}/../abci-state" if self.use_abci else None,
@@ -144,6 +155,77 @@ def _bounded_text(value: object, *, name: str, default: str, pattern: re.Pattern
     if not pattern.fullmatch(text):
         raise ValueError(f"{name} contains unsupported characters")
     return text
+
+
+def _value_or_active(
+    values: Mapping[str, object],
+    active: Mapping[str, Any],
+    name: str,
+    default: object = "",
+) -> object:
+    """Use an explicit request value, including an explicit empty value."""
+
+    return values[name] if name in values else active.get(name, default)
+
+
+def _split_host_port(value: str, *, name: str) -> tuple[str, int]:
+    """Validate a CometBFT host:port endpoint without resolving it."""
+
+    text = value.strip()
+    if not text or any(character.isspace() for character in text):
+        raise ValueError(f"{name} must be a host:port endpoint")
+    if text.startswith("["):
+        closing = text.find("]")
+        if closing < 2 or closing + 1 >= len(text) or text[closing + 1] != ":":
+            raise ValueError(f"{name} must be a host:port endpoint")
+        host = text[1:closing]
+        port_text = text[closing + 2 :]
+        if not _IPV6.fullmatch(host):
+            raise ValueError(f"{name} contains an invalid IPv6 host")
+    else:
+        host, separator, port_text = text.rpartition(":")
+        if not separator or not _HOST.fullmatch(host):
+            raise ValueError(f"{name} must be a host:port endpoint")
+    try:
+        port = int(port_text)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} port must be an integer from 1 to 65535") from error
+    if not 1 <= port <= 65535:
+        raise ValueError(f"{name} port must be an integer from 1 to 65535")
+    return host, port
+
+
+def _endpoint(value: object, *, name: str, default: str = "") -> str:
+    text = str(default if value is None else value).strip()
+    if not text:
+        return ""
+    _split_host_port(text, name=name)
+    return text
+
+
+def _peer_list(value: object, *, name: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if len(raw) > _MAX_PEER_TEXT:
+        raise ValueError(f"{name} is too long")
+    entries: list[str] = []
+    for candidate in re.split(r"[,\n\r]+", raw):
+        peer = candidate.strip()
+        if not peer:
+            continue
+        if "@" in peer:
+            peer_id, endpoint = peer.rsplit("@", 1)
+            if not _IDENTIFIER.fullmatch(peer_id):
+                raise ValueError(f"{name} contains an invalid peer ID")
+        else:
+            endpoint = peer
+        _split_host_port(endpoint, name=name)
+        if peer not in entries:
+            entries.append(peer)
+    if len(entries) > _MAX_PEERS:
+        raise ValueError(f"{name} may contain at most {_MAX_PEERS} peers")
+    return ",".join(entries)
 
 
 def _port(value: object, *, name: str, default: int) -> int:
@@ -222,6 +304,20 @@ def build_cometbft_install_plan(service: Any, values: Mapping[str, object] | Non
     abci_port = _port(values.get("abci_port"), name="ABCI port", default=int(active.get("abci_port") or 26658))
     if len({rpc_port, p2p_port, abci_port}) != 3:
         raise ValueError("RPC, P2P and ABCI ports must be distinct")
+    external_address = _endpoint(
+        _value_or_active(values, active, "external_address"),
+        name="CometBFT external address",
+    )
+    seeds = _peer_list(
+        _value_or_active(values, active, "seeds"),
+        name="CometBFT seeds",
+    )
+    persistent_peers = _peer_list(
+        _value_or_active(values, active, "persistent_peers"),
+        name="CometBFT persistent peers",
+    )
+    if external_address and p2p_host == LOOPBACK:
+        raise ValueError("CometBFT external address requires a non-loopback P2P bind")
 
     root = _data_root(service)
     if root is None:
@@ -239,6 +335,9 @@ def build_cometbft_install_plan(service: Any, values: Mapping[str, object] | Non
         rpc_port=rpc_port,
         p2p_host=p2p_host,
         p2p_port=p2p_port,
+        external_address=external_address,
+        seeds=seeds,
+        persistent_peers=persistent_peers,
         abci_host=abci_host,
         abci_port=abci_port,
         home=str(home),
@@ -273,6 +372,9 @@ def build_cometbft_install_argv(
         "--rpc-port", str(plan.rpc_port),
         "--p2p-host", plan.p2p_host,
         "--p2p-port", str(plan.p2p_port),
+        "--external-address", plan.external_address,
+        "--seeds", plan.seeds,
+        "--persistent-peers", plan.persistent_peers,
         "--abci-host", plan.abci_host,
         "--abci-port", str(plan.abci_port),
     ]
@@ -350,6 +452,10 @@ def build_operator_cometbft_install_payload(service: Any) -> dict[str, Any]:
             "rpc_port": plan.rpc_port,
             "p2p_host": plan.p2p_host,
             "p2p_port": plan.p2p_port,
+            "external_address": plan.external_address,
+            "seeds": plan.seeds,
+            "persistent_peers": plan.persistent_peers,
+            "pex": True,
             "abci_host": plan.abci_host,
             "abci_port": plan.abci_port,
         },
@@ -401,6 +507,27 @@ def _schedule_restart() -> bool:
     return True
 
 
+def _restart_managed_cometbft(service: Any) -> bool:
+    """Restart the configured CometBFT unit when applying a live update.
+
+    The Hypervisor process may not yet have loaded the newly written active
+    configuration, but it still owns the allowlisted service identity.  A
+    direct user-systemd restart makes peer changes effective immediately while
+    keeping the existing Hypervisor restart scheduling semantics intact.
+    """
+
+    consensus = getattr(service, "consensus_service", None)
+    if consensus is None or not getattr(getattr(consensus, "config", None), "managed_service_name", None):
+        return False
+    try:
+        from aidn_hypervisor.operator_cometbft import control_managed_cometbft
+
+        control_managed_cometbft(service, "restart")
+    except (RuntimeError, ValueError):
+        return False
+    return True
+
+
 def apply_pending_cometbft_configuration(service: Any) -> dict[str, Any]:
     pending_path = _pending_path(service)
     active_path = _config_path(service)
@@ -416,11 +543,19 @@ def apply_pending_cometbft_configuration(service: Any) -> dict[str, Any]:
         pending_path.unlink()
     except FileNotFoundError:
         pass
+    cometbft_restarted = _restart_managed_cometbft(service)
     restart_scheduled = _schedule_restart()
     return {
         "status": "applied",
         "active": active,
         "restart_required": True,
+        "cometbft_restarted": cometbft_restarted,
         "restart_scheduled": restart_scheduled,
-        "next_action": "refresh" if restart_scheduled else "restart_hypervisor_manually",
+        "next_action": (
+            "refresh"
+            if restart_scheduled
+            else "refresh_consensus"
+            if cometbft_restarted
+            else "restart_hypervisor_manually"
+        ),
     }

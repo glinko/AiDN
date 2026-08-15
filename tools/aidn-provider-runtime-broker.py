@@ -33,6 +33,7 @@ OPTIONS = {
     "consensus": {
         "--version", "--home", "--binary-path", "--service-name", "--chain-id",
         "--moniker", "--rpc-host", "--rpc-port", "--p2p-host", "--p2p-port",
+        "--external-address", "--seeds", "--persistent-peers",
         "--abci-host", "--abci-port", "--no-abci",
     },
 }
