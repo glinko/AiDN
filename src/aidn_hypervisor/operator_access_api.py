@@ -33,6 +33,7 @@ from aidn_hypervisor.mcp.permissions import (
     permission_catalog_payload,
 )
 from aidn_hypervisor.operator_access import DashboardAccessService
+from aidn_hypervisor.operator_cometbft import control_managed_cometbft
 from aidn_hypervisor.resource_probe import refresh_resource_probe_from_environment
 from aidn_hypervisor.wallet_identity import wallet_identity_registration_payload
 from aidn_hypervisor.wallet_reconciliation import reconcile_pending_wallet_transfers
@@ -690,6 +691,17 @@ def build_operator_access_router(
             status_code=202 if result.get("restart_scheduled") else 200,
             content=result,
         )
+
+    @router.post("/operations/cometbft/{action}")
+    async def control_cometbft(action: str, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        try:
+            result = control_managed_cometbft(hypervisor_service, action)
+        except (RuntimeError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=202, content=result)
 
     @router.post("/pair", status_code=204)
     async def pair(payload: PairingRequest, request: Request, response: Response) -> Response:

@@ -455,6 +455,16 @@ def _is_validator_consensus_write_path(path: str, method: str | None = None) -> 
         # The Dashboard listener is constrained to the two reviewed host
         # boundaries and is persisted for the bootstrap service wrapper.
         return True
+    if (
+        len(parts) == 6
+        and parts[:5] == ["operators", "dashboard", "access", "operations", "cometbft"]
+        and parts[5] in {"start", "stop", "restart"}
+        and (method is None or method == "POST")
+    ):
+        # CometBFT control is limited to the user-systemd unit declared by the
+        # node's own ConsensusService. The Dashboard cannot submit arbitrary
+        # shell commands or choose a different service.
+        return True
     if tuple(parts) in {
         ("operators", "dashboard", "access", "operations", "wallet", "create"),
         ("operators", "dashboard", "access", "operations", "wallet", "import"),

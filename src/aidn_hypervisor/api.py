@@ -35,6 +35,7 @@ from aidn_hypervisor.endpoint_publications.service import (
 )
 from aidn_hypervisor.endpoint_publications.signing import sign_consensus_bytes, verify_publication_signature
 from aidn_hypervisor.operator_readiness import build_operator_readiness_payload
+from aidn_hypervisor.operator_cometbft import build_operator_cometbft_payload
 from aidn_hypervisor.operator_views import (
     build_operator_bundles_payload,
     build_operator_endpoints_payload,
@@ -1392,6 +1393,12 @@ def build_api_router(
             endpoint_items=endpoint_payload.get("items", []),
             consensus_status=consensus_status,
         )
+
+    @router.get("/operators/dashboard/cometbft")
+    async def operator_dashboard_cometbft() -> dict:
+        """Return the bounded CometBFT control/readiness projection."""
+
+        return build_operator_cometbft_payload(service)
 
     @router.post("/operators/resources/probe")
     async def refresh_operator_resources() -> dict:

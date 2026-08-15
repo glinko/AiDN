@@ -632,8 +632,10 @@ Publishing an Endpoint SHALL NOT automatically request Validation.
 
 ### Purpose
 
-Network exposes consensus, Registry replication, peer discovery, and preferred
-remote Endpoint state. It explains why a node is or is not network-ready.
+Network exposes Registry replication, peer discovery, and preferred remote
+Endpoint state. Consensus control and CometBFT service lifecycle live in the
+dedicated CometBFT workspace so a network operator can distinguish local
+finality controls from discovery evidence.
 
 ### Displays
 
@@ -654,6 +656,7 @@ Registry object/replication state, remote node, Remote Endpoint, proxy dependenc
 | Action | Expected result | Status |
 | --- | --- | --- |
 | Recheck network | Refresh consensus, readiness, Registry, and remote discovery evidence. | `IMPLEMENTED` |
+| Open CometBFT | Inspect consensus/RPC evidence and use only the configured user-systemd start, restart, and stop actions. | `IMPLEMENTED` |
 | Browse Market | Open canonical offer discovery. | `IMPLEMENTED` |
 | Open Settings | Continue to host/network configuration. | `IMPLEMENTED` |
 | Detach Remote Endpoint | Reject when a proxy dependency exists; otherwise remove local preference. | `IMPLEMENTED` |
@@ -676,7 +679,7 @@ several read tools may be combined in one inspector.
 | MCP capability group | Canonical Dashboard screen |
 | --- | --- |
 | Node health/status, host inspection, resources | Overview, Settings |
-| Network status/peers | Network |
+| Network status/peers | Network, CometBFT |
 | Provider inventory/attach | Catalog, Provider Plugins |
 | Model inventory/materialization | Models |
 | Bundle list/get/activate/retire | Bundles |

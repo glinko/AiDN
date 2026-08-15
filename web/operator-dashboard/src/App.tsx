@@ -12,6 +12,7 @@ import {
   Cpu,
   Database,
   Gauge,
+  GitBranch,
   Layers3,
   KeyRound,
   LogOut,
@@ -71,7 +72,7 @@ import {
 import { useDashboardData } from '@/hooks/use-dashboard'
 import { DashboardApiError, dashboardApi, type AccessCredential, type AgentPermissionCatalog, type DashboardAccessStatus, type DashboardRecord, type EnrollmentRequest, type ProviderArtifactInventory, type ProviderWorkspace } from '@/lib/api'
 import { dashboardScreens, useOperatorDashboardStore, type DashboardScreen } from '@/stores/operator-dashboard'
-import type { Bundle, Endpoint, Fleet, Readiness, ReadinessStep, WalletDashboard } from '@/lib/types'
+import type { Bundle, CometBftDashboard, Endpoint, Fleet, Readiness, ReadinessStep, WalletDashboard } from '@/lib/types'
 import { createSavedHypervisor, loadSavedHypervisors, saveSavedHypervisors, type SavedHypervisorConnection } from '@/lib/hypervisor-connections'
 
 type NavigationItem = {
@@ -97,6 +98,7 @@ const advancedItems: NavigationItem[] = [
   { id: 'models', label: 'Models', icon: Database, advanced: true },
   { id: 'validation', label: 'Validation', icon: ShieldCheck, advanced: true },
   { id: 'network', label: 'Network', icon: Network, advanced: true },
+  { id: 'cometbft', label: 'CometBFT', icon: GitBranch, advanced: true },
 ]
 
 function inventoryRecords(value: ProviderArtifactInventory | undefined): DashboardRecord[] {
@@ -192,6 +194,7 @@ const operationsScreens: readonly OperationsScreen[] = [
   'models',
   'validation',
   'network',
+  'cometbft',
 ]
 
 function isOperationsScreen(screen: DashboardScreen): screen is OperationsScreen {
@@ -209,7 +212,7 @@ function App() {
   const nodeIdentity = data.home.data?.bootstrap.node_identity ?? data.fleet.data?.node
   const nodeName = getText(nodeIdentity, 'node_id') || 'Local Hypervisor'
   const readinessPercent = data.readiness.data?.progress.percent ?? 0
-  const hasRefreshError = [data.home, data.readiness, data.fleet, data.bundles, data.endpoints, data.wallet, data.providers, data.installs, data.sessions, data.market, data.remoteEndpoints, data.events].some(
+  const hasRefreshError = [data.home, data.readiness, data.cometbft, data.fleet, data.bundles, data.endpoints, data.wallet, data.providers, data.installs, data.sessions, data.market, data.remoteEndpoints, data.events].some(
     (query) => query.isError,
   )
 
@@ -231,6 +234,7 @@ function App() {
     void Promise.allSettled([
       data.home.refetch(),
       data.readiness.refetch(),
+      data.cometbft.refetch(),
       data.fleet.refetch(),
       data.bundles.refetch(),
       data.endpoints.refetch(),
@@ -802,7 +806,8 @@ function readinessActionScreen(action: { screen?: string; label: string; detail:
   const value = `${action.screen ?? ''} ${action.label} ${action.detail}`.toLowerCase()
   if (value.includes('wallet')) return 'wallet'
   if (value.includes('resource') || value.includes('capacity')) return 'settings'
-  if (value.includes('consensus') || value.includes('network') || value.includes('cometbft')) return 'network'
+  if (value.includes('cometbft') || value.includes('consensus')) return 'cometbft'
+  if (value.includes('network')) return 'network'
   if (value.includes('provider') || value.includes('install')) return 'providers'
   if (value.includes('model')) return 'models'
   if (value.includes('validation')) return 'validation'
@@ -2447,6 +2452,7 @@ function OperationsWorkspace({ screen, data, onNavigate, onRefresh }: { screen: 
   if (screen === 'agents') return <AgentsWorkspace data={data} onNavigate={onNavigate} onRefresh={onRefresh} />
   if (screen === 'market') return <MarketWorkspace data={data} onNavigate={onNavigate} onRefresh={onRefresh} />
   if (screen === 'validation') return <ValidationWorkspace data={data} onNavigate={onNavigate} onRefresh={onRefresh} />
+  if (screen === 'cometbft') return <CometBftWorkspace data={data} onNavigate={onNavigate} onRefresh={onRefresh} />
   return <NetworkWorkspace data={data} onNavigate={onNavigate} onRefresh={onRefresh} />
 }
 
@@ -2735,6 +2741,117 @@ function ValidationWorkspace({ data, onNavigate, onRefresh }: { data: DashboardD
 
 function CompactStat({ label, value }: { label: string; value: number }) {
   return <div className="rounded-lg border border-border/80 bg-card px-4 py-3"><p className="eyebrow">{label}</p><p className="mt-2 text-xl font-semibold text-white">{formatCount(value)}</p></div>
+}
+
+function CometBftWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
+  const consensus: CometBftDashboard | undefined = data.cometbft.data
+  const rpc = getRecord(consensus?.rpc) ?? {}
+  const management = getRecord(consensus?.management) ?? {}
+  const metrics = getRecord(consensus?.metrics) ?? {}
+  const authority = getRecord(consensus?.protocol_authority) ?? {}
+  const serviceName = getText(management, 'service')
+  const controlSupported = management.control_supported === true && Boolean(serviceName)
+  const rpcAvailable = rpc.available === true
+  const status = rpcAvailable ? 'ready' : consensus?.enabled ? 'blocked' : 'disabled'
+  const consensusStep = data.readiness.data?.steps.find((step) => /consensus|cometbft/i.test(`${step.key} ${step.title}`))
+  const [busy, setBusy] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+
+  async function control(action: 'start' | 'stop' | 'restart') {
+    if (!controlSupported) {
+      setMessage('No configured CometBFT user-systemd unit is available on this node. Complete the host bootstrap before using service controls.')
+      return
+    }
+    if (action === 'stop' && !window.confirm(`Stop ${serviceName}? Network finality will pause until it is started again.`)) return
+    setBusy(action)
+    setMessage(`${action[0].toUpperCase()}${action.slice(1)} requested for ${serviceName}...`)
+    try {
+      await dashboardApi.cometbftAction(action)
+      setMessage(`CometBFT ${action} accepted for ${serviceName}. Refreshing consensus evidence...`)
+      await Promise.allSettled([data.cometbft.refetch(), data.readiness.refetch()])
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : `CometBFT ${action} failed.`)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return <div className="space-y-4">
+    <ScreenHeading eyebrow="Consensus control" title="CometBFT" detail="Manage the configured local consensus service and inspect network finality separately from local model execution." />
+    {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
+    <div className="flex flex-wrap gap-2">
+      <Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" onClick={onRefresh}><RefreshCw className={cn(data.cometbft.isFetching && 'animate-spin')} />Refresh consensus</Button>
+      <Button variant="outline" className="border-border bg-[#091725]" onClick={() => onNavigate('network')}><Network />Network evidence</Button>
+      <Button variant="outline" className="border-border bg-[#091725]" onClick={() => onNavigate('settings')}><Settings />Host settings</Button>
+    </div>
+    {data.cometbft.isLoading && !consensus ? <PanelSkeleton rows={6} /> : null}
+    {data.cometbft.error && !consensus ? <PanelError title="CometBFT status is unavailable" error={data.cometbft.error} onRetry={onRefresh} /> : null}
+    {consensus ? <>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(20rem,0.75fr)]">
+        <Card className="border-border/80 bg-card py-0 shadow-none">
+          <CardHeader className="border-b border-border/70 px-5 py-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div><p className="eyebrow">Local consensus status</p><CardTitle className="mt-1 text-lg font-semibold">CometBFT node</CardTitle><p className="mt-1 text-sm text-muted-foreground">{consensus.enabled ? 'The Hypervisor is configured to use CometBFT.' : 'Consensus is disabled for this Hypervisor.'}</p></div>
+              <StatusBadge value={status} />
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4 p-5">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <NetworkFact label="Mode" value={consensus.mode || 'unknown'} detail="consensus participation profile" />
+              <NetworkFact label="Chain ID" value={consensus.chain_id || 'not configured'} detail="configured network identity" />
+              <NetworkFact label="RPC endpoint" value={consensus.rpc_endpoint || 'not configured'} detail={rpcAvailable ? 'RPC is responding' : getText(rpc, 'reason') || getText(rpc, 'error_type') || 'RPC is not responding'} />
+              <NetworkFact label="Node ID" value={consensus.node_id || 'not configured'} detail="local consensus identity" />
+            </div>
+            <div className="grid gap-3 sm:grid-cols-4">
+              <NetworkFact label="RPC" value={rpcAvailable ? 'Available' : 'Unavailable'} detail="read-only health check" />
+              <NetworkFact label="Latest block" value={operatorMetric(rpc.latest_block_height)} detail="reported by CometBFT" />
+              <NetworkFact label="Peers" value={operatorMetric(rpc.peer_count)} detail="connected peers" />
+              <NetworkFact label="Sync" value={rpc.catching_up === true ? 'Catching up' : rpcAvailable ? 'In sync' : 'Unknown'} detail="latest RPC sync signal" />
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/80 bg-card py-0 shadow-none">
+          <CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Bounded host action</p><CardTitle className="mt-1 text-lg font-semibold">Service controls</CardTitle><p className="mt-1 text-sm leading-5 text-muted-foreground">Only the explicitly configured user-systemd unit can be controlled from this browser.</p></CardHeader>
+          <CardContent className="space-y-4 p-5">
+            {controlSupported ? <>
+              <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/[0.04] p-3"><p className="eyebrow text-cyan-100">Managed unit</p><p className="mt-1 break-all font-mono text-sm text-cyan-50">{serviceName}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Actions run through <code className="font-mono text-cyan-100">systemctl --user</code>; no shell command or alternate unit is accepted.</p></div>
+              <div className="grid gap-2 sm:grid-cols-3"><Button size="sm" className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy !== null} onClick={() => void control('start')}><RadioTower />{busy === 'start' ? 'Starting...' : 'Start'}</Button><Button size="sm" variant="outline" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={busy !== null} onClick={() => void control('restart')}><RotateCcw />{busy === 'restart' ? 'Restarting...' : 'Restart'}</Button><Button size="sm" variant="destructive" disabled={busy !== null} onClick={() => void control('stop')}><XCircle />{busy === 'stop' ? 'Stopping...' : 'Stop'}</Button></div>
+            </> : <div className="rounded-lg border border-amber-300/25 bg-amber-300/[0.045] p-4"><p className="font-semibold text-amber-100">Manual/bootstrap action required</p><p className="mt-1 text-sm leading-5 text-amber-100/75">This node has no configured user-systemd CometBFT unit, so the dashboard keeps start, stop and restart disabled. Install/configure CometBFT and set <code className="font-mono text-amber-50">AIDN_COMETBFT_SERVICE</code> during the supported bootstrap.</p><Button variant="outline" size="sm" className="mt-3 border-amber-300/30 bg-transparent text-amber-50 hover:bg-amber-300/10" onClick={() => onNavigate('settings')}><Settings />Open host settings</Button></div>}
+            {consensusStep?.action ? <p className="text-xs leading-5 text-muted-foreground"><span className="font-semibold text-slate-300">Readiness next action:</span> {consensusStep.action.label} — {consensusStep.action.detail}</p> : null}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="border-border/80 bg-card py-0 shadow-none">
+        <CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Network operations</p><CardTitle className="mt-1 text-lg font-semibold">Consensus-adjacent actions</CardTitle><p className="mt-1 text-sm leading-5 text-muted-foreground">Move to the canonical workspace for each network action. CometBFT control remains isolated from model execution and Endpoint lifecycle.</p></CardHeader>
+        <CardContent className="grid gap-3 p-5 sm:grid-cols-2 lg:grid-cols-5">
+          <Button variant="outline" className="h-auto justify-start border-border bg-[#091725] px-3 py-3 text-left" onClick={() => onNavigate('wallet')}><WalletCards /><span><span className="block font-medium">Wallet</span><span className="mt-0.5 block text-xs font-normal text-muted-foreground">Owner identity and balance</span></span></Button>
+          <Button variant="outline" className="h-auto justify-start border-border bg-[#091725] px-3 py-3 text-left" onClick={() => onNavigate('endpoints')}><RadioTower /><span><span className="block font-medium">Endpoints</span><span className="mt-0.5 block text-xs font-normal text-muted-foreground">Publish local capacity</span></span></Button>
+          <Button variant="outline" className="h-auto justify-start border-border bg-[#091725] px-3 py-3 text-left" onClick={() => onNavigate('market')}><BriefcaseBusiness /><span><span className="block font-medium">Market</span><span className="mt-0.5 block text-xs font-normal text-muted-foreground">Discover network offers</span></span></Button>
+          <Button variant="outline" className="h-auto justify-start border-border bg-[#091725] px-3 py-3 text-left" onClick={() => onNavigate('network')}><Network /><span><span className="block font-medium">Network</span><span className="mt-0.5 block text-xs font-normal text-muted-foreground">Registry and remote nodes</span></span></Button>
+          <Button variant="outline" className="h-auto justify-start border-border bg-[#091725] px-3 py-3 text-left" onClick={() => onNavigate('validation')}><ShieldCheck /><span><span className="block font-medium">Validation</span><span className="mt-0.5 block text-xs font-normal text-muted-foreground">Endpoint assurance</span></span></Button>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.8fr)]">
+        <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Consensus telemetry</p><CardTitle className="mt-1 text-lg font-semibold">Participation metrics</CardTitle></CardHeader><CardContent className="grid gap-3 p-5 sm:grid-cols-2 lg:grid-cols-4"><NetworkFact label="Submitted" value={operatorMetric(metrics.total_submitted)} detail="transactions submitted" /><NetworkFact label="Finalized" value={operatorMetric(metrics.total_finalized)} detail="transactions finalized" /><NetworkFact label="Failed" value={operatorMetric(metrics.total_failed)} detail="transactions rejected" /><NetworkFact label="Pending" value={operatorMetric(metrics.pending_count)} detail="awaiting inclusion" /><NetworkFact label="Blocks proposed" value={operatorMetric(metrics.blocks_proposed)} detail="validator-only signal" /><NetworkFact label="Missed blocks" value={operatorMetric(metrics.missed_blocks)} detail="validator-only signal" /><NetworkFact label="Participation" value={operatorPercent(metrics.participation_rate)} detail="validator participation rate" /><NetworkFact label="Peers listening" value={rpc.listening === true ? 'Yes' : rpcAvailable ? 'No' : 'Unknown'} detail="CometBFT net_info" /></CardContent></Card>
+        <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Protocol authority</p><CardTitle className="mt-1 text-lg font-semibold">Finality policy</CardTitle></CardHeader><CardContent className="space-y-3 p-5"><div className="flex items-center justify-between gap-3"><span className="text-sm text-muted-foreground">Configured</span><StatusBadge value={authority.configured === true ? 'ready' : 'blocked'} /></div><NetworkFact label="Authorities" value={operatorMetric(authority.authority_count)} detail="signing authorities in policy" /><NetworkFact label="Threshold" value={operatorMetric(authority.threshold)} detail="required approvals" /><p className="text-xs leading-5 text-muted-foreground">{getText(authority, 'epoch_transition_mode') || 'FAIL_CLOSED'} · policy hash is intentionally not displayed here.</p></CardContent></Card>
+      </div>
+    </> : null}
+  </div>
+}
+
+function operatorMetric(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value)) return formatCount(value)
+  if (typeof value === 'string' && value.trim()) return value
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No'
+  return '—'
+}
+
+function operatorPercent(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value)) return `${Math.round(value * 100)}%`
+  return operatorMetric(value)
 }
 
 function NetworkWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
