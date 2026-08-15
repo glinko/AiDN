@@ -131,7 +131,7 @@ def _run_argv(
             "LOGNAME": operator_name,
             "PATH": (
                 f"{operator_home}/.local/bin:/usr/local/cuda/bin:"
-                "/usr/local/bin:/usr/bin:/bin"
+                "/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
             ),
             "XDG_RUNTIME_DIR": f"/run/user/{operator_uid}",
             "AIDN_PROVIDER_RUNTIME_OPERATOR_UID": str(operator_uid),

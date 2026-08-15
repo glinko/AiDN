@@ -39,7 +39,7 @@ if [[ "$EUID" -eq 0 && -n "${AIDN_PROVIDER_RUNTIME_OPERATOR_HOME:-}" ]]; then
     export XDG_RUNTIME_DIR="/run/user/$AIDN_PROVIDER_RUNTIME_OPERATOR_UID"
     export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
   fi
-  export PATH="$HOME/.local/bin:/usr/local/cuda/bin:/usr/local/bin:/usr/bin:/bin"
+  export PATH="$HOME/.local/bin:/usr/local/cuda/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 fi
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
