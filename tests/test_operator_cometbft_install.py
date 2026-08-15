@@ -65,6 +65,9 @@ def test_install_argv_derives_paths_and_keeps_rpc_loopback(tmp_path, monkeypatch
     assert "--no-abci" in argv
     assert plan.rpc_host == "127.0.0.1"
     assert plan.home.endswith("consensus\\cometbft") or plan.home.endswith("consensus/cometbft")
+    assert "--external-address" not in argv
+    assert "--seeds" not in argv
+    assert "--persistent-peers" not in argv
     with pytest.raises(ValueError, match="loopback"):
         build_cometbft_install_argv(service, {"rpc_host": "0.0.0.0"})
 

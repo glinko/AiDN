@@ -372,12 +372,18 @@ def build_cometbft_install_argv(
         "--rpc-port", str(plan.rpc_port),
         "--p2p-host", plan.p2p_host,
         "--p2p-port", str(plan.p2p_port),
-        "--external-address", plan.external_address,
-        "--seeds", plan.seeds,
-        "--persistent-peers", plan.persistent_peers,
         "--abci-host", plan.abci_host,
         "--abci-port", str(plan.abci_port),
     ]
+    # These are optional shell arguments.  Do not send an empty value: the
+    # root-owned broker deliberately rejects empty option values before the
+    # reviewed installer gets a chance to apply its defaults.
+    if plan.external_address:
+        argv.extend(["--external-address", plan.external_address])
+    if plan.seeds:
+        argv.extend(["--seeds", plan.seeds])
+    if plan.persistent_peers:
+        argv.extend(["--persistent-peers", plan.persistent_peers])
     if not plan.use_abci:
         argv.append("--no-abci")
     return plan, argv
