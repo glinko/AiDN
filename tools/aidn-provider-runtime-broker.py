@@ -235,10 +235,18 @@ class ProviderRuntimeBroker:
                     continue
                 with connection:
                     response = self._handle(connection)
-                    connection.sendall(
-                        json.dumps(response, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
-                        + b"\n"
-                    )
+                    try:
+                        connection.sendall(
+                            json.dumps(response, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+                            + b"\n"
+                        )
+                    except (BrokenPipeError, ConnectionResetError, OSError):
+                        # A bounded client timeout or service restart may close the
+                        # connection while the reviewed action is still completing.
+                        # The action result is intentionally discarded, but the
+                        # long-lived root broker must remain available for the next
+                        # request.
+                        continue
         try:
             self.socket_path.unlink()
         except FileNotFoundError:
