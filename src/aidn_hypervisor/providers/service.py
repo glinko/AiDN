@@ -2298,6 +2298,37 @@ class ProviderInventoryService:
         self.store.save_provider_instance(instance)
         return instance
 
+    def detach_provider_instance(self, provider_instance_id: str) -> dict:
+        """Remove an attached inventory record without touching its process.
+
+        Attached providers are operator-supplied endpoints, not runtimes owned
+        by the Hypervisor.  Detaching therefore only removes the local record;
+        managed runtimes must go through ``remove_provider_runtime`` instead.
+        """
+
+        instance = self.store.get_provider_instance(provider_instance_id)
+        if instance.connection_mode != "attached":
+            raise ValueError(
+                "managed Provider runtimes must be removed through the runtime lifecycle"
+            )
+        if self.store.list_model_deployments(provider_instance_id):
+            raise ValueError(
+                "Provider instance still has model deployments; remove those first"
+            )
+        if any(
+            binding.provider_instance_id == provider_instance_id
+            for binding in self.store.list_runtime_bindings()
+        ):
+            raise ValueError(
+                "Provider instance still has runtime bindings; remove those first"
+            )
+        self.store.delete_provider_instance(provider_instance_id)
+        return {
+            "provider_instance_id": provider_instance_id,
+            "plugin_id": instance.plugin_id,
+            "status": "DETACHED",
+        }
+
     def probe_provider_instance(self, provider_instance_id: str) -> dict:
         """Probe an attached or managed provider without starting host processes.
 

@@ -83,6 +83,18 @@ wait_ready() {
   return 1
 }
 
+# The production broker executes this script as root on behalf of the
+# operator.  A plain `systemctl --user` from root cannot connect to another
+# user's user manager; target that manager explicitly while keeping direct
+# operator invocations unchanged.
+user_systemctl() {
+  if [[ "$EUID" -eq 0 && -n "${AIDN_PROVIDER_RUNTIME_OPERATOR_NAME:-}" ]]; then
+    systemctl --machine="${AIDN_PROVIDER_RUNTIME_OPERATOR_NAME}@.host" --user "$@"
+  else
+    systemctl --user "$@"
+  fi
+}
+
 [[ $# -gt 0 ]] || { usage >&2; exit 2; }
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then usage; exit 0; fi
 action="$1"
@@ -170,10 +182,10 @@ ReadWritePaths=$root_path/state
 [Install]
 WantedBy=default.target
 EOF
-    systemctl --user daemon-reload
-    systemctl --user enable --now "$SERVICE_NAME"
+    user_systemctl daemon-reload
+    user_systemctl enable --now "$SERVICE_NAME"
     wait_ready || {
-      systemctl --user --no-pager --full status "$SERVICE_NAME" >&2 || true
+      user_systemctl --no-pager --full status "$SERVICE_NAME" >&2 || true
       die "llama.cpp did not become ready on loopback"
     }
     printf '{"status":"ready","provider":"llama.cpp","model":"%s","endpoint":"http://127.0.0.1:%s"}\n' \
@@ -188,7 +200,7 @@ EOF
       echo '{"provider":"llama.cpp","state":"installed_unconfigured"}'
       exit 0
     fi
-    if ! systemctl --user is-active --quiet "$SERVICE_NAME"; then
+    if ! user_systemctl is-active --quiet "$SERVICE_NAME"; then
       echo '{"provider":"llama.cpp","state":"installed_stopped"}'
       exit 3
     fi
@@ -200,13 +212,13 @@ EOF
     fi
     ;;
   stop)
-    systemctl --user stop "$SERVICE_NAME"
+    user_systemctl stop "$SERVICE_NAME"
     echo '{"provider":"llama.cpp","status":"stopped"}'
     ;;
   remove)
-    systemctl --user disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
+    user_systemctl disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
     rm -f -- "$unit_path"
-    systemctl --user daemon-reload
+    user_systemctl daemon-reload
     rm -rf -- "$source_dir" "$root_path"/build-* "$binary_path" "$root_path/runtime-version"
     printf '{"status":"removed","provider":"llama.cpp","runtime_root":"%s","model_files":"preserved"}\n' \
       "$root_path"

@@ -1457,6 +1457,11 @@ class HypervisorService:
             configuration=configuration,
         )
 
+    def detach_provider_instance(self, provider_instance_id: str) -> dict:
+        return self._provider_installation_facade().detach_provider_instance(
+            provider_instance_id,
+        )
+
     def list_provider_instances(self) -> list[dict]:
         return self._provider_installation_facade().list_provider_instances()
 

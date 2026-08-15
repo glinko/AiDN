@@ -661,6 +661,30 @@ def test_provider_inventory_service_attaches_discovers_and_projects_runtime_bind
     assert bundle.endpoint == "http://127.0.0.1:9999"
 
 
+def test_provider_inventory_service_detaches_an_attached_instance() -> None:
+    registry = PluginRegistry()
+    registry.register(FakeManagedPlugin())
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+    )
+
+    instance = service.attach_provider_instance(
+        plugin_id="fake-managed",
+        display_name="Local Fake",
+        configuration={"base_url": "http://127.0.0.1:9999"},
+    )
+
+    result = service.detach_provider_instance(instance.provider_instance_id)
+
+    assert result == {
+        "provider_instance_id": instance.provider_instance_id,
+        "plugin_id": "fake-managed",
+        "status": "DETACHED",
+    }
+    assert service.list_provider_instances() == []
+
+
 def test_provider_inventory_service_evaluates_runtime_binding_endpoint_admission() -> None:
     service = ProviderInventoryService(
         plugins=_registry(),

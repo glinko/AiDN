@@ -628,6 +628,10 @@ def test_service_managed_provider_runtime_lifecycle_delegates_through_facade() -
             self.calls.append(("remove", payload))
             return {"plugin_id": payload["plugin_id"], "status": "REMOVED"}
 
+        def detach_provider_instance(self, provider_instance_id: str) -> dict:
+            self.calls.append(("detach", {"provider_instance_id": provider_instance_id}))
+            return {"provider_instance_id": provider_instance_id, "status": "DETACHED"}
+
     inventory = FakeProviderInventory()
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
@@ -648,7 +652,8 @@ def test_service_managed_provider_runtime_lifecycle_delegates_through_facade() -
         operator_note="change",
     )["status"] == "SUCCEEDED"
     assert service.remove_provider_runtime(plugin_id="vllm")["status"] == "REMOVED"
-    assert [name for name, _payload in inventory.calls] == ["install", "change", "remove"]
+    assert service.detach_provider_instance("pi-attached")["status"] == "DETACHED"
+    assert [name for name, _payload in inventory.calls] == ["install", "change", "remove", "detach"]
     assert inventory.calls[0][1]["operator_note"] == "install"
     assert inventory.calls[0][1]["upgrade_acknowledged"] is True
 

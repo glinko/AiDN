@@ -1038,6 +1038,8 @@ def build_operator_access_router(
                 result = hypervisor_service.probe_provider_instance(provider_instance_id)
             elif action == "discover-models":
                 result = {"items": hypervisor_service.discover_provider_models(provider_instance_id)}
+            elif action == "detach":
+                result = hypervisor_service.detach_provider_instance(provider_instance_id)
             else:
                 return JSONResponse(status_code=422, content={"error": {"code": "DASHBOARD_OPERATION_UNKNOWN"}})
         except (KeyError, ValueError) as error:

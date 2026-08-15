@@ -63,6 +63,13 @@ class ProviderInstallationService:
         self._host._persist_state()
         return instance.model_dump(mode="json")
 
+    def detach_provider_instance(self, provider_instance_id: str) -> dict:
+        result = self._host.provider_inventory.detach_provider_instance(
+            provider_instance_id,
+        )
+        self._host._persist_state()
+        return result
+
     def list_provider_instances(self) -> list[dict]:
         return [
             instance.model_dump(mode="json")

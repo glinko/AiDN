@@ -60,6 +60,10 @@ class _OperationService:
         self.calls.append(("attach", payload))
         return {"provider_instance_id": "pi-test", **payload}
 
+    def detach_provider_instance(self, provider_instance_id: str) -> dict:
+        self.calls.append(("detach", provider_instance_id))
+        return {"provider_instance_id": provider_instance_id, "status": "DETACHED"}
+
     def build_provider_installation_plan(self, *, plugin_id: str, configuration: dict) -> dict:
         self.calls.append(("provider-plan", plugin_id, configuration))
         return {
@@ -373,6 +377,11 @@ def test_paired_dashboard_operations_require_pairing_and_call_bounded_service(tm
     )
     assert attached.status_code == 201
     assert attached.json()["provider_instance_id"] == "pi-test"
+    detached = client.post(
+        "/operators/dashboard/access/operations/providers/pi-test/detach",
+    )
+    assert detached.status_code == 200
+    assert detached.json() == {"provider_instance_id": "pi-test", "status": "DETACHED"}
     installed = client.post(
         "/operators/dashboard/access/operations/provider-plugins/ollama/install",
         json={"configuration": {"endpoint": "http://127.0.0.1:11434"}},

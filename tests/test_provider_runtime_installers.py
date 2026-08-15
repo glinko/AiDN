@@ -72,6 +72,13 @@ def test_vllm_runtime_install_reuses_a_matching_environment() -> None:
     assert '"reused":%s' in vllm
 
 
+def test_user_runtime_scripts_target_the_operator_user_manager_from_the_broker() -> None:
+    for path in (PROVIDER_SCRIPTS[3], PROVIDER_SCRIPTS[4]):
+        script = path.read_text(encoding="utf-8")
+        assert "AIDN_PROVIDER_RUNTIME_OPERATOR_NAME" in script
+        assert 'systemctl --machine="${AIDN_PROVIDER_RUNTIME_OPERATOR_NAME}@.host" --user' in script
+
+
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash is unavailable")
 @pytest.mark.parametrize("path", PROVIDER_SCRIPTS)
 def test_provider_runtime_installers_have_valid_bash_syntax(path: Path) -> None:
