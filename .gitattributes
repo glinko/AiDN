@@ -1,0 +1,7 @@
+# Ubuntu bootstrap and runtime broker entrypoints must keep Unix line endings.
+# This also protects Windows-based deployment copies from producing a `bash\r`
+# executable name in the root-owned broker.
+/tools/aidn-provider-runtime-ubuntu.sh text eol=lf
+/tools/aidn-consensus-runtime-ubuntu.sh text eol=lf
+/tools/install-cometbft-ubuntu.sh text eol=lf
+/tools/aidn-provider-runtime-broker.py text eol=lf
