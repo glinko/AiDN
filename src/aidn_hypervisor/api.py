@@ -2900,8 +2900,14 @@ def build_api_router(
         return RedirectResponse(url="/operators/dashboard/react", status_code=307)
 
     @router.get("/operators/dashboard", response_class=HTMLResponse)
-    async def operator_dashboard() -> str:
-        return load_dashboard_html()
+    async def operator_dashboard() -> HTMLResponse:
+        # Keep the legacy shell available for API/backward-compatibility tests,
+        # but never let a browser keep serving an older navigation bundle. The
+        # canonical operator UI is the React dashboard below.
+        return HTMLResponse(
+            content=load_dashboard_html(),
+            headers={"Cache-Control": "no-store"},
+        )
 
     @router.get("/operators/dashboard/react", include_in_schema=False)
     @router.get("/operators/dashboard/react/", include_in_schema=False)

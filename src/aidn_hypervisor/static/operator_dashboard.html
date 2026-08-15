@@ -160,6 +160,7 @@
       width: 100%;
       padding: 12px 14px;
       text-align: left;
+      text-decoration: none;
       border: 1px solid var(--line);
       border-radius: 18px;
       color: var(--ink);
@@ -2977,10 +2978,10 @@
           <span>Drafts <b id="nav-bundle-drafts">0</b></span>
           <span>Validation <b id="nav-bundle-validation">0</b></span>
         </div>
-        <button class="rail-button" data-screen="market" type="button"><svg class="nav-icon"><use href="#icon-market"></use></svg><span class="rail-button-title">Market</span></button>
+        <a class="rail-button" data-screen="market" href="/operators/dashboard/react#market"><svg class="nav-icon"><use href="#icon-market"></use></svg><span class="rail-button-title">Market</span></a>
         <button class="rail-button basic-catalog" data-screen="catalog" type="button"><svg class="nav-icon"><use href="#icon-catalog"></use></svg><span class="rail-button-title">Catalog</span></button>
         <button class="rail-button" type="button" data-wallet-open="rail"><svg class="nav-icon"><use href="#icon-wallet"></use></svg><span class="rail-button-title">Wallet</span></button>
-        <button class="rail-button" type="button" aria-disabled="true"><svg class="nav-icon"><use href="#icon-settings"></use></svg><span class="rail-button-title">Settings</span></button>
+        <a class="rail-button" href="/operators/dashboard/react#settings"><svg class="nav-icon"><use href="#icon-settings"></use></svg><span class="rail-button-title">Settings</span></a>
         <button class="rail-button mobile-mode-toggle" type="button" data-ui-mode-toggle aria-pressed="false"><span class="rail-button-title">Advanced</span></button>
       </nav>
 

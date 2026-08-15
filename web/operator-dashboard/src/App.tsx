@@ -253,7 +253,9 @@ function App() {
   function navigate(screen: DashboardScreen) {
     setActiveScreen(screen)
     if (window.location.hash !== `#${screen}`) {
-      window.history.pushState(null, '', `#${screen}`)
+      // Assigning the hash keeps browser history and the hashchange listener
+      // in sync on Safari/iOS as well as desktop browsers.
+      window.location.hash = screen
     }
     setMobileOpen(false)
   }
