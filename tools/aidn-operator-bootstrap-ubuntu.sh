@@ -28,7 +28,7 @@ Options:
   --data-dir DIR            Persistent state path (default: $HOME/.local/share/aidn/<operator>)
   --api-host HOST           Hypervisor bind address (default: 127.0.0.1)
   --api-port PORT           Hypervisor API port (default: 8766)
-  --allow-public-api        Allow an explicit non-loopback API bind
+  --allow-public-api        Confirm an explicit non-loopback API bind
   --enable-registry         Enable the mTLS Registry listener
   --registry-listen-host H  Registry bind address (default: 0.0.0.0 when enabled)
   --registry-port PORT      Registry mTLS port (default: 9444)
@@ -151,6 +151,7 @@ data_dir=''
 api_host='127.0.0.1'
 api_port='8766'
 allow_public_api='false'
+api_host_supplied='false'
 enable_registry='false'
 registry_listen_host=''
 registry_listen_host_supplied='false'
@@ -209,6 +210,7 @@ while [[ $# -gt 0 ]]; do
     --api-host)
       require_value "$1" "$@"
       api_host="$2"
+      api_host_supplied='true'
       shift 2
       ;;
     --api-port)
@@ -385,7 +387,14 @@ case "$agent_action" in
 esac
 
 if [[ "$non_interactive" != 'true' ]]; then
-  api_host="$(prompt_value 'Hypervisor API bind address' "$api_host")"
+  if [[ "$api_host_supplied" == 'true' ]]; then
+    api_host="$(prompt_value 'Hypervisor API bind address' "$api_host")"
+  elif prompt_yes_no 'Expose Dashboard/API to the LAN on 0.0.0.0?' 'no'; then
+    api_host='0.0.0.0'
+    allow_public_api='true'
+  else
+    api_host='127.0.0.1'
+  fi
   api_port="$(prompt_value 'Hypervisor API port' "$api_port")"
 fi
 valid_port "$api_port" || die 'API port must be between 1 and 65535'
@@ -938,6 +947,11 @@ echo "  checkout: $install_dir" >&2
 echo "  state:    $data_dir" >&2
 echo "  service:  $service_name" >&2
 echo "  API:      http://$api_host:$api_port" >&2
+if is_loopback_host "$api_host"; then
+  echo '  Dashboard network: loopback only' >&2
+else
+  echo "  Dashboard network: LAN bind ($api_host)" >&2
+fi
 echo "  Capacity: $resource_capacity_path (automatic host probe)" >&2
 echo "  Registry: $registry_state" >&2
 if [[ "$consensus_mode" != 'disabled' ]]; then

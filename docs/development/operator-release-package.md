@@ -75,9 +75,11 @@ operator channel, then import it with the existing
 host firewall is deliberately not modified by the bootstrap; open TCP 9444
 only after reviewing the LAN policy.
 
-The API remains loopback-only in this mode. A non-loopback API bind requires
-the explicit `--allow-public-api` flag because the MVP API does not provide a
-public authentication boundary:
+The API remains loopback-only in this mode. During the interactive wizard,
+the operator is asked whether to expose the Dashboard/API on the LAN; the
+default is `127.0.0.1` and answering yes selects `0.0.0.0`. A non-loopback API
+bind requires explicit approval because the MVP API does not provide a public
+authentication boundary. In non-interactive mode, use both flags explicitly:
 
 ```bash
 ... --api-host 0.0.0.0 --api-port 8766 --allow-public-api
@@ -85,6 +87,9 @@ public authentication boundary:
 
 Do not use that option on an untrusted network. Prefer an authenticated
 reverse proxy or a private management network for the dashboard.
+
+This changes only the Hypervisor Dashboard/API listener. Provider runtimes
+(Ollama, llama.cpp, and vLLM) remain loopback-only.
 
 ## Resulting layout
 
