@@ -637,6 +637,7 @@ if [[ -f "\$bind_host_path" ]]; then
 fi
 export AIDN_HYPERVISOR_STATE_PATH="\$data/hypervisor-state.json"
 export AIDN_HYPERVISOR_BUNDLES_PATH="\$data/bundles.json"
+export AIDN_HYPERVISOR_MODEL_STORE_PATH="\$data/models"
 export AIDN_HYPERVISOR_API_HOST="\$api_host"
 export AIDN_HYPERVISOR_API_PORT=$api_port_q
 export AIDN_HYPERVISOR_BIND_HOST_PATH="\$bind_host_path"

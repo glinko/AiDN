@@ -674,6 +674,33 @@ def test_default_service_restores_state_from_configured_file(
     assert service.get_task("task-1").status == "queued"
 
 
+def test_default_service_uses_sibling_model_store_for_persistent_state(
+    tmp_path: Path, monkeypatch
+) -> None:
+    state_path = tmp_path / "hypervisor-state.json"
+    monkeypatch.setenv("AIDN_HYPERVISOR_STATE_PATH", str(state_path))
+    monkeypatch.delenv("AIDN_HYPERVISOR_MODEL_STORE_PATH", raising=False)
+
+    service = _build_default_service()
+
+    assert service.model_store is not None
+    assert service.model_store.root == tmp_path / "models"
+
+
+def test_default_service_honors_explicit_model_store_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    state_path = tmp_path / "hypervisor-state.json"
+    model_root = tmp_path / "large-disk" / "models"
+    monkeypatch.setenv("AIDN_HYPERVISOR_STATE_PATH", str(state_path))
+    monkeypatch.setenv("AIDN_HYPERVISOR_MODEL_STORE_PATH", str(model_root))
+
+    service = _build_default_service()
+
+    assert service.model_store is not None
+    assert service.model_store.root == model_root
+
+
 def test_default_service_restores_event_journal_from_configured_file(
     tmp_path: Path, monkeypatch
 ) -> None:

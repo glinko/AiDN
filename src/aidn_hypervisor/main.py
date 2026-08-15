@@ -32,6 +32,7 @@ from aidn_hypervisor.consensus.state_store import ABCIStateStore, ABCIStateStore
 from aidn_hypervisor.contribution_api import build_contribution_router
 from aidn_hypervisor.contributions.service import ContributionAccountingService
 from aidn_hypervisor.contributions.store import ContributionEvidenceStore
+from aidn_hypervisor.dashboard_network_access import DashboardNetworkAccessService
 from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
 from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
 from aidn_hypervisor.endpoints.api import build_endpoint_router
@@ -49,8 +50,8 @@ from aidn_hypervisor.mcp import (
 )
 from aidn_hypervisor.mcp.credentials import McpCredentialStore
 from aidn_hypervisor.mcp.enrollment import McpEnrollmentService
+from aidn_hypervisor.model_store import FileModelStore
 from aidn_hypervisor.operator_access import DashboardAccessService
-from aidn_hypervisor.dashboard_network_access import DashboardNetworkAccessService
 from aidn_hypervisor.operator_access_api import build_operator_access_router
 from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
@@ -675,6 +676,7 @@ def _build_default_service(
         runtimes=ProviderProcessManager(enable_subprocesses=True),
         state_store=state_store,
         bundle_registry=_default_bundle_registry(plugins),
+        model_store=_build_default_model_store(state_store=state_store),
         registry_service=registry_service,
         plugin_host_secret_manager=plugin_host_secret_manager,
         provider_installation_executor=_build_default_provider_installation_executor(),
@@ -861,6 +863,25 @@ def _default_state_store() -> FileStateStore | None:
     if not state_path:
         return None
     return FileStateStore(state_path)
+
+
+def _build_default_model_store(*, state_store: FileStateStore | None) -> FileModelStore | None:
+    """Resolve the node-local model store for the production service.
+
+    A persistent Hypervisor state path is the boundary used by the Ubuntu
+    bootstrap, so keeping model bytes in its sibling ``models`` directory
+    gives a fresh installation a usable store without another manual step.
+    Operators may point the store at a larger disk with the explicit
+    ``AIDN_HYPERVISOR_MODEL_STORE_PATH`` override.  In-memory/test services
+    (which have no state store) retain their opt-in model-store behavior.
+    """
+
+    configured_path = os.getenv("AIDN_HYPERVISOR_MODEL_STORE_PATH", "").strip()
+    if configured_path:
+        return FileModelStore(configured_path)
+    if state_store is None:
+        return None
+    return FileModelStore(state_store.path.parent / "models")
 
 
 def _env_bool(name: str, *, default: bool) -> bool:
