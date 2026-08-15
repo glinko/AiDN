@@ -555,8 +555,18 @@ class AllowlistedProviderRuntimeInstallationExecutor(RecordedProviderInstallatio
         )
         broker_result = self._broker.invoke(invocation=invocation)
         if broker_result.status != "SUCCEEDED":
+            broker_details = broker_result.details if isinstance(broker_result.details, dict) else {}
+            returncode = broker_details.get("returncode")
+            stderr = broker_details.get("stderr")
+            diagnostic = ""
+            if returncode is not None or stderr:
+                diagnostic = f" (returncode={returncode!r}"
+                if stderr:
+                    diagnostic += f"; stderr={str(stderr)[:1024]}"
+                diagnostic += ")"
             raise ValueError(
-                f"Provider runtime broker did not complete installation: {broker_result.summary}"
+                "Provider runtime broker did not complete installation: "
+                f"{broker_result.summary}{diagnostic}"
             )
         result = super().apply(
             approval=approval,
