@@ -85,11 +85,16 @@ wait_ready() {
 
 # The production broker executes this script as root on behalf of the
 # operator.  A plain `systemctl --user` from root cannot connect to another
-# user's user manager; target that manager explicitly while keeping direct
-# operator invocations unchanged.
+# user's user manager.  Run it as the operator with the operator's bus
+# environment while keeping direct operator invocations unchanged.
 user_systemctl() {
-  if [[ "$EUID" -eq 0 && -n "${AIDN_PROVIDER_RUNTIME_OPERATOR_NAME:-}" ]]; then
-    systemctl --machine="${AIDN_PROVIDER_RUNTIME_OPERATOR_NAME}@.host" --user "$@"
+  if [[ "$EUID" -eq 0 \
+    && -n "${AIDN_PROVIDER_RUNTIME_OPERATOR_NAME:-}" \
+    && "${AIDN_PROVIDER_RUNTIME_OPERATOR_UID:-}" =~ ^[0-9]+$ ]]; then
+    runuser -u "$AIDN_PROVIDER_RUNTIME_OPERATOR_NAME" -- env \
+      XDG_RUNTIME_DIR="/run/user/${AIDN_PROVIDER_RUNTIME_OPERATOR_UID}" \
+      DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${AIDN_PROVIDER_RUNTIME_OPERATOR_UID}/bus" \
+      /usr/bin/systemctl --user "$@"
   else
     systemctl --user "$@"
   fi

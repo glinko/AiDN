@@ -76,7 +76,8 @@ def test_user_runtime_scripts_target_the_operator_user_manager_from_the_broker()
     for path in (PROVIDER_SCRIPTS[3], PROVIDER_SCRIPTS[4]):
         script = path.read_text(encoding="utf-8")
         assert "AIDN_PROVIDER_RUNTIME_OPERATOR_NAME" in script
-        assert 'systemctl --machine="${AIDN_PROVIDER_RUNTIME_OPERATOR_NAME}@.host" --user' in script
+        assert 'runuser -u "$AIDN_PROVIDER_RUNTIME_OPERATOR_NAME" -- env' in script
+        assert 'DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${AIDN_PROVIDER_RUNTIME_OPERATOR_UID}/bus"' in script
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash is unavailable")
