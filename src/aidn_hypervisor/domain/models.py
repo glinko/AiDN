@@ -6,6 +6,7 @@ from aidn_hypervisor.domain.types import (
     TaskMode,
     WarmPolicy,
 )
+from aidn_hypervisor.runtime_parameter_policy import RuntimeParameterPolicy
 
 
 class ResourceProfile(BaseModel):
@@ -38,6 +39,9 @@ class BundleConfig(BaseModel):
     priority_class: int = 50
     max_parallel_requests: int = 1
     enabled: bool = True
+    # Operator-owned generation/runtime values.  A non-empty policy is
+    # enforced at the task boundary before a provider sees the request.
+    runtime_parameter_policy: dict[str, "RuntimeParameterPolicy"] = Field(default_factory=dict)
 
 
 class TaskRequest(BaseModel):
@@ -84,12 +88,14 @@ class ModelInstallRequest(BaseModel):
     model_id: str
     source_url: str
     requested_by: str
+    runtime_parameter_policy: dict[str, object] = Field(default_factory=dict)
 
 
 class RegisterBundleFromInstallRequest(BaseModel):
     bundle_id: str
     workload_type: str
     endpoint: str
+    runtime_parameter_policy: dict[str, object] | None = None
 
 
 class NodeCapacity(BaseModel):

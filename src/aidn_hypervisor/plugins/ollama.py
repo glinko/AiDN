@@ -244,6 +244,20 @@ class OllamaPlugin(ProviderPlugin):
             "prompt": prompt,
             "stream": False,
         }
+        options = {}
+        option_map = {
+            "temperature": "temperature",
+            "top_p": "top_p",
+            "top_k": "top_k",
+            "repeat_penalty": "repeat_penalty",
+            "max_tokens": "num_predict",
+            "context_length": "num_ctx",
+        }
+        for source_key, target_key in option_map.items():
+            if source_key in task.payload:
+                options[target_key] = task.payload[source_key]
+        if options:
+            request_payload["options"] = options
         try:
             response = self._request_json(
                 "POST",

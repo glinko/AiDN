@@ -102,12 +102,14 @@ class ModelInstallOperationRequest(BaseModel):
     model_id: str = Field(min_length=1, max_length=512)
     source_url: str = Field(min_length=1, max_length=2048)
     requested_by: str = Field(default="operator-dashboard", min_length=1, max_length=128)
+    runtime_parameter_policy: dict[str, Any] = Field(default_factory=dict, max_length=16)
 
 
 class RegisterBundleOperationRequest(BaseModel):
     bundle_id: str = Field(min_length=1, max_length=128)
     workload_type: str = Field(min_length=1, max_length=128)
     endpoint: str = Field(min_length=1, max_length=2048)
+    runtime_parameter_policy: dict[str, Any] | None = Field(default=None, max_length=16)
 
 
 class MarketplaceDescriptionPreviewRequest(BaseModel):

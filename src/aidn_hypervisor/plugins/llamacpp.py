@@ -275,20 +275,40 @@ class LlamaCppPlugin(ProviderPlugin):
         host = parsed.hostname or "127.0.0.1"
         port = str(parsed.port or 8080)
         return {
-            "command": [
-                "llama-server",
-                "--model",
-                bundle_config.model_id,
-                "--host",
-                host,
-                "--port",
-                port,
-            ],
+            "command": self._launch_command(
+                bundle_config,
+                host=host,
+                port=port,
+            ),
             "metadata": {
                 "endpoint": endpoint,
                 "model_id": bundle_config.model_id,
             },
         }
+
+    @staticmethod
+    def _launch_command(bundle_config, *, host: str, port: str) -> list[str]:
+        command = [
+            "llama-server",
+            "--model",
+            bundle_config.model_id,
+            "--host",
+            host,
+            "--port",
+            port,
+        ]
+        policy = bundle_config.runtime_parameter_policy
+        launch_flags = {
+            "context_length": "--ctx-size",
+            "gpu_layers": "--n-gpu-layers",
+            "batch_size": "--batch-size",
+            "threads": "--threads",
+        }
+        for name, flag in launch_flags.items():
+            setting = policy.get(name)
+            if setting is not None:
+                command.extend([flag, str(setting.value)])
+        return command
 
     def health_check(self, runtime_handle) -> bool:
         try:
@@ -302,10 +322,21 @@ class LlamaCppPlugin(ProviderPlugin):
         if not prompt:
             raise ValueError("llama.cpp invocation requires a prompt payload")
 
+        request_payload = {"prompt": prompt, "stream": False}
+        request_map = {
+            "temperature": "temperature",
+            "top_p": "top_p",
+            "top_k": "top_k",
+            "repeat_penalty": "repeat_penalty",
+            "max_tokens": "n_predict",
+        }
+        for source_key, target_key in request_map.items():
+            if source_key in task.payload:
+                request_payload[target_key] = task.payload[source_key]
         response = self._request_json(
             "POST",
             f"{self._endpoint(runtime_handle)}/completion",
-            {"prompt": prompt, "stream": False},
+            request_payload,
         )
         result = {
             "ok": True,

@@ -1428,12 +1428,14 @@ class HypervisorService:
         model_id: str,
         source_url: str,
         requested_by: str,
+        runtime_parameter_policy: dict | None = None,
     ) -> dict:
         return self._model_install_facade().request_model_install(
             provider_type=provider_type,
             model_id=model_id,
             source_url=source_url,
             requested_by=requested_by,
+            runtime_parameter_policy=runtime_parameter_policy,
         )
 
     def list_model_installs(self) -> list[dict]:
@@ -1822,12 +1824,14 @@ class HypervisorService:
         bundle_id: str,
         workload_type: str,
         endpoint: str,
+        runtime_parameter_policy: dict | None = None,
     ) -> dict:
         return self._provider_inventory_application_facade().register_bundle_from_install(
             install_id=install_id,
             bundle_id=bundle_id,
             workload_type=workload_type,
             endpoint=endpoint,
+            runtime_parameter_policy=runtime_parameter_policy,
         )
 
     def get_runtime(self, runtime_id: str) -> RuntimeHandle:

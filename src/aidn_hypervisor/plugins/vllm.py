@@ -254,8 +254,11 @@ class VllmPlugin(ProviderPlugin):
         request_payload = {
             "model": self._model_id(runtime_handle),
             "prompt": prompt,
-            "max_tokens": 64,
+            "max_tokens": task.payload.get("max_tokens", 64),
         }
+        for key in ("temperature", "top_p", "top_k", "frequency_penalty", "presence_penalty"):
+            if key in task.payload:
+                request_payload[key] = task.payload[key]
         try:
             response = self._request_json(
                 "POST",

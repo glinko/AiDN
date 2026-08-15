@@ -716,6 +716,10 @@ def build_operator_installs_payload(*, service) -> dict:
             {
                 **install,
                 "target_path": raw_install.get("target_path"),
+                "source_url": raw_install.get("source_url"),
+                "source_kind": raw_install.get("source_kind", "artifact"),
+                "provider_model_reference": raw_install.get("provider_model_reference"),
+                "runtime_parameter_policy": raw_install.get("runtime_parameter_policy", {}),
                 "can_register_bundle": can_register_bundle,
                 "next_action": next_action,
             }

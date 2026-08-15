@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
+from aidn_hypervisor.runtime_parameter_policy import (
+    normalize_runtime_parameter_policy,
+)
 
 
 class ProviderInventoryApplicationService:
@@ -264,6 +267,7 @@ class ProviderInventoryApplicationService:
         bundle_id: str,
         workload_type: str,
         endpoint: str,
+        runtime_parameter_policy: dict | None = None,
     ) -> dict:
         if any(bundle.bundle_id == bundle_id for bundle in self._host.bundles):
             raise ValueError(f"Bundle already exists: {bundle_id}")
@@ -272,10 +276,19 @@ class ProviderInventoryApplicationService:
             raise ValueError(f"Model install is not completed: {install_id}")
 
         plugin = self._host._get_plugin(job["provider_type"])
+        provider_model_id = str(
+            job.get("provider_model_reference") or job["model_id"]
+        )
         defaults = plugin.bundle_defaults_from_install(
-            model_id=str(job["model_id"]),
+            model_id=provider_model_id,
             target_path=str(job["target_path"]),
         )
+        selected_policy = runtime_parameter_policy
+        if selected_policy is None:
+            selected_policy = job.get("runtime_parameter_policy")
+        normalized_policy = normalize_runtime_parameter_policy(
+            str(job["provider_type"]), selected_policy
+        ) if workload_type == "llm_text" else {}
         bundle = BundleConfig(
             bundle_id=bundle_id,
             plugin_id=plugin.plugin_id,
@@ -290,6 +303,7 @@ class ProviderInventoryApplicationService:
             priority_class=50,
             max_parallel_requests=1,
             enabled=True,
+            runtime_parameter_policy=normalized_policy,
         )
         plugin.validate_bundle(bundle)
         self._host.bundles.append(bundle)

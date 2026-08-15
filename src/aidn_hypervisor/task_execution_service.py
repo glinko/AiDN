@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from aidn_hypervisor.domain.models import BundleConfig, TaskRequest
 from aidn_hypervisor.process_manager import RuntimeHandle
+from aidn_hypervisor.runtime_parameter_policy import apply_runtime_parameter_policy
 
 
 class TaskExecutionService:
@@ -265,7 +266,8 @@ class TaskExecutionService:
 
         for attempt in range(1, policy["max_attempts"] + 1):
             try:
-                return plugin.invoke(task, runtime)
+                effective_task = apply_runtime_parameter_policy(task, bundle)
+                return plugin.invoke(effective_task, runtime)
             except Exception as error:
                 last_error = error
                 retryable = isinstance(error, retry_exceptions)

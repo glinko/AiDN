@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from aidn_hypervisor.domain.models import BundleConfig, TaskRequest
 from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.queue import QueuedTask
+from aidn_hypervisor.runtime_parameter_policy import apply_runtime_parameter_policy
 from aidn_hypervisor.runtime_protocol.approved_dispatch import (
     ApprovedRuntimeDispatcher,
 )
@@ -254,6 +255,7 @@ class RuntimeExecutionService:
             raise RuntimeError("Session service is not configured")
         self._host.queue.transition_status(task_id, "admitted")
         try:
+            effective_request = apply_runtime_parameter_policy(task.request, bundle)
             self._host.queue.transition_status(task_id, "running")
             self.touch_task_session(task.request)
             session = session_service.store.get_session(str(session_id))
@@ -265,7 +267,7 @@ class RuntimeExecutionService:
                 endpoint=endpoint_manifest,
                 session=session,
                 request_id=str(task.request.constraints.get("request_id") or task_id),
-                request_payload=task.request.payload,
+                request_payload=effective_request.payload,
                 request_deadline=task.request.constraints.get("request_deadline"),
                 streaming=bool(task.request.constraints.get("streaming", False)),
             )
