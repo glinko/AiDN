@@ -45,6 +45,14 @@ Each check exposes:
 not an empty machine. A model visible in an upstream Provider is not a Model
 Deployment until Hypervisor inventory contains it.
 
+The execution checks also recognize the direct managed-process path created by
+model installation. An enabled managed Bundle with a materialized model and a
+local runtime endpoint is itself the executable boundary; it does not need a
+separate Provider Instance, Model Deployment or Runtime Binding record. The
+wizard reports those checks as ready with an explicit explanation rather than
+showing false blockers. Attached-service Bundles continue to require the full
+Provider/Model/Binding chain.
+
 ## 3. Safety Boundary
 
 The wizard SHALL NOT:
@@ -90,8 +98,10 @@ The same projection is suitable for a future read-only MCP resource or tool.
 
 ## 5. Completion Definition
 
-The node is locally execution-ready only when Provider Instance, Model
-Deployment, Runtime Binding and Bundle are all ready.
+The node is locally execution-ready when either the attached-service chain
+(Provider Instance, Model Deployment, Runtime Binding and Bundle) is ready, or
+an enabled managed-process Bundle with its materialized model and local runtime
+endpoint is ready.
 
 The node is network-ready only when Consensus RPC, Wallet and a published
 Endpoint offer are ready as well. Validation is deliberately not part of the

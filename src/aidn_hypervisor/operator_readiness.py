@@ -159,6 +159,24 @@ def _consensus_step(consensus_status: Mapping[str, Any] | None) -> dict[str, Any
     )
 
 
+def _is_ready_managed_bundle(bundle: Mapping[str, Any]) -> bool:
+    """Return whether a Bundle can execute without provider inventory records.
+
+    A model installed through the operator's managed-process path is already the
+    executable deployment boundary.  It intentionally does not need a separate
+    Provider Instance, Model Deployment, or Runtime Binding record.  Keep the
+    check narrow so legacy/attached-service Bundles continue to require their
+    explicit inventory chain.
+    """
+
+    return (
+        bool(bundle.get("enabled", False))
+        and str(bundle.get("launch_mode") or "").strip().lower() == "managed_process"
+        and bool(str(bundle.get("model_id") or "").strip())
+        and bool(str(bundle.get("endpoint") or "").strip())
+    )
+
+
 def build_operator_readiness_payload(
     *,
     service,
@@ -192,7 +210,11 @@ def build_operator_readiness_payload(
     ]
     ready_bindings = [item for item in runtime_bindings if str(item.get("status", "")).lower() == "ready"]
     enabled_bundles = [item for item in bundles if item.get("enabled", False)]
+    managed_bundles = [item for item in enabled_bundles if _is_ready_managed_bundle(item)]
+    managed_bundle_count = len(managed_bundles)
+    managed_path_ready = managed_bundle_count > 0
     published_endpoints = [item for item in endpoints if item.get("publication_status") == "published"]
+    provider_path_ready = ready_provider is not None or managed_path_ready
 
     steps: list[dict[str, Any]] = [_consensus_step(consensus_status)]
     steps.append(
@@ -277,10 +299,12 @@ def build_operator_readiness_payload(
         _step(
             key="provider",
             title="Provider Instance",
-            status="ready" if ready_provider is not None else ("attention" if provider_instances else "blocked"),
+            status="ready" if provider_path_ready else ("attention" if provider_instances else "blocked"),
             summary=(
                 f"{len(provider_instances)} provider instance(s) registered; at least one is ready."
                 if ready_provider is not None
+                else f"{managed_bundle_count} managed Bundle(s) provide the execution runtime; an attached Provider Instance is not required."
+                if managed_path_ready
                 else f"{len(provider_instances)} provider instance(s) registered, but none is ready."
                 if provider_instances
                 else "No provider instance is registered."
@@ -288,8 +312,12 @@ def build_operator_readiness_payload(
             detail=(
                 "A reachable upstream provider is only the first half of the execution "
                 "chain. Models and Runtime Bindings must still be created explicitly."
+                if ready_provider is not None
+                else "Managed process Bundles start their pinned runtime directly. Provider discovery is only required for attached-service Bundles."
+                if managed_path_ready
+                else "Attach a provider and wait for a healthy state before discovering an upstream model."
             ),
-            blocking=ready_provider is None,
+            blocking=not provider_path_ready,
             action=(
                 _action(
                     kind="refresh",
@@ -297,6 +325,12 @@ def build_operator_readiness_payload(
                     detail="Refresh after the provider health state changes.",
                 )
                 if ready_provider is not None
+                else _action(
+                    kind="refresh",
+                    label="Recheck managed Bundle",
+                    detail="Refresh after the managed model or Bundle changes.",
+                )
+                if managed_path_ready
                 else _action(
                     kind="screen",
                     label="Open providers",
@@ -308,26 +342,34 @@ def build_operator_readiness_payload(
                 "count": len(provider_instances),
                 "ready_count": ready_provider_count,
                 "provider_instance_id": ready_provider.get("provider_instance_id") if ready_provider else None,
+                "managed_bundle_count": managed_bundle_count,
             },
         )
     )
     provider_id = ready_provider.get("provider_instance_id") if ready_provider else None
+    model_path_ready = bool(ready_models) or managed_path_ready
     steps.append(
         _step(
             key="model_deployment",
             title="Model Deployment",
-            status="ready" if ready_models else "blocked",
+            status="ready" if model_path_ready else "blocked",
             summary=(
                 f"{len(ready_models)} ready model deployment(s) discovered."
                 if ready_models
+                else "Managed Bundle includes a materialized model; external Model Deployment is not required."
+                if managed_path_ready
                 else "The upstream model is not registered in Hypervisor inventory yet."
             ),
             detail=(
                 "A model visible in Ollama, vLLM or another upstream API is not "
                 "automatically a Hypervisor Model Deployment. Discover or register it "
                 "before binding a Runtime."
+                if ready_models
+                else "This model was installed and registered directly in a managed Bundle. Model Deployment discovery applies to attached-service providers."
+                if managed_path_ready
+                else "Register or discover a model before creating a Runtime Binding."
             ),
-            blocking=not ready_models,
+            blocking=not model_path_ready,
             action=(
                 _action(
                     kind="refresh",
@@ -335,6 +377,12 @@ def build_operator_readiness_payload(
                     detail="Refresh after model discovery or registration.",
                 )
                 if ready_models
+                else _action(
+                    kind="refresh",
+                    label="Recheck managed model",
+                    detail="Refresh after model materialization or Bundle changes.",
+                )
+                if managed_path_ready
                 else _action(
                     kind="discover-provider" if provider_id else "screen",
                     label="Discover models" if provider_id else "Open providers",
@@ -352,60 +400,95 @@ def build_operator_readiness_payload(
                 "count": len(model_deployments),
                 "ready_count": len(ready_models),
                 "provider_instance_id": provider_id,
+                "managed_bundle_count": managed_bundle_count,
             },
         )
     )
+    binding_path_ready = bool(ready_bindings) or managed_path_ready
     steps.append(
         _step(
             key="runtime_binding",
             title="Runtime Binding",
-            status="ready" if ready_bindings else "blocked",
+            status="ready" if binding_path_ready else "blocked",
             summary=(
                 f"{len(ready_bindings)} Runtime Binding(s) are ready."
                 if ready_bindings
+                else "Managed Bundle runs without a separate Runtime Binding."
+                if managed_path_ready
                 else "No ready Runtime Binding connects a Model Deployment to a capability runtime."
             ),
             detail=(
                 "This is the boundary that turns discovered model inventory into an "
                 "executable RFC-0054 Runtime path. It is not implied by Provider "
                 "readiness."
+                if ready_bindings
+                else "The managed process Bundle is already the executable runtime boundary; a separate Runtime Binding is only required for attached-service providers."
+                if managed_path_ready
+                else "Create a Runtime Binding after the model deployment is ready."
             ),
-            blocking=not ready_bindings,
-            action=_action(
-                kind="screen",
-                label="Open runtime setup",
-                detail=(
-                    "Open Providers, inspect the Model Deployment, create a Runtime "
-                    "Binding, and resolve any artifact or admission blockers."
-                ),
-                screen="providers",
+            blocking=not binding_path_ready,
+            action=(
+                _action(
+                    kind="refresh",
+                    label="Recheck runtime path",
+                    detail="Refresh after the managed Bundle or runtime state changes.",
+                )
+                if managed_path_ready
+                else _action(
+                    kind="screen",
+                    label="Open runtime setup",
+                    detail=(
+                        "Open Providers, inspect the Model Deployment, create a Runtime "
+                        "Binding, and resolve any artifact or admission blockers."
+                    ),
+                    screen="providers",
+                )
             ),
-            evidence={"count": len(runtime_bindings), "ready_count": len(ready_bindings)},
+            evidence={
+                "count": len(runtime_bindings),
+                "ready_count": len(ready_bindings),
+                "managed_bundle_count": managed_bundle_count,
+            },
         )
     )
+    bundle_path_ready = bool(enabled_bundles) and (bool(ready_bindings) or managed_path_ready)
     steps.append(
         _step(
             key="bundle",
             title="Bundle",
-            status="ready" if enabled_bundles and ready_bindings else "blocked",
+            status="ready" if bundle_path_ready else "blocked",
             summary=(
                 f"{len(enabled_bundles)} enabled Bundle(s) are present."
                 if enabled_bundles and ready_bindings
+                else f"{managed_bundle_count} enabled managed Bundle(s) expose a local runtime endpoint."
+                if managed_path_ready
                 else "A Bundle cannot be considered executable until a ready Runtime Binding exists."
             ),
             detail=(
                 "Bundle is the operator's canonical deployment object. It must reference "
                 "the actual Runtime path; an old or declarative Bundle is not enough for "
                 "production readiness."
+                if enabled_bundles and ready_bindings
+                else "Managed process Bundles are executable without a separate Runtime Binding; the runtime starts on demand from the registered model path."
+                if managed_path_ready
+                else "Enable a Bundle after its Runtime Binding is ready and points at the actual runtime path."
             ),
-            blocking=not (enabled_bundles and ready_bindings),
+            blocking=not bundle_path_ready,
             action=_action(
                 kind="screen",
                 label="Open Bundles",
-                detail="Create or inspect an immutable Bundle revision after Runtime Binding is ready.",
+                detail=(
+                    "Inspect the enabled managed Bundle and its registered model path."
+                    if managed_path_ready
+                    else "Create or inspect an immutable Bundle revision after Runtime Binding is ready."
+                ),
                 screen="bundles",
             ),
-            evidence={"count": len(bundles), "enabled_count": len(enabled_bundles)},
+            evidence={
+                "count": len(bundles),
+                "enabled_count": len(enabled_bundles),
+                "managed_count": managed_bundle_count,
+            },
         )
     )
     steps.append(
@@ -422,8 +505,8 @@ def build_operator_readiness_payload(
             ),
             detail=(
                 "Publication is the final network-facing step. It requires the configured "
-                "owner wallet and a valid Bundle/Runtime chain; validation remains a "
-                "separate decision."
+                "owner wallet and a valid managed Bundle or Bundle/Runtime chain; validation "
+                "remains a separate decision."
             ),
             blocking=not published_endpoints,
             action=_action(

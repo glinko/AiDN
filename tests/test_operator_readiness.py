@@ -154,6 +154,49 @@ def test_readiness_reaches_ready_only_after_runtime_and_publication_chain_exists
     assert payload["progress"] == {"ready": 8, "total": 8, "percent": 100}
 
 
+def test_readiness_accepts_managed_bundle_without_external_inventory_chain() -> None:
+    service = _Service(
+        wallet={"configured": True, "wallet_id": "wallet-operator", "label": "Operator"},
+        resources={
+            "total": {"cpu": 8.0, "ram_mb": 16384, "vram_mb": 24576},
+            "reserved": {"cpu": 0.0, "ram_mb": 0, "vram_mb": 0},
+            "free": {"cpu": 8.0, "ram_mb": 16384, "vram_mb": 24576},
+        },
+        providers=[],
+        models=[],
+        bindings=[],
+        bundles=[
+            {
+                "bundle_id": "bundle-qwen",
+                "model_id": "/home/user/models/Qwen3.8/model.gguf",
+                "launch_mode": "managed_process",
+                "endpoint": "http://127.0.0.1:8080",
+                "enabled": True,
+            }
+        ],
+    )
+
+    payload = build_operator_readiness_payload(
+        service=service,
+        endpoint_items=[
+            {"endpoint_id": "endpoint-qwen", "publication_status": "published"}
+        ],
+        consensus_status={"enabled": True, "rpc": {"available": True}},
+    )
+
+    steps = {step["key"]: step for step in payload["steps"]}
+    assert payload["overall_state"] == "ready"
+    assert payload["execution_ready"] is True
+    assert payload["network_ready"] is True
+    assert payload["progress"] == {"ready": 8, "total": 8, "percent": 100}
+    assert all(not steps[key]["blocking"] for key in ("provider", "model_deployment", "runtime_binding", "bundle"))
+    assert steps["model_deployment"]["summary"] == (
+        "Managed Bundle includes a materialized model; external Model Deployment is not required."
+    )
+    assert steps["runtime_binding"]["summary"] == "Managed Bundle runs without a separate Runtime Binding."
+    assert steps["bundle"]["evidence"]["managed_count"] == 1
+
+
 def test_readiness_names_the_managed_cometbft_unit_for_recovery() -> None:
     payload = build_operator_readiness_payload(
         service=_empty_service(),
