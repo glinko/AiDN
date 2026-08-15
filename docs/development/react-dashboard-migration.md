@@ -9,6 +9,8 @@ It implements the first UI-0001 vertical slice:
 - Overview with live resource, readiness, Bundle and Endpoint state;
 - Bundle inventory;
 - Endpoint inventory;
+- Provider workspace with a reviewed Ubuntu runtime catalog and paired
+  one-click installation through the root-owned allowlisted broker;
 - responsive mobile navigation and an always-visible resource footer.
 
 The existing dashboard remains available at `/operators/dashboard` until all
@@ -122,11 +124,19 @@ field-level comparison, and a read-only activation preflight are implemented.
 The preflight deliberately reports missing evidence as `unknown` or `blocked`;
 it is not a replacement for the planned canonical server-side evidence endpoint.
 
+Provider runtime installation uses the paired Dashboard operation
+`POST /operators/dashboard/access/operations/provider-plugins/{plugin_id}/install`.
+The server rebuilds the reviewed plan and derives its permissions; the browser
+cannot submit arbitrary commands or permission IDs. Model selection/downloads,
+discovery and Runtime Binding remain separate follow-on steps.
+
 ## Migration Order
 
 1. Overview, Readiness, Bundles and Endpoints.
 2. Wallet and settlement workspace.
-3. Provider install, model discovery and Runtime Binding workflow.
+3. Complete Provider install, model discovery and Runtime Binding workflow
+   (the reviewed Ubuntu one-click runtime install is now live in the React
+   slice).
 4. Market, remote endpoints, agents and sessions.
 5. Advanced infrastructure, validation and logs.
 6. Make the React shell the default after keyboard, accessibility and operator
