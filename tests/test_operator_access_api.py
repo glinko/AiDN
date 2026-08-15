@@ -80,6 +80,18 @@ class _OperationService:
             "provider_instance_id": "pi-test",
         }
 
+    def install_provider_runtime(self, **payload) -> dict:
+        self.calls.append(("provider-runtime-install", payload))
+        return {"plugin_id": payload["plugin_id"], "status": "SUCCEEDED", "provider_instance_id": "pi-test"}
+
+    def change_provider_runtime(self, **payload) -> dict:
+        self.calls.append(("provider-runtime-change", payload))
+        return {"plugin_id": payload["plugin_id"], "status": "SUCCEEDED", "provider_instance_id": "pi-test"}
+
+    def remove_provider_runtime(self, **payload) -> dict:
+        self.calls.append(("provider-runtime-remove", payload))
+        return {"plugin_id": payload["plugin_id"], "status": "REMOVED"}
+
     def probe_provider_instance(self, provider_instance_id: str) -> dict:
         self.calls.append(("probe", provider_instance_id))
         return {"provider_instance_id": provider_instance_id, "healthy": True}
@@ -367,11 +379,36 @@ def test_paired_dashboard_operations_require_pairing_and_call_bounded_service(tm
     )
     assert installed.status_code == 200
     assert installed.json()["status"] == "SUCCEEDED"
-    assert ("provider-plan", "ollama", {"endpoint": "http://127.0.0.1:11434"}) in service.calls
-    approval = next(item[1] for item in service.calls if item[0] == "provider-approval")
-    assert approval["approved_permissions"] == ["host.package_manager"]
-    assert approval["upgrade_acknowledged"] is False
-    assert ("provider-apply", "pia-test") in service.calls
+    assert (
+        "provider-runtime-install",
+        {
+            "plugin_id": "ollama",
+            "configuration": {"endpoint": "http://127.0.0.1:11434"},
+            "operator_note": "Paired Dashboard one-click runtime installation",
+        },
+    ) in service.calls
+    lifecycle_install = client.post(
+        "/operators/dashboard/access/operations/provider-plugins/ollama/runtime/install",
+        json={"configuration": {"endpoint": "http://127.0.0.1:11434"}},
+    )
+    assert lifecycle_install.status_code == 200
+    assert lifecycle_install.json()["status"] == "SUCCEEDED"
+    lifecycle_change = client.post(
+        "/operators/dashboard/access/operations/provider-plugins/ollama/runtime/change",
+        json={"configuration": {"endpoint": "http://127.0.0.1:11435"}},
+    )
+    assert lifecycle_change.status_code == 200
+    lifecycle_remove = client.post(
+        "/operators/dashboard/access/operations/provider-plugins/ollama/runtime/remove",
+        json={"configuration": {}},
+    )
+    assert lifecycle_remove.status_code == 200
+    assert [call[0] for call in service.calls if call[0].startswith("provider-runtime-")] == [
+        "provider-runtime-install",
+        "provider-runtime-install",
+        "provider-runtime-change",
+        "provider-runtime-remove",
+    ]
     wallet = client.post(
         "/operators/dashboard/access/operations/wallet/create",
         json={"label": "Primary"},

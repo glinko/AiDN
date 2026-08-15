@@ -65,7 +65,7 @@ class VllmPlugin(ProviderPlugin):
                     "platform": "ubuntu",
                     "script": "tools/aidn-provider-runtime-ubuntu.sh",
                     "pinned_version": self._runtime_version,
-                    "actions": ["install", "start", "status", "stop"],
+                    "actions": ["install", "start", "status", "stop", "remove"],
                     "model_configuration_separate": True,
                 }
             ],

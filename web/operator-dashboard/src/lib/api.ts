@@ -96,6 +96,7 @@ export type ProviderWorkspace = {
   provider_instances: DashboardRecord[]
   model_deployments: DashboardRecord[]
   runtime_bindings: DashboardRecord[]
+  installation_jobs: DashboardRecord[]
   installation_artifacts: ProviderArtifactInventory
   model_artifacts: ProviderArtifactInventory
   model_artifact_sets: ProviderArtifactInventory
@@ -120,6 +121,7 @@ const providerWorkspaceSchema = z.object({
   provider_instances: z.array(z.record(z.string(), z.unknown())).default([]),
   model_deployments: z.array(z.record(z.string(), z.unknown())).default([]),
   runtime_bindings: z.array(z.record(z.string(), z.unknown())).default([]),
+  installation_jobs: z.array(z.record(z.string(), z.unknown())).default([]),
   installation_artifacts: providerArtifactInventorySchema,
   model_artifacts: providerArtifactInventorySchema,
   model_artifact_sets: providerArtifactInventorySchema,
@@ -227,6 +229,7 @@ export const dashboardApi = {
   bundleOperation: (bundleId: string, action: 'enable' | 'disable' | 'retry' | 'reset-cooldown') => writeDashboard(`/operators/dashboard/access/operations/bundles/${encodeURIComponent(bundleId)}/${action}`, { method: 'POST' }),
   attachProvider: (payload: { plugin_id: string; display_name: string; configuration: DashboardRecord }) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/providers/attach', { method: 'POST', body: JSON.stringify(payload) }),
   installProviderRuntime: (pluginId: string, configuration: DashboardRecord, operatorNote?: string) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/provider-plugins/${encodeURIComponent(pluginId)}/install`, { method: 'POST', body: JSON.stringify({ configuration, ...(operatorNote ? { operator_note: operatorNote } : {}) }) }),
+  providerRuntimeAction: (pluginId: string, action: 'install' | 'change' | 'remove', configuration: DashboardRecord = {}, operatorNote?: string) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/provider-plugins/${encodeURIComponent(pluginId)}/runtime/${action}`, { method: 'POST', body: JSON.stringify({ configuration, ...(operatorNote ? { operator_note: operatorNote } : {}) }) }),
   providerOperation: (providerInstanceId: string, action: 'probe' | 'discover-models') => writeDashboard(`/operators/dashboard/access/operations/providers/${encodeURIComponent(providerInstanceId)}/${action}`, { method: 'POST' }),
   requestModelInstall: (payload: { provider_type: string; model_id: string; source_url: string; requested_by?: string; runtime_parameter_policy?: DashboardRecord }) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/models/install', { method: 'POST', body: JSON.stringify({ requested_by: 'operator-dashboard', ...payload }) }),
   processModelInstalls: () => writeDashboard<{ items: DashboardRecord[] }>('/operators/dashboard/access/operations/models/install/process', { method: 'POST' }),

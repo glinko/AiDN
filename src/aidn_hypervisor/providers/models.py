@@ -121,7 +121,7 @@ ProviderInstallationRollbackStatus = Literal[
     "COMPLETED",
     "FAILED",
 ]
-ProviderRuntimeAction = Literal["install", "start", "status", "stop"]
+ProviderRuntimeAction = Literal["install", "start", "status", "stop", "remove"]
 ProviderRuntimeBrokerStatus = Literal["SUCCEEDED", "FAILED", "CANCELLED"]
 
 
@@ -719,7 +719,7 @@ class ProviderRuntimeInstallerDescriptor(BaseModel):
     platform: Literal["ubuntu"]
     script: Literal["tools/aidn-provider-runtime-ubuntu.sh"]
     pinned_version: str
-    actions: list[Literal["install", "start", "status", "stop"]]
+    actions: list[Literal["install", "start", "status", "stop", "remove"]]
     model_configuration_separate: bool = True
 
     @field_validator("pinned_version")
@@ -730,7 +730,7 @@ class ProviderRuntimeInstallerDescriptor(BaseModel):
     @field_validator("actions")
     @classmethod
     def _actions_are_unique_and_complete(cls, value: list[str]) -> list[str]:
-        if value != ["install", "start", "status", "stop"]:
+        if value != ["install", "start", "status", "stop", "remove"]:
             raise ValueError("runtime installer actions must match the reviewed lifecycle")
         return value
 

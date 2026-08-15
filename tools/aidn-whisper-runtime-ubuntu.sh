@@ -16,7 +16,7 @@ data_dir="$DEFAULT_DATA_DIR"
 
 usage() {
   cat <<'EOF'
-Usage: aidn-whisper-runtime-ubuntu.sh <install|start|status|stop> [options]
+Usage: aidn-whisper-runtime-ubuntu.sh <install|start|status|stop|remove> [options]
 
 Installs or starts a reviewed Whisper ASR container bound only to 127.0.0.1.
 It never exposes port 9000 on the LAN. On install or start, the reviewed
@@ -45,7 +45,7 @@ ensure_docker() {
 if [[ "$1" == "-h" || "$1" == "--help" ]]; then usage; exit 0; fi
 action="$1"
 shift
-case "$action" in install|start|status|stop) ;; *) usage >&2; exit 2 ;; esac
+case "$action" in install|start|status|stop|remove) ;; *) usage >&2; exit 2 ;; esac
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -91,6 +91,11 @@ case "$action" in
   stop)
     sudo docker stop --time 30 "$SERVICE_NAME" >/dev/null 2>&1 || true
     echo '{"status":"stopped"}'
+    ;;
+  remove)
+    sudo docker rm --force "$SERVICE_NAME" >/dev/null 2>&1 || true
+    sudo docker image rm "$image" >/dev/null 2>&1 || true
+    echo '{"status":"removed","provider":"whisper","model_cache":"preserved"}'
     ;;
   start)
     sudo install -d -m 0750 "$data_dir/cache"

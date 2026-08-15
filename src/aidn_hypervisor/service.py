@@ -1516,6 +1516,37 @@ class HypervisorService:
             approval_id
         )
 
+    def install_provider_runtime(
+        self,
+        *,
+        plugin_id: str,
+        configuration: dict,
+        operator_note: str | None = None,
+    ) -> dict:
+        return self._provider_installation_facade().install_provider_runtime(
+            plugin_id=plugin_id,
+            configuration=configuration,
+            operator_note=operator_note,
+        )
+
+    def change_provider_runtime(
+        self,
+        *,
+        plugin_id: str,
+        configuration: dict,
+        operator_note: str | None = None,
+    ) -> dict:
+        return self._provider_installation_facade().change_provider_runtime(
+            plugin_id=plugin_id,
+            configuration=configuration,
+            operator_note=operator_note,
+        )
+
+    def remove_provider_runtime(self, *, plugin_id: str) -> dict:
+        return self._provider_installation_facade().remove_provider_runtime(
+            plugin_id=plugin_id
+        )
+
     def rollback_provider_installation_job(self, job_id: str) -> dict:
         return self._provider_installation_facade().rollback_provider_installation_job(
             job_id

@@ -973,31 +973,51 @@ def build_operator_access_router(
         if hypervisor_service is None:
             return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
         try:
-            plan = hypervisor_service.build_provider_installation_plan(
+            result = hypervisor_service.install_provider_runtime(
                 plugin_id=plugin_id,
                 configuration=payload.configuration,
-            )
-            required_permissions = plan.get("required_permissions", [])
-            if not isinstance(required_permissions, list):
-                raise ValueError("installation plan contains an invalid permission declaration")
-            approved_permissions = [
-                item["permission_id"]
-                for item in required_permissions
-                if isinstance(item, dict) and isinstance(item.get("permission_id"), str)
-            ]
-            if len(approved_permissions) != len(required_permissions):
-                raise ValueError("installation plan contains an invalid permission declaration")
-            approval = hypervisor_service.approve_provider_installation_plan(
-                plugin_id=plugin_id,
-                configuration=payload.configuration,
-                approved_permissions=approved_permissions,
-                upgrade_acknowledged=False,
-                selected_secret_handles=[],
                 operator_note=payload.operator_note or "Paired Dashboard one-click runtime installation",
             )
-            result = hypervisor_service.apply_provider_installation_approval(
-                approval["approval_id"]
-            )
+        except (KeyError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=200, content=result)
+
+    @router.post("/operations/provider-plugins/{plugin_id}/runtime/{action}")
+    async def provider_runtime_action(
+        plugin_id: str,
+        action: str,
+        payload: ProviderRuntimeInstallRequest,
+        request: Request,
+    ) -> Response:
+        """Apply one typed lifecycle operation to a managed Provider runtime.
+
+        The action is deliberately constrained to install/change/remove. The
+        service rebuilds the reviewed plan and keeps the browser outside the
+        allowlisted broker boundary.
+        """
+
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
+        try:
+            if action == "install":
+                result = hypervisor_service.install_provider_runtime(
+                    plugin_id=plugin_id,
+                    configuration=payload.configuration,
+                    operator_note=payload.operator_note,
+                )
+            elif action == "change":
+                result = hypervisor_service.change_provider_runtime(
+                    plugin_id=plugin_id,
+                    configuration=payload.configuration,
+                    operator_note=payload.operator_note,
+                )
+            elif action == "remove":
+                result = hypervisor_service.remove_provider_runtime(plugin_id=plugin_id)
+            else:
+                return JSONResponse(status_code=422, content={"error": {"code": "DASHBOARD_OPERATION_UNKNOWN"}})
         except (KeyError, ValueError) as error:
             return operation_error(error)
         return JSONResponse(status_code=200, content=result)

@@ -2102,6 +2102,13 @@ function providerAttachFields(plugin: DashboardRecord | undefined): DashboardRec
     : []
 }
 
+function providerInstallFields(plugin: DashboardRecord | undefined): DashboardRecord[] {
+  const schema = getRecord(plugin?.install_ui_schema)
+  return Array.isArray(schema?.fields)
+    ? schema.fields.filter((field): field is DashboardRecord => Boolean(getRecord(field)))
+    : []
+}
+
 function providerFieldDefault(field: DashboardRecord): unknown {
   if (field.default !== undefined) return field.default
   if (Array.isArray(field.options)) {
@@ -2114,6 +2121,24 @@ function providerFieldDefault(field: DashboardRecord): unknown {
 
 function providerConfigurationDefaults(plugin: DashboardRecord | undefined): DashboardRecord {
   return Object.fromEntries(providerAttachFields(plugin).map((field) => [getText(field, 'id'), providerFieldDefault(field)]).filter(([id]) => Boolean(id)))
+}
+
+function providerInstallConfigurationDefaults(plugin: DashboardRecord | undefined): DashboardRecord {
+  const fields = providerInstallFields(plugin)
+  const defaults = Object.fromEntries(fields.map((field) => [getText(field, 'id'), providerFieldDefault(field)]).filter(([id]) => Boolean(id)))
+  const recipes = Array.isArray(plugin?.installation_recipes) ? plugin.installation_recipes : []
+  const recipe = getRecord(recipes[0])
+  const recipeConfiguration = getRecord(recipe?.provider_configuration) ?? {}
+  return { ...defaults, ...recipeConfiguration }
+}
+
+function providerRuntimeConfigurationFor(plugin: DashboardRecord | undefined, instances: DashboardRecord[]): DashboardRecord {
+  const id = getText(plugin, 'plugin_id')
+  const existing = instances.find((instance) => getText(instance, 'plugin_id') === id && getText(instance, 'connection_mode') === 'managed' && getText(instance, 'operational_state') !== 'removed')
+  return {
+    ...providerInstallConfigurationDefaults(plugin),
+    ...(getRecord(existing)?.configuration ?? {}),
+  }
 }
 
 function providerFieldValue(configuration: DashboardRecord, field: DashboardRecord): string | boolean {
@@ -2149,14 +2174,35 @@ function providerConfigurationIssue(plugin: DashboardRecord | undefined, display
   return null
 }
 
+function providerInstallConfigurationIssue(plugin: DashboardRecord | undefined, configuration: DashboardRecord): string | null {
+  for (const field of providerInstallFields(plugin)) {
+    const id = getText(field, 'id')
+    const value = configuration[id]
+    if (field.required === true && (value === undefined || value === null || String(value).trim() === '')) {
+      return `${getText(field, 'label') || id} is required.`
+    }
+    if (getText(field, 'type') === 'url' && value) {
+      try {
+        const parsed = new URL(String(value))
+        if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('unsupported protocol')
+      } catch {
+        return `${getText(field, 'label') || id} must be an absolute HTTP URL.`
+      }
+    }
+  }
+  return null
+}
+
 function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefresh }: { screen: 'providers' | 'catalog'; workspace: ProviderWorkspace | undefined; isLoading: boolean; error: Error | null; onRefresh: () => void }) {
   const [pluginId, setPluginId] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [configuration, setConfiguration] = useState<DashboardRecord>({})
+  const [runtimePluginId, setRuntimePluginId] = useState('')
+  const [runtimeConfiguration, setRuntimeConfiguration] = useState<DashboardRecord>({})
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const plugins = workspace?.plugin_directory ?? []
-  const instances = workspace?.provider_instances ?? []
+  const instances = (workspace?.provider_instances ?? []).filter((instance) => getText(instance, 'operational_state') !== 'removed')
   const deployments = workspace?.model_deployments ?? []
   const bindings = workspace?.runtime_bindings ?? []
   const runtimeExecutor = getRecord(workspace?.installation_executor)
@@ -2164,6 +2210,25 @@ function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefres
   const runtimeInstallEnabled = runtimeSandbox?.host_mutation === true
   const selectedPlugin = plugins.find((plugin) => getText(plugin, 'plugin_id') === pluginId)
   const attachFields = providerAttachFields(selectedPlugin)
+  const runtimePlugins = plugins.filter((plugin) => {
+    const installers = getRecord(plugin)?.runtime_installers
+    return Array.isArray(installers) && installers.length > 0
+  })
+  const installedRuntimeIds = new Set(
+    instances
+      .filter((instance) => getText(instance, 'connection_mode') === 'managed' && getText(instance, 'operational_state') !== 'removed')
+      .map((instance) => getText(instance, 'plugin_id'))
+      .filter(Boolean),
+  )
+  const installedRuntimeIdsKey = Array.from(installedRuntimeIds).sort().join(',')
+  const runtimePlugin = runtimePlugins.find((plugin) => getText(plugin, 'plugin_id') === runtimePluginId)
+  const runtimePluginRecord = getRecord(runtimePlugin)
+  const runtimeInstallers = Array.isArray(runtimePluginRecord?.runtime_installers) ? runtimePluginRecord.runtime_installers : []
+  const runtimeInstalled = installedRuntimeIds.has(runtimePluginId)
+  const runtimeInstaller = getRecord(runtimeInstallers[0])
+  const runtimeConfigurationIssue = runtimePlugin
+    ? providerInstallConfigurationIssue(runtimePlugin, runtimeConfiguration)
+    : null
 
   useEffect(() => {
     if (!pluginId && plugins.length > 0) {
@@ -2175,6 +2240,21 @@ function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefres
     }
   }, [pluginId, plugins])
 
+  useEffect(() => {
+    if (runtimePlugins.length === 0) {
+      if (runtimePluginId) setRuntimePluginId('')
+      return
+    }
+    if (!runtimePluginId || !runtimePlugins.some((plugin) => getText(plugin, 'plugin_id') === runtimePluginId)) {
+      const installedIds = new Set(installedRuntimeIdsKey ? installedRuntimeIdsKey.split(',') : [])
+      const installed = runtimePlugins.find((plugin) => installedIds.has(getText(plugin, 'plugin_id')))
+      const nextPlugin = installed ?? runtimePlugins[0]
+      const nextPluginId = getText(nextPlugin, 'plugin_id')
+      setRuntimePluginId(nextPluginId)
+      setRuntimeConfiguration(providerInstallConfigurationDefaults(nextPlugin))
+    }
+  }, [installedRuntimeIdsKey, runtimePluginId, runtimePlugins])
+
   function choosePlugin(nextPluginId: string) {
     setPluginId(nextPluginId)
     const plugin = plugins.find((item) => getText(item, 'plugin_id') === nextPluginId)
@@ -2182,6 +2262,12 @@ function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefres
       setDisplayName(getText(plugin, 'display_name') || nextPluginId)
       setConfiguration(providerConfigurationDefaults(plugin))
     }
+  }
+
+  function chooseRuntimePlugin(nextPluginId: string) {
+    setRuntimePluginId(nextPluginId)
+    const plugin = runtimePlugins.find((item) => getText(item, 'plugin_id') === nextPluginId)
+    setRuntimeConfiguration(providerRuntimeConfigurationFor(plugin, instances))
   }
 
   async function attach() {
@@ -2243,31 +2329,35 @@ function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefres
     }
   }
 
-  async function installRuntime(plugin: DashboardRecord) {
+  async function applyRuntimeChange(action: 'install' | 'change') {
+    const plugin = runtimePlugin
     const providerId = getText(plugin, 'plugin_id')
-    const pluginRecord = getRecord(plugin)
-    const installers = Array.isArray(pluginRecord?.runtime_installers) ? pluginRecord.runtime_installers : []
-    const recipes = Array.isArray(pluginRecord?.installation_recipes) ? pluginRecord.installation_recipes : []
-    const recipe = getRecord(recipes[0])
-    const configuration = getRecord(recipe?.provider_configuration) ?? {}
-    if (!providerId) {
-      setMessage('The selected Provider does not declare a plugin ID.')
+    if (!providerId || !plugin) {
+      setMessage('Select a Provider runtime first.')
       return
     }
-    if (installers.length === 0) {
+    if (runtimeInstallers.length === 0) {
       setMessage(`Provider ${providerId} has no reviewed Ubuntu runtime installer.`)
       return
     }
-    setBusy(`install:${providerId}`)
-    setMessage(`Installing ${getText(plugin, 'display_name') || providerId}. The reviewed runtime may take a few minutes; model setup remains separate.`)
+    if (!runtimeInstallEnabled) {
+      setMessage('Runtime installation is unavailable until this node exposes the root-owned broker.')
+      return
+    }
+    if (runtimeConfigurationIssue) {
+      setMessage(runtimeConfigurationIssue)
+      return
+    }
+    const displayName = getText(plugin, 'display_name') || providerId
+    setBusy(`runtime:${action}:${providerId}`)
+    setMessage(`${action === 'change' ? 'Changing' : 'Installing'} ${displayName}. The reviewed runtime may take a few minutes; model setup remains separate.`)
     try {
-      const result = getRecord(await dashboardApi.installProviderRuntime(providerId, configuration))
+      const result = getRecord(await dashboardApi.providerRuntimeAction(providerId, action, runtimeConfiguration))
       const status = getText(result, 'status')
       const providerInstanceId = getText(result, 'provider_instance_id')
       if (status !== 'SUCCEEDED') {
-        const job = getRecord(result?.installation_job)
-        const failureDetail = getText(result, 'error') || getText(result, 'error_message') || getText(job, 'error') || getText(job, 'error_message')
-        setMessage(`Provider ${providerId} installation ${status ? status.toLowerCase() : 'did not complete'}.${failureDetail ? ` ${failureDetail}` : ' Review the installation job details and retry.'}`)
+        const failureDetail = getText(result, 'error') || getText(result, 'error_message')
+        setMessage(`${displayName} ${action} ${status ? status.toLowerCase() : 'did not complete'}.${failureDetail ? ` ${failureDetail}` : ' Review the installation job details and retry.'}`)
         onRefresh()
         return
       }
@@ -2275,17 +2365,41 @@ function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefres
         try {
           const health = getRecord(await dashboardApi.providerOperation(providerInstanceId, 'probe'))
           setMessage(health?.healthy === true
-            ? `${getText(plugin, 'display_name') || providerId} installed and passed its health check. Model setup remains separate.`
-            : `${getText(plugin, 'display_name') || providerId} installed, but the health check is not ready yet. Retry Probe when the runtime settles.`)
+            ? `${displayName} ${action === 'change' ? 'changed' : 'installed'} and passed its health check. Model setup remains separate.`
+            : `${displayName} ${action === 'change' ? 'changed' : 'installed'}, but the health check is not ready yet. Retry Probe when the runtime settles.`)
         } catch {
-          setMessage(`${getText(plugin, 'display_name') || providerId} installed, but its health check could not complete. Retry Probe.`)
+          setMessage(`${displayName} ${action === 'change' ? 'changed' : 'installed'}, but its health check could not complete. Retry Probe.`)
         }
       } else {
-        setMessage(`${getText(plugin, 'display_name') || providerId} installation completed. Refresh Provider instances to continue.`)
+        setMessage(`${displayName} ${action === 'change' ? 'change' : 'installation'} completed. Refresh Provider instances to continue.`)
       }
       onRefresh()
     } catch (cause) {
-      setMessage(cause instanceof Error ? cause.message : 'Provider runtime installation failed.')
+      setMessage(cause instanceof Error ? cause.message : `Provider runtime ${action} failed.`)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function removeRuntime() {
+    const plugin = runtimePlugin
+    const providerId = getText(plugin, 'plugin_id')
+    if (!providerId || !plugin) {
+      setMessage('Select an installed Provider runtime first.')
+      return
+    }
+    if (!window.confirm(`Remove ${getText(plugin, 'display_name') || providerId}? Model deployments and runtime bindings must be removed first.`)) return
+    setBusy(`runtime:remove:${providerId}`)
+    setMessage(`Removing ${getText(plugin, 'display_name') || providerId}. Model files and caches are preserved where supported.`)
+    try {
+      const result = getRecord(await dashboardApi.providerRuntimeAction(providerId, 'remove'))
+      const status = getText(result, 'status')
+      setMessage(status === 'REMOVED'
+        ? `${getText(plugin, 'display_name') || providerId} runtime removed. Model setup remains available for a later install.`
+        : `${getText(plugin, 'display_name') || providerId} removal ${status ? status.toLowerCase() : 'completed'}.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Provider runtime removal failed.')
     } finally {
       setBusy(null)
     }
@@ -2301,7 +2415,7 @@ function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefres
     {isLoading && !workspace ? <PanelSkeleton rows={5} /> : null}
     {error && !workspace ? <PanelError title="Provider workspace is unavailable" error={error} onRetry={onRefresh} /> : null}
     {workspace ? <>
-      <Card className="border-cyan-300/20 bg-cyan-300/[0.03] py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow text-cyan-100">Reviewed Ubuntu runtimes</p><CardTitle className="mt-1 text-lg font-semibold">Provider install catalog</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">{runtimeInstallEnabled ? 'Choose a pinned runtime and install it through the root-owned allowlisted broker. Model selection and downloads remain a separate step.' : 'Installation is unavailable until this node exposes the root-owned broker. Attaching an already-running service remains available below.'}</p></CardHeader><CardContent className="divide-y divide-border/70 p-0">{plugins.filter((plugin) => { const installers = getRecord(plugin)?.runtime_installers; return Array.isArray(installers) && installers.length > 0 }).map((plugin) => { const record = getRecord(plugin); const installers = Array.isArray(record?.runtime_installers) ? record.runtime_installers : []; const installer = getRecord(installers[0]); const providerId = getText(record, 'plugin_id'); const installBusy = busy === `install:${providerId}`; return <div key={providerId} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-white">{getText(record, 'display_name') || providerId}</p><StatusBadge value={runtimeInstallEnabled ? 'ready' : 'blocked'} /></div><p className="mt-1 text-xs text-muted-foreground">{getText(installer, 'platform') || 'ubuntu'} · pinned {getText(installer, 'pinned_version') || 'reviewed'} · model setup remains a separate step</p></div><Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={!runtimeInstallEnabled || busy !== null} onClick={() => void installRuntime(plugin)}>{installBusy ? 'Installing...' : runtimeInstallEnabled ? 'Install runtime' : 'Install unavailable'}</Button></div> })}</CardContent></Card>
+      <Card className="border-cyan-300/20 bg-cyan-300/[0.03] py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow text-cyan-100">Reviewed Ubuntu runtimes</p><CardTitle className="mt-1 text-lg font-semibold">Provider runtime catalog</CardTitle><p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">Select one runtime from the compact catalog. Installed runtimes expose Change and Remove; model selection and downloads remain a separate step.</p></div><StatusBadge value={runtimeInstalled ? 'installed' : runtimeInstallEnabled ? 'available' : 'blocked'} /></div></CardHeader><CardContent className="space-y-4 p-5">{runtimePlugins.length === 0 ? <EmptyState title="No reviewed runtimes available" detail="This node has no Provider Plugin with an allowlisted Ubuntu runtime installer." actionLabel="Refresh catalog" onAction={onRefresh} /> : <><div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.8fr)]"><label className="grid gap-2"><span className="eyebrow">Provider runtime</span><select value={runtimePluginId} onChange={(event) => chooseRuntimePlugin(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300"><optgroup label="Installed">{runtimePlugins.filter((plugin) => installedRuntimeIds.has(getText(plugin, 'plugin_id'))).map((plugin) => <option key={getText(plugin, 'plugin_id')} value={getText(plugin, 'plugin_id')}>{getText(plugin, 'display_name') || getText(plugin, 'plugin_id')}</option>)}</optgroup><optgroup label="Available">{runtimePlugins.filter((plugin) => !installedRuntimeIds.has(getText(plugin, 'plugin_id'))).map((plugin) => <option key={getText(plugin, 'plugin_id')} value={getText(plugin, 'plugin_id')}>{getText(plugin, 'display_name') || getText(plugin, 'plugin_id')}</option>)}</optgroup></select></label><div className="rounded-lg border border-border/70 bg-[#07111d] px-3 py-2"><p className="eyebrow">Pinned runtime</p><p className="mt-1 text-sm text-slate-100">{getText(runtimeInstaller, 'pinned_version') || 'Reviewed version'}</p><p className="mt-1 text-xs text-muted-foreground">{getText(runtimeInstaller, 'platform') || 'ubuntu'} · {runtimeInstalled ? 'Runtime is managed on this node.' : 'Not installed on this node.'}</p></div></div>{runtimeInstalled ? <p className="text-xs leading-5 text-amber-100/80">Change re-runs the reviewed installer against the selected configuration. Remove is blocked while model deployments or runtime bindings still reference this runtime.</p> : <p className="text-xs leading-5 text-muted-foreground">Install is enabled only when the root-owned allowlisted broker is available. Runtime files are separate from model downloads.</p>}{providerInstallFields(runtimePlugin).length > 0 ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{providerInstallFields(runtimePlugin).map((field) => { const id = getText(field, 'id'); const type = getText(field, 'type'); const value = providerFieldValue(runtimeConfiguration, field); const options = providerFieldOptions(field); return <label key={id} className="grid gap-2"><span className="eyebrow">{getText(field, 'label') || id}{field.required === true ? ' *' : ''}</span>{type === 'select' ? <select value={String(value)} onChange={(event) => setRuntimeConfiguration((current) => ({ ...current, [id]: event.target.value }))} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300">{options.map((option) => <option key={String(option.value)} value={String(option.value)}>{getText(option, 'label') || String(option.value)}</option>)}</select> : type === 'boolean' ? <span className="flex h-10 items-center gap-2 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-slate-200"><input type="checkbox" checked={value === true} onChange={(event) => setRuntimeConfiguration((current) => ({ ...current, [id]: event.target.checked }))} />Enabled</span> : <input type={type === 'url' ? 'url' : 'text'} value={String(value)} onChange={(event) => setRuntimeConfiguration((current) => ({ ...current, [id]: event.target.value }))} placeholder={String(field.default ?? '')} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" />}</label> })}</div> : null}<div className="flex flex-wrap gap-2">{!runtimeInstalled ? <Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={!runtimeInstallEnabled || busy !== null || Boolean(runtimeConfigurationIssue)} onClick={() => void applyRuntimeChange('install')}><ServerCog />{busy === `runtime:install:${runtimePluginId}` ? 'Installing...' : 'Install runtime'}</Button> : null}{runtimeInstalled ? <><Button variant="outline" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={!runtimeInstallEnabled || busy !== null || Boolean(runtimeConfigurationIssue)} onClick={() => void applyRuntimeChange('change')}><Settings />{busy === `runtime:change:${runtimePluginId}` ? 'Changing...' : 'Change runtime'}</Button><Button variant="destructive" className="border-rose-300/30" disabled={!runtimeInstallEnabled || busy !== null} onClick={() => void removeRuntime()}><Trash2 />{busy === `runtime:remove:${runtimePluginId}` ? 'Removing...' : 'Remove runtime'}</Button></> : null}</div></>}</CardContent></Card>
       <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Attach existing Provider</p><CardTitle className="mt-1 text-lg font-semibold">Create Provider instance</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">Choose a plugin first. The fields below come from that plugin's contract, so vLLM uses its OpenAI-compatible endpoint instead of inheriting an Ollama URL.</p></CardHeader><CardContent className="grid gap-4 p-5 md:grid-cols-2 lg:grid-cols-4"><label className="grid gap-2"><span className="eyebrow">Plugin</span><select value={pluginId} onChange={(event) => choosePlugin(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300">{plugins.map((plugin) => <option key={getText(plugin, 'plugin_id')} value={getText(plugin, 'plugin_id')}>{getText(plugin, 'display_name') || getText(plugin, 'plugin_id')}</option>)}</select></label><label className="grid gap-2"><span className="eyebrow">Provider name</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Local vLLM" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label>{attachFields.filter((field) => getText(field, 'id') !== 'display_name').map((field) => { const id = getText(field, 'id'); const type = getText(field, 'type'); const value = providerFieldValue(configuration, field); const options = providerFieldOptions(field); return <label key={id} className="grid gap-2"><span className="eyebrow">{getText(field, 'label') || id}{field.required === true ? ' *' : ''}</span>{type === 'select' ? <select value={String(value)} onChange={(event) => setConfiguration((current) => ({ ...current, [id]: event.target.value }))} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300">{options.map((option) => <option key={String(option.value)} value={String(option.value)}>{getText(option, 'label') || String(option.value)}</option>)}</select> : type === 'boolean' ? <span className="flex h-10 items-center gap-2 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-slate-200"><input type="checkbox" checked={value === true} onChange={(event) => setConfiguration((current) => ({ ...current, [id]: event.target.checked }))} />Enabled</span> : <input type={type === 'url' ? 'url' : 'text'} value={String(value)} onChange={(event) => setConfiguration((current) => ({ ...current, [id]: event.target.value }))} placeholder={String(field.default ?? '')} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" />}</label> })}<div className="flex items-end"><Button className="w-full bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy === 'attach' || plugins.length === 0} onClick={() => void attach()}><ServerCog />{busy === 'attach' ? 'Attaching...' : 'Attach'}</Button></div></CardContent></Card>
       <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/70 px-5 py-4"><div><p className="eyebrow">Attached inventory</p><CardTitle className="mt-1 text-lg font-semibold">Provider instances</CardTitle><p className="mt-1 text-xs text-muted-foreground">Unhealthy is an observed state, not an installation failure. Open the probe detail before changing runtime or model settings.</p></div><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={onRefresh}><RefreshCw />Refresh</Button></CardHeader><CardContent className="divide-y divide-border/70 p-0">{instances.length === 0 ? <EmptyState title="No Provider instances attached" detail="Attach a known local Provider above. The Dashboard will not guess an upstream endpoint or create credentials." actionLabel="Refresh catalog" onAction={onRefresh} /> : instances.map((instance) => { const id = getText(instance, 'provider_instance_id'); const record = getRecord(instance); const providerConfiguration = getRecord(record?.configuration); const healthError = getText(record, 'last_health_error'); return <div key={id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-white">{getText(instance, 'display_name') || id}</p><StatusBadge value={getText(instance, 'health_status') || 'unknown'} /></div><p className="mt-1 break-all font-mono text-[11px] text-slate-500">{id} · {getText(providerConfiguration, 'endpoint') || getText(providerConfiguration, 'base_url') || 'endpoint not declared'} · {String(record?.model_count ?? 0)} models · {String(record?.runtime_binding_ready_count ?? 0)} ready bindings</p>{healthError ? <p className="mt-2 max-w-3xl text-xs leading-5 text-rose-200">{healthError}</p> : null}</div><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" className="border-border bg-[#091725]" disabled={busy === `${id}:probe`} onClick={() => void runProviderOperation(id, 'probe')}><Gauge />Probe</Button><Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={busy === `${id}:discover-models`} onClick={() => void runProviderOperation(id, 'discover-models')}><Database />Discover models</Button></div></div> })}</CardContent></Card>
       <div className="grid gap-4 lg:grid-cols-2"><InventoryCard title="Model deployments" detail="Discovered model supply. Runtime binding is required before Endpoint admission." items={deployments} primaryKey="model_deployment_id" /><InventoryCard title="Runtime bindings" detail="Compatibility records backing eligible Bundle and Endpoint runtime selection." items={bindings} primaryKey="runtime_binding_id" /></div>

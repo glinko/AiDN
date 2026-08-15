@@ -9,7 +9,7 @@ readonly INSTALLER_URL="https://ollama.com/install.sh"
 
 usage() {
   cat <<'EOF'
-Usage: aidn-ollama-runtime-ubuntu.sh <install|start|status|stop> [options]
+Usage: aidn-ollama-runtime-ubuntu.sh <install|start|status|stop|remove> [options]
 
 Options:
   --version VERSION  Pinned Ollama version (default: 0.32.12)
@@ -112,6 +112,13 @@ case "$action" in
   stop)
     sudo systemctl stop "$SERVICE_NAME"
     echo '{"provider":"ollama","status":"stopped"}'
+    ;;
+  remove)
+    sudo systemctl disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
+    sudo rm -f -- /etc/systemd/system/ollama.service.d/aidn-loopback.conf
+    sudo rm -f -- /etc/systemd/system/ollama.service /usr/local/bin/ollama
+    sudo systemctl daemon-reload
+    echo '{"status":"removed","provider":"ollama","model_store":"preserved"}'
     ;;
   *) usage >&2; exit 2 ;;
 esac

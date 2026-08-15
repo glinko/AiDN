@@ -24,7 +24,7 @@ MAX_FRAME_BYTES = 128 * 1024
 MAX_OUTPUT_BYTES = 64 * 1024
 MAX_TIMEOUT_SECONDS = 3600
 PROVIDERS = {"whisper", "ollama", "llama.cpp", "vllm"}
-ACTIONS = {"install", "start", "status", "stop"}
+ACTIONS = {"install", "start", "status", "stop", "remove"}
 OPTIONS = {
     "whisper": {"--image", "--model", "--port", "--data-dir"},
     "ollama": {"--version", "--model"},

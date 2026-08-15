@@ -91,7 +91,7 @@ class WhisperPlugin(ProviderPlugin):
                     "platform": "ubuntu",
                     "script": "tools/aidn-provider-runtime-ubuntu.sh",
                     "pinned_version": "onerahmet/openai-whisper-asr-webservice:v1.9.1",
-                    "actions": ["install", "start", "status", "stop"],
+                    "actions": ["install", "start", "status", "stop", "remove"],
                     "model_configuration_separate": True,
                 }
             ],

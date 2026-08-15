@@ -40,6 +40,13 @@ def test_provider_runtime_installers_pin_reviewed_upstream_versions() -> None:
     assert '[[ "$version" == "$DEFAULT_VERSION" ]]' in vllm
 
 
+def test_provider_runtime_installers_expose_remove_without_deleting_model_storage() -> None:
+    for path in PROVIDER_SCRIPTS[1:]:
+        script = path.read_text(encoding="utf-8")
+        assert "remove)" in script, path
+        assert "preserved" in script, path
+
+
 def test_provider_runtime_installers_bind_services_to_loopback() -> None:
     for path in PROVIDER_SCRIPTS[1:]:
         script = path.read_text(encoding="utf-8")

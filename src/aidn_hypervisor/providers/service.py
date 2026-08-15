@@ -750,6 +750,171 @@ class ProviderInventoryService:
         self.store.save_installation_approval(approval)
         return approval
 
+    def _apply_runtime_install_request(
+        self,
+        *,
+        plugin_id: str,
+        configuration: dict,
+        operator_note: str | None,
+        reuse_existing_provider_instance: bool,
+    ) -> ProviderInstallationJob:
+        plan = self.build_installation_plan(
+            plugin_id=plugin_id,
+            configuration=deepcopy(configuration),
+        )
+        required_permissions = plan.get("required_permissions", [])
+        approved_permissions = [
+            item["permission_id"]
+            for item in required_permissions
+            if isinstance(item, dict) and isinstance(item.get("permission_id"), str)
+        ]
+        if len(approved_permissions) != len(required_permissions):
+            raise ValueError("installation plan contains an invalid permission declaration")
+        approval = self.approve_installation_plan(
+            plugin_id=plugin_id,
+            configuration=deepcopy(configuration),
+            approved_permissions=approved_permissions,
+            upgrade_acknowledged=False,
+            selected_secret_handles=[],
+            operator_note=operator_note or "Paired Dashboard Provider runtime action",
+        )
+        return self.apply_installation_approval(
+            approval.approval_id,
+            reuse_existing_provider_instance=reuse_existing_provider_instance,
+        )
+
+    def install_provider_runtime(
+        self,
+        *,
+        plugin_id: str,
+        configuration: dict,
+        operator_note: str | None = None,
+    ) -> dict:
+        active_managed = [
+            instance
+            for instance in self.store.list_provider_instances()
+            if instance.plugin_id == plugin_id
+            and instance.connection_mode == "managed"
+            and instance.operational_state != "removed"
+        ]
+        if active_managed:
+            raise ValueError(
+                f"Provider runtime {plugin_id} is already installed; use change instead"
+            )
+        return self._apply_runtime_install_request(
+            plugin_id=plugin_id,
+            configuration=configuration,
+            operator_note=operator_note,
+            reuse_existing_provider_instance=False,
+        ).model_dump(mode="json")
+
+    def change_provider_runtime(
+        self,
+        *,
+        plugin_id: str,
+        configuration: dict,
+        operator_note: str | None = None,
+    ) -> dict:
+        active_managed = [
+            instance
+            for instance in self.store.list_provider_instances()
+            if instance.plugin_id == plugin_id
+            and instance.connection_mode == "managed"
+            and instance.operational_state != "removed"
+        ]
+        if not active_managed:
+            raise ValueError(f"Provider runtime {plugin_id} is not installed")
+        return self._apply_runtime_install_request(
+            plugin_id=plugin_id,
+            configuration=configuration,
+            operator_note=operator_note or "Paired Dashboard Provider runtime change",
+            reuse_existing_provider_instance=True,
+        ).model_dump(mode="json")
+
+    def remove_provider_runtime(self, *, plugin_id: str) -> dict:
+        active_managed = [
+            instance
+            for instance in self.store.list_provider_instances()
+            if instance.plugin_id == plugin_id
+            and instance.connection_mode == "managed"
+            and instance.operational_state != "removed"
+        ]
+        if not active_managed:
+            raise ValueError(f"Provider runtime {plugin_id} is not installed")
+        active_instance_ids = {
+            instance.provider_instance_id for instance in active_managed
+        }
+        has_model_deployments = any(
+            self.store.list_model_deployments(provider_instance_id)
+            for provider_instance_id in active_instance_ids
+        )
+        has_runtime_bindings = any(
+            binding.provider_instance_id in active_instance_ids
+            for binding in self.store.list_runtime_bindings()
+        )
+        if has_model_deployments or has_runtime_bindings:
+            raise ValueError(
+                f"Provider runtime {plugin_id} still has model deployments or runtime bindings; remove those first"
+            )
+
+        jobs = [
+            job
+            for job in self.store.list_installation_jobs()
+            if job.plugin_id == plugin_id
+            and job.status == "SUCCEEDED"
+            and job.provider_instance_id in active_instance_ids
+        ]
+        if not jobs:
+            raise ValueError(f"Provider runtime {plugin_id} has no successful installation record")
+        job = jobs[-1]
+        approval = self.store.get_installation_approval(job.approval_id)
+        manifest = ProviderPluginManifest.model_validate(self._get_plugin(plugin_id).plugin_manifest())
+        plan = InstallationPlan.model_validate(
+            self.build_installation_plan(
+                plugin_id=plugin_id,
+                configuration=deepcopy(approval.configuration),
+            )
+        )
+        run_action = getattr(self.installation_executor, "run_runtime_action", None)
+        if not callable(run_action):
+            raise ValueError(
+                "current installation executor does not support runtime removal"
+            )
+        broker_result = run_action(
+            approval=approval,
+            plan=plan,
+            configuration=deepcopy(approval.configuration),
+            manifest=manifest.model_dump(mode="json"),
+            action="remove",
+        )
+        for instance in active_managed:
+            self.store.save_provider_instance(
+                instance.model_copy(
+                    update={
+                        "operational_state": "removed",
+                        "health_status": "unknown",
+                        "last_health_error": None,
+                    }
+                )
+            )
+        self.store.save_installation_job(
+            job.model_copy(
+                update={
+                    "rollback_status": "COMPLETED",
+                    "rollback_summary": "Provider runtime removed by the operator.",
+                    "rollback_completed_at": _now_iso(),
+                }
+            )
+        )
+        return {
+            "plugin_id": plugin_id,
+            "status": "REMOVED",
+            "provider_instance_ids": [instance.provider_instance_id for instance in active_managed],
+            "broker": broker_result.model_dump(mode="json")
+            if hasattr(broker_result, "model_dump")
+            else broker_result,
+        }
+
     def list_installation_approvals(self) -> list[ProviderInstallationApproval]:
         return self.store.list_installation_approvals()
 
@@ -1456,7 +1621,12 @@ class ProviderInventoryService:
             created_at=_now_iso(),
         )
 
-    def apply_installation_approval(self, approval_id: str) -> ProviderInstallationJob:
+    def apply_installation_approval(
+        self,
+        approval_id: str,
+        *,
+        reuse_existing_provider_instance: bool = False,
+    ) -> ProviderInstallationJob:
         approval = self.store.get_installation_approval(approval_id)
         if approval.status != "APPROVED":
             raise ValueError("installation approval is not active")
@@ -1512,7 +1682,22 @@ class ProviderInventoryService:
         job = job.model_copy(update={"status": "RUNNING", "started_at": _now_iso()})
         self.store.save_installation_job(job)
 
-        provider_instance_id = f"pi-{uuid4().hex[:12]}"
+        existing_managed = next(
+            (
+                instance
+                for instance in self.store.list_provider_instances()
+                if reuse_existing_provider_instance
+                and instance.plugin_id == approval.plugin_id
+                and instance.connection_mode == "managed"
+                and instance.operational_state != "removed"
+            ),
+            None,
+        )
+        provider_instance_id = (
+            existing_managed.provider_instance_id
+            if existing_managed is not None
+            else f"pi-{uuid4().hex[:12]}"
+        )
         try:
             approval_for_executor = approval.model_copy(deep=True)
             result = self.installation_executor.apply(
@@ -1562,10 +1747,20 @@ class ProviderInventoryService:
                 manifest=manifest.model_dump(mode="json"),
                 provider_instance_id=provider_instance_id,
             )
-            rollback_result = self._finalize_local_inventory_cleanup(
-                rollback_result=rollback_result,
-                provider_instance_id=provider_instance_id,
-            )
+            if existing_managed is None:
+                rollback_result = self._finalize_local_inventory_cleanup(
+                    rollback_result=rollback_result,
+                    provider_instance_id=provider_instance_id,
+                )
+            else:
+                rollback_result = rollback_result.model_copy(
+                    update={
+                        "details": {
+                            **deepcopy(rollback_result.details),
+                            "local_inventory_cleanup": "PRESERVED_EXISTING_PROVIDER_INSTANCE",
+                        }
+                    }
+                )
             job = job.model_copy(
                 update={
                     "status": "FAILED",

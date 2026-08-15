@@ -101,7 +101,7 @@ def test_provider_runtime_installer_descriptor_is_an_exact_allowlist() -> None:
         platform="ubuntu",
         script="tools/aidn-provider-runtime-ubuntu.sh",
         pinned_version="0.32.12",
-        actions=["install", "start", "status", "stop"],
+        actions=["install", "start", "status", "stop", "remove"],
     )
 
     assert descriptor.model_configuration_separate is True

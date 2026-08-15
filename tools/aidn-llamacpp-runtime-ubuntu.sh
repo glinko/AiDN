@@ -10,7 +10,7 @@ readonly CUDA_TOOLKIT_PACKAGE="cuda-toolkit-13-3"
 
 usage() {
   cat <<'EOF'
-Usage: aidn-llamacpp-runtime-ubuntu.sh <install|start|status|stop> [options]
+Usage: aidn-llamacpp-runtime-ubuntu.sh <install|start|status|stop|remove> [options]
 
 Options:
   --ref REF         Pinned llama.cpp release/tag (default: b10433)
@@ -202,6 +202,14 @@ EOF
   stop)
     systemctl --user stop "$SERVICE_NAME"
     echo '{"provider":"llama.cpp","status":"stopped"}'
+    ;;
+  remove)
+    systemctl --user disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
+    rm -f -- "$unit_path"
+    systemctl --user daemon-reload
+    rm -rf -- "$source_dir" "$root_path"/build-* "$binary_path" "$root_path/runtime-version"
+    printf '{"status":"removed","provider":"llama.cpp","runtime_root":"%s","model_files":"preserved"}\n' \
+      "$root_path"
     ;;
   *) usage >&2; exit 2 ;;
 esac

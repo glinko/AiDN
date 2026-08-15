@@ -90,6 +90,7 @@ def test_default_app_exposes_builtin_plugins(tmp_path, monkeypatch) -> None:
                 "start",
                 "status",
                 "stop",
+                "remove",
             ]
         else:
             assert plugin["plugin_version"] == "0.1.0"

@@ -9,7 +9,7 @@ readonly SERVICE_NAME="aidn-vllm.service"
 
 usage() {
   cat <<'EOF'
-Usage: aidn-vllm-runtime-ubuntu.sh <install|start|status|stop> [options]
+Usage: aidn-vllm-runtime-ubuntu.sh <install|start|status|stop|remove> [options]
 
 Options:
   --version VERSION       Pinned vLLM version (default: 0.27.1)
@@ -192,6 +192,14 @@ EOF
   stop)
     systemctl --user stop "$SERVICE_NAME"
     echo '{"provider":"vllm","status":"stopped"}'
+    ;;
+  remove)
+    systemctl --user disable --now "$SERVICE_NAME" >/dev/null 2>&1 || true
+    rm -f -- "$unit_path"
+    systemctl --user daemon-reload
+    rm -rf -- "$venv_path" "$runtime_version_path"
+    printf '{"status":"removed","provider":"vllm","runtime_root":"%s","model_cache":"preserved"}\n' \
+      "$root_path"
     ;;
   *) usage >&2; exit 2 ;;
 esac

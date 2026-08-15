@@ -10,7 +10,7 @@ usage() {
   cat <<'EOF'
 Usage:
   aidn-provider-runtime-ubuntu.sh <whisper|ollama|llama.cpp|vllm> \
-    <install|start|status|stop> [provider options]
+    <install|start|status|stop|remove> [provider options]
 
 The dispatcher never accepts a script path or arbitrary shell command.
 Provider-specific help:

@@ -1252,6 +1252,55 @@ def test_allowlisted_runtime_executor_fails_closed_on_broker_failure() -> None:
         )
 
 
+def test_provider_inventory_managed_runtime_lifecycle_is_typed_and_idempotent() -> None:
+    registry = PluginRegistry()
+    registry.register(OllamaPlugin())
+    broker = _StubProviderRuntimeBroker()
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=AllowlistedProviderRuntimeInstallationExecutor(broker),
+    )
+    configuration = {
+        "display_name": "Local Ollama",
+        "endpoint": "http://127.0.0.1:11434",
+        "runtime_version": "0.32.12",
+    }
+
+    installed = service.install_provider_runtime(
+        plugin_id="ollama",
+        configuration=configuration,
+    )
+    assert installed["status"] == "SUCCEEDED"
+    provider_instance_id = installed["provider_instance_id"]
+    assert broker.invocations[-1].action == "install"
+
+    with pytest.raises(ValueError, match="use change"):
+        service.install_provider_runtime(plugin_id="ollama", configuration=configuration)
+
+    broker.status = "FAILED"
+    failed_change = service.change_provider_runtime(
+        plugin_id="ollama",
+        configuration=configuration,
+    )
+    assert failed_change["status"] == "FAILED"
+    assert [item.provider_instance_id for item in service.list_provider_instances()] == [provider_instance_id]
+    broker.status = "SUCCEEDED"
+
+    changed = service.change_provider_runtime(
+        plugin_id="ollama",
+        configuration=configuration,
+    )
+    assert changed["status"] == "SUCCEEDED"
+    assert changed["provider_instance_id"] == provider_instance_id
+    assert [invocation.action for invocation in broker.invocations] == ["install", "install", "install"]
+
+    removed = service.remove_provider_runtime(plugin_id="ollama")
+    assert removed["status"] == "REMOVED"
+    assert broker.invocations[-1].action == "remove"
+    assert service.list_provider_instances()[0].operational_state == "removed"
+
+
 def test_sandbox_enforced_provider_installation_executor_accepts_supported_fake_plan() -> None:
     executor = SandboxEnforcedProviderInstallationExecutor()
     configuration = _installation_configuration()

@@ -587,6 +587,43 @@ class AllowlistedProviderRuntimeInstallationExecutor(RecordedProviderInstallatio
         )
         return result.model_copy(update={"step_results": [runtime_step, *result.step_results]})
 
+    def run_runtime_action(
+        self,
+        *,
+        approval: ProviderInstallationApproval,
+        plan: InstallationPlan,
+        configuration: dict,
+        manifest: dict,
+        action: str,
+    ) -> ProviderRuntimeBrokerResult:
+        """Run one reviewed lifecycle action through the typed broker.
+
+        Installations use ``apply`` because they also materialize local
+        inventory.  Change/remove operations need the same reviewed broker
+        boundary without creating a second ProviderInstance.
+        """
+
+        invocation = self.build_invocation(
+            approval=approval,
+            plan=plan,
+            configuration=configuration,
+            manifest=manifest,
+            action=action,
+        )
+        broker_result = self._broker.invoke(invocation=invocation)
+        if broker_result.status != "SUCCEEDED":
+            broker_details = broker_result.details if isinstance(broker_result.details, dict) else {}
+            returncode = broker_details.get("returncode")
+            stderr = broker_details.get("stderr")
+            diagnostic = f" (returncode={returncode!r}"
+            if stderr:
+                diagnostic += f"; stderr={str(stderr)[:1024]}"
+            diagnostic += ")" if returncode is not None or stderr else ""
+            raise ValueError(
+                f"Provider runtime {action} failed: {broker_result.summary}{diagnostic}"
+            )
+        return broker_result
+
     def build_invocation(
         self,
         *,
@@ -602,7 +639,7 @@ class AllowlistedProviderRuntimeInstallationExecutor(RecordedProviderInstallatio
             configuration=configuration,
             manifest=manifest,
         )
-        if action not in {"install", "start", "status", "stop"}:
+        if action not in {"install", "start", "status", "stop", "remove"}:
             raise ValueError("unsupported Provider runtime action")
         descriptors = manifest.get("runtime_installers")
         if not isinstance(descriptors, list):
