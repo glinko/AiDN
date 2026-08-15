@@ -7,6 +7,7 @@ home path, unit name, or arbitrary shell command from the browser.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from collections.abc import Mapping, Sequence
@@ -123,6 +124,10 @@ def control_managed_cometbft(
         raise ValueError("CometBFT control timeout must be positive")
 
     execute = runner or subprocess.run
+    environment = os.environ.copy()
+    runtime_dir = environment.get("XDG_RUNTIME_DIR", "").strip()
+    if runtime_dir and "DBUS_SESSION_BUS_ADDRESS" not in environment:
+        environment["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={runtime_dir}/bus"
     try:
         completed = execute(
             ["systemctl", "--user", normalized_action, service_name],
@@ -130,6 +135,7 @@ def control_managed_cometbft(
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
+            env=environment,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         raise RuntimeError(f"CometBFT {normalized_action} could not be controlled") from error

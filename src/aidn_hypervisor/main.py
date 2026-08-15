@@ -53,6 +53,10 @@ from aidn_hypervisor.mcp.enrollment import McpEnrollmentService
 from aidn_hypervisor.model_store import FileModelStore
 from aidn_hypervisor.operator_access import DashboardAccessService
 from aidn_hypervisor.operator_access_api import build_operator_access_router
+from aidn_hypervisor.operator_cometbft_install import (
+    UnixSocketConsensusRuntimeExecutor,
+    load_active_cometbft_configuration,
+)
 from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
 from aidn_hypervisor.plugins.ollama import OllamaPlugin
@@ -171,6 +175,12 @@ def build_app(
             resolved_endpoint_service.record_creation_operation = False
             resolved_endpoint_service.record_update_operation = False
             resolved_session_service.record_open_operation = False
+    # The dashboard wizard uses the same UID-restricted root broker as Provider
+    # runtime installation. Keep this capability explicit and absent in tests
+    # or development processes unless the Ubuntu bootstrap opted in.
+    consensus_installation_executor = _build_default_consensus_installation_executor()
+    if consensus_installation_executor is not None:
+        resolved_service.consensus_installation_executor = consensus_installation_executor
     resolved_finality_source = consensus_finality_source or getattr(resolved_service, "consensus_finality_source", None)
     if resolved_finality_source is None:
         resolved_finality_source = _build_default_consensus_finality_source(
@@ -458,7 +468,7 @@ def _is_validator_consensus_write_path(path: str, method: str | None = None) -> 
     if (
         len(parts) == 6
         and parts[:5] == ["operators", "dashboard", "access", "operations", "cometbft"]
-        and parts[5] in {"start", "stop", "restart"}
+        and parts[5] in {"start", "stop", "restart", "install", "apply"}
         and (method is None or method == "POST")
     ):
         # CometBFT control is limited to the user-systemd unit declared by the
@@ -911,7 +921,11 @@ def _build_default_consensus_service(
     hypervisor_service: HypervisorService,
     state_store: FileStateStore | None,
 ) -> ConsensusService | None:
-    raw_mode = os.getenv("AIDN_CONSENSUS_MODE", ConsensusMode.DISABLED.value).lower()
+    active_config = load_active_cometbft_configuration(hypervisor_service)
+    raw_mode = str(
+        (active_config or {}).get("mode")
+        or os.getenv("AIDN_CONSENSUS_MODE", ConsensusMode.DISABLED.value)
+    ).lower()
     try:
         mode = ConsensusMode(raw_mode)
     except ValueError as error:
@@ -925,16 +939,20 @@ def _build_default_consensus_service(
         else None
     )
 
+    def configured(name: str, environment: str, default):
+        value = (active_config or {}).get(name)
+        return value if value not in (None, "") else os.getenv(environment, default)
+
     config = ConsensusServiceConfig(
-        node_id=os.getenv("AIDN_CONSENSUS_NODE_ID", hypervisor_service.node_id),
+        node_id=str(configured("node_id", "AIDN_CONSENSUS_NODE_ID", hypervisor_service.node_id)),
         mode=mode,
-        cometbft_endpoint=os.getenv("AIDN_COMETBFT_ENDPOINT", "tcp://localhost:26657"),
+        cometbft_endpoint=str(configured("cometbft_endpoint", "AIDN_COMETBFT_ENDPOINT", "tcp://localhost:26657")),
         validator_pubkey=os.getenv("AIDN_CONSENSUS_VALIDATOR_PUBKEY", ""),
-        chain_id=os.getenv("AIDN_COMETBFT_CHAIN_ID", "aidn-localnet-1"),
-        managed_service_name=os.getenv("AIDN_COMETBFT_SERVICE") or None,
-        abci_state_path=os.getenv("AIDN_COMETBFT_ABCI_STATE_PATH"),
-        abci_listen_host=os.getenv("AIDN_COMETBFT_ABCI_HOST", "127.0.0.1"),
-        abci_listen_port=int(os.getenv("AIDN_COMETBFT_ABCI_PORT", "26658")),
+        chain_id=str(configured("chain_id", "AIDN_COMETBFT_CHAIN_ID", "aidn-localnet-1")),
+        managed_service_name=(str(configured("managed_service_name", "AIDN_COMETBFT_SERVICE", "")) or None),
+        abci_state_path=(str(configured("abci_state_path", "AIDN_COMETBFT_ABCI_STATE_PATH", "")) or None),
+        abci_listen_host=str(configured("abci_host", "AIDN_COMETBFT_ABCI_HOST", "127.0.0.1")),
+        abci_listen_port=int(configured("abci_port", "AIDN_COMETBFT_ABCI_PORT", "26658")),
         abci_retained_snapshots=int(
             os.getenv(
                 "AIDN_COMETBFT_ABCI_RETAINED_SNAPSHOTS",
@@ -1058,6 +1076,20 @@ def _build_default_consensus_service(
     if state_migrated:
         hypervisor_service._persist_state()
     return consensus
+
+
+def _build_default_consensus_installation_executor():
+    """Enable the dashboard CometBFT installer only on a bootstrapped host."""
+
+    enabled = os.getenv("AIDN_ENABLE_PROVIDER_RUNTIME_INSTALL", "").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        return None
+    socket_path = os.getenv("AIDN_PROVIDER_RUNTIME_BROKER_SOCKET", "").strip()
+    if not socket_path:
+        return None
+    return UnixSocketConsensusRuntimeExecutor(
+        UnixSocketProviderRuntimeCommandRunner(socket_path=socket_path)
+    )
 
 
 def _load_epoch_schedule() -> EpochSchedule | None:

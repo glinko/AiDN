@@ -1,6 +1,6 @@
 # Operator Consensus Provisioning
 
-Status: `Draft`
+Status: `Implemented`
 
 ## Scope
 
@@ -39,19 +39,31 @@ genesis and peer/network profile remain required for a multi-operator network.
 
 `--no-consensus` is an alias for `--consensus-mode disabled`.
 
-## Readiness Wizard Behavior
+## Dashboard Installation Wizard
 
-The dashboard readiness projection remains read-only. It never executes an
-arbitrary shell command received over HTTP.
+The paired Advanced → CometBFT workspace now exposes a three-step, bounded
+installation procedure for an already bootstrapped Ubuntu host. It never
+executes an arbitrary shell command received over HTTP.
 
-- A fresh bootstrap exposes the managed unit name in consensus status.
-- If RPC is down, the wizard shows the exact bounded recovery command:
-  `systemctl --user restart aidn-cometbft-<operator>.service`.
-- A legacy node with no management metadata shows `Install CometBFT` and
-  instructs the operator to rerun the reviewed bootstrap rather than implying
-  that a browser button can install host software.
+1. Review the mode, chain ID, moniker and fixed local ports. RPC and ABCI are
+   always loopback; P2P may be changed to `0.0.0.0` only with an explicit LAN
+   acknowledgement.
+2. Press `Install CometBFT`. The request crosses the UID-restricted root
+   runtime broker and runs the reviewed installer with paths derived from the
+   Hypervisor state directory. Existing genesis state is validated, never
+   overwritten. The resulting configuration is staged as
+   `consensus-config.pending.json`.
+3. Press `Apply configuration & restart`. The pending document is validated,
+   atomically promoted to `consensus-config.json`, and the Hypervisor schedules
+   its own systemd restart. On reconnect, the normal Start/Restart/Stop controls
+   become available for the configured unit.
 
-After recovery, press `Recheck status`. The consensus step is ready only after
+If the host has not installed the root broker, the wizard remains manual and
+points the operator back to the reviewed Ubuntu bootstrap. If RPC is down after
+activation, the service card shows the bounded recovery state instead of
+claiming that installation succeeded.
+
+After recovery, press `Refresh consensus`. The consensus step is ready only after
 both `/status` and `/net_info` respond through the configured RPC endpoint.
 
 ## Existing Host Migration

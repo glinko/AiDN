@@ -24,6 +24,12 @@ export function useDashboardData() {
     staleTime: staleTimeMs,
     refetchInterval: refetchIntervalMs,
   })
+  const cometbftInstall = useQuery({
+    queryKey: ['operator-dashboard', 'cometbft-install'],
+    queryFn: ({ signal }) => dashboardApi.cometbftInstall(signal),
+    staleTime: staleTimeMs,
+    refetchInterval: refetchIntervalMs,
+  })
   const fleet = useQuery({
     queryKey: ['operator-dashboard', 'fleet'],
     queryFn: ({ signal }) => dashboardApi.fleet(signal),
@@ -85,5 +91,5 @@ export function useDashboardData() {
     refetchInterval: refetchIntervalMs,
   })
 
-  return { home, readiness, cometbft, fleet, bundles, endpoints, wallet, providers, installs, sessions, market, remoteEndpoints, events }
+  return { home, readiness, cometbft, cometbftInstall, fleet, bundles, endpoints, wallet, providers, installs, sessions, market, remoteEndpoints, events }
 }

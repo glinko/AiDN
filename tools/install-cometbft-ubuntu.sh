@@ -114,6 +114,27 @@ else
   "${sudo_cmd[@]}" -v
 fi
 
+# The root-owned runtime broker preserves the operator identity in these
+# variables. Package installation remains privileged, while user-systemd
+# commands and unit files are always addressed to that operator's session.
+operator_uid="${AIDN_PROVIDER_RUNTIME_OPERATOR_UID:-$(id -u)}"
+operator_gid="${AIDN_PROVIDER_RUNTIME_OPERATOR_GID:-$(id -g)}"
+operator_name="${AIDN_PROVIDER_RUNTIME_OPERATOR_NAME:-${USER:-$(id -un)}}"
+operator_home="${AIDN_PROVIDER_RUNTIME_OPERATOR_HOME:-$HOME}"
+
+user_systemctl() {
+  if [[ "$EUID" -eq 0 && "$operator_uid" =~ ^[0-9]+$ && "$operator_uid" != '0' ]]; then
+    runtime_dir="/run/user/$operator_uid"
+    runuser -u "$operator_name" -- env \
+      HOME="$operator_home" USER="$operator_name" LOGNAME="$operator_name" \
+      XDG_RUNTIME_DIR="$runtime_dir" \
+      DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_dir/bus" \
+      /usr/bin/systemctl --user "$@"
+  else
+    systemctl --user "$@"
+  fi
+}
+
 "${sudo_cmd[@]}" apt-get update
 "${sudo_cmd[@]}" apt-get install -y --no-install-recommends ca-certificates curl golang-go python3
 
@@ -209,10 +230,19 @@ with open(path, "w", encoding="utf-8") as stream:
     stream.writelines(result)
 PY
 chmod 600 "$config_path"
+if [[ "$EUID" -eq 0 && "$operator_uid" != '0' ]]; then
+  # The broker ran the installer as root, but the user-systemd unit must be
+  # able to read/write its CometBFT home without a privileged helper.
+  chown -R "$operator_uid:$operator_gid" "$home"
+fi
 
-uid="$(id -u)"
+uid="$operator_uid"
+export HOME="$operator_home"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$uid}"
-systemd_dir="$HOME/.config/systemd/user"
+if [[ "$EUID" -eq 0 && "$uid" != '0' ]]; then
+  export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+fi
+systemd_dir="$operator_home/.config/systemd/user"
 mkdir -p "$systemd_dir"
 unit_path="$systemd_dir/$service_name"
 cat > "$unit_path" <<EOF
@@ -239,10 +269,13 @@ WorkingDirectory=$home
 WantedBy=default.target
 EOF
 chmod 600 "$unit_path"
+if [[ "$EUID" -eq 0 && "$operator_uid" != '0' ]]; then
+  chown "$operator_uid:$operator_gid" "$unit_path"
+fi
 
 if [[ "$no_start" != 'true' ]]; then
-  systemctl --user daemon-reload
-  systemctl --user enable --now "$service_name"
+  user_systemctl daemon-reload
+  user_systemctl enable --now "$service_name"
   for _ in $(seq 1 30); do
     if curl --fail --silent "http://$rpc_host:$rpc_port/status" >/dev/null; then
       break
@@ -250,7 +283,7 @@ if [[ "$no_start" != 'true' ]]; then
     sleep 1
   done
   curl --fail --silent "http://$rpc_host:$rpc_port/status" >/dev/null || {
-    systemctl --user --no-pager --full status "$service_name" >&2 || true
+    user_systemctl --no-pager --full status "$service_name" >&2 || true
     die "CometBFT RPC did not become healthy; inspect journalctl --user -u $service_name"
   }
   started='true'

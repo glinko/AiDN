@@ -23,14 +23,20 @@ from pathlib import Path
 MAX_FRAME_BYTES = 128 * 1024
 MAX_OUTPUT_BYTES = 64 * 1024
 MAX_TIMEOUT_SECONDS = 3600
-PROVIDERS = {"whisper", "ollama", "llama.cpp", "vllm"}
+PROVIDERS = {"whisper", "ollama", "llama.cpp", "vllm", "consensus"}
 ACTIONS = {"install", "start", "status", "stop", "remove"}
 OPTIONS = {
     "whisper": {"--image", "--model", "--port", "--data-dir"},
     "ollama": {"--version", "--model"},
     "llama.cpp": {"--ref", "--backend", "--root", "--model"},
     "vllm": {"--version", "--python", "--root", "--model", "--served-model-name"},
+    "consensus": {
+        "--version", "--home", "--binary-path", "--service-name", "--chain-id",
+        "--moniker", "--rpc-host", "--rpc-port", "--p2p-host", "--p2p-port",
+        "--abci-host", "--abci-port", "--no-abci",
+    },
 }
+FLAGS = {"consensus": {"--no-abci"}}
 
 
 def _error_response(message: str, *, returncode: int = 126) -> dict:
@@ -87,6 +93,10 @@ def _validate_argv(argv: object, *, dispatcher: Path) -> list[str]:
         option = argv[index]
         if option not in expected_options or option in seen:
             raise ValueError(f"broker request option is not allowlisted: {option}")
+        if option in FLAGS.get(provider, set()):
+            seen.add(option)
+            index += 1
+            continue
         if index + 1 >= len(argv):
             raise ValueError(f"broker request option is missing a value: {option}")
         value = argv[index + 1]
@@ -135,6 +145,7 @@ def _run_argv(
             ),
             "XDG_RUNTIME_DIR": f"/run/user/{operator_uid}",
             "AIDN_PROVIDER_RUNTIME_OPERATOR_UID": str(operator_uid),
+            "AIDN_PROVIDER_RUNTIME_OPERATOR_GID": str(operator_home.stat().st_gid),
             "AIDN_PROVIDER_RUNTIME_OPERATOR_HOME": str(operator_home),
             "AIDN_PROVIDER_RUNTIME_OPERATOR_NAME": operator_name,
         }

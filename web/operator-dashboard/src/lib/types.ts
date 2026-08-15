@@ -235,6 +235,18 @@ const cometBftDashboardSchema = z.object({
   protocol_authority: unknownRecord.default({}),
 }).passthrough()
 
+const cometBftInstallSchema = z.object({
+  profile: stringValue,
+  available: z.boolean().catch(false),
+  reason: z.string().nullable().optional(),
+  broker: unknownRecord.default({}),
+  defaults: unknownRecord.default({}),
+  current: unknownRecord.nullable().optional(),
+  pending: unknownRecord.nullable().optional(),
+  paths: unknownRecord.default({}),
+  steps: z.array(unknownRecord).catch([]),
+}).passthrough()
+
 const journalEventSchema = z.object({
   timestamp: stringValue,
   event_type: stringValue,
@@ -258,6 +270,7 @@ export type SessionDashboard = z.infer<typeof sessionDashboardSchema>
 export type MarketDashboard = z.infer<typeof marketDashboardSchema>
 export type RemoteEndpointsDashboard = z.infer<typeof remoteEndpointsDashboardSchema>
 export type CometBftDashboard = z.infer<typeof cometBftDashboardSchema>
+export type CometBftInstall = z.infer<typeof cometBftInstallSchema>
 export type JournalEvent = z.infer<typeof journalEventSchema>
 
 export const dashboardSchemas = {
@@ -271,5 +284,6 @@ export const dashboardSchemas = {
   market: marketDashboardSchema,
   remoteEndpoints: remoteEndpointsDashboardSchema,
   cometbft: cometBftDashboardSchema,
+  cometbftInstall: cometBftInstallSchema,
   events: z.array(journalEventSchema),
 }

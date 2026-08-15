@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { dashboardSchemas, type BundlePayload, type CometBftDashboard, type DashboardHome, type EndpointPayload, type Fleet, type MarketDashboard, type Readiness, type RemoteEndpointsDashboard, type SessionDashboard, type WalletDashboard } from '@/lib/types'
+import { dashboardSchemas, type BundlePayload, type CometBftDashboard, type CometBftInstall, type DashboardHome, type EndpointPayload, type Fleet, type MarketDashboard, type Readiness, type RemoteEndpointsDashboard, type SessionDashboard, type WalletDashboard } from '@/lib/types'
 
 const apiRoot = (import.meta.env.VITE_AIDN_API_ROOT ?? '').replace(/\/$/, '')
 const requestTimeoutMs = 15_000
@@ -199,6 +199,7 @@ export const dashboardApi = {
   home: (signal?: AbortSignal): Promise<DashboardHome> => readDashboard('/operators/dashboard/home', dashboardSchemas.home, signal),
   readiness: (signal?: AbortSignal): Promise<Readiness> => readDashboard('/operators/dashboard/readiness', dashboardSchemas.readiness, signal),
   cometbft: (signal?: AbortSignal): Promise<CometBftDashboard> => readDashboard('/operators/dashboard/cometbft', dashboardSchemas.cometbft, signal),
+  cometbftInstall: (signal?: AbortSignal): Promise<CometBftInstall> => readDashboard('/operators/dashboard/cometbft/install', dashboardSchemas.cometbftInstall, signal),
   fleet: (signal?: AbortSignal): Promise<Fleet> => readDashboard('/operators/dashboard/fleet', dashboardSchemas.fleet, signal),
   bundles: (signal?: AbortSignal): Promise<BundlePayload> => readDashboard('/operators/dashboard/bundles', dashboardSchemas.bundles, signal),
   endpoints: (signal?: AbortSignal): Promise<EndpointPayload> => readDashboard('/operators/dashboard/endpoints', dashboardSchemas.endpoints, signal),
@@ -212,6 +213,8 @@ export const dashboardApi = {
   accessStatus: (): Promise<DashboardAccessStatus> => writeDashboard('/operators/dashboard/access/status', { method: 'GET' }) as Promise<DashboardAccessStatus>,
   updateDashboardNetworkAccess: (mode: DashboardNetworkAccess['mode']): Promise<DashboardNetworkAccess & { status: string }> => writeDashboard<DashboardNetworkAccess & { status: string }>('/operators/dashboard/access/operations/network', { method: 'POST', body: JSON.stringify({ mode }) }) as Promise<DashboardNetworkAccess & { status: string }>,
   cometbftAction: (action: 'start' | 'stop' | 'restart') => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/cometbft/${action}`, { method: 'POST' }),
+  installCometbft: (payload: { mode: 'validator' | 'non_validator'; chain_id: string; version: string; moniker?: string; rpc_host: '127.0.0.1'; rpc_port: number; p2p_host: '127.0.0.1' | '0.0.0.0'; p2p_port: number; abci_host: '127.0.0.1'; abci_port: number; acknowledge_network_scope: boolean }) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/cometbft/install', { method: 'POST', body: JSON.stringify(payload) }),
+  applyCometbft: () => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/cometbft/apply', { method: 'POST' }),
   pairDashboard: (code: string, duration: string) => writeDashboard('/operators/dashboard/access/pair', { method: 'POST', body: JSON.stringify({ code, duration }) }),
   createAgentCredential: (label: string, scopes?: string[], autoApprovedScopes?: string[]) => writeDashboard<AccessCredential>('/operators/dashboard/access/credentials', { method: 'POST', body: JSON.stringify({ label, ...(scopes ? { scopes } : {}), ...(autoApprovedScopes ? { auto_approved_scopes: autoApprovedScopes } : {}) }) }),
   agentPermissionCatalog: () => writeDashboard<AgentPermissionCatalog>('/operators/dashboard/access/permission-catalog', { method: 'GET' }),

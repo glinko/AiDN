@@ -484,6 +484,8 @@ for runtime_file in \
   aidn-ollama-runtime-ubuntu.sh \
   aidn-llamacpp-runtime-ubuntu.sh \
   aidn-vllm-runtime-ubuntu.sh \
+  aidn-consensus-runtime-ubuntu.sh \
+  install-cometbft-ubuntu.sh \
   aidn-provider-runtime-broker.py; do
   [[ -f "$install_dir/tools/$runtime_file" ]] || die "runtime broker file is missing: $install_dir/tools/$runtime_file"
   "${sudo_cmd[@]}" install -o root -g root -m 0755 \

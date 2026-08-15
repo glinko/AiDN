@@ -137,8 +137,8 @@ def _consensus_step(consensus_status: Mapping[str, Any] | None) -> dict[str, Any
     else:
         action_label = "Install CometBFT"
         action_detail = (
-            "This legacy node has no managed consensus unit. Re-run the reviewed Ubuntu "
-            "operator bootstrap; it installs and starts CometBFT automatically, then refresh."
+            "This legacy node has no managed consensus unit. Open Advanced → CometBFT to run the "
+            "paired dashboard installation wizard, apply the staged configuration, and start the unit."
         )
     return _step(
         key="consensus",

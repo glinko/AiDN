@@ -72,7 +72,7 @@ import {
 import { useDashboardData } from '@/hooks/use-dashboard'
 import { DashboardApiError, dashboardApi, type AccessCredential, type AgentPermissionCatalog, type DashboardAccessStatus, type DashboardRecord, type EnrollmentRequest, type ProviderArtifactInventory, type ProviderWorkspace } from '@/lib/api'
 import { dashboardScreens, useOperatorDashboardStore, type DashboardScreen } from '@/stores/operator-dashboard'
-import type { Bundle, CometBftDashboard, Endpoint, Fleet, Readiness, ReadinessStep, WalletDashboard } from '@/lib/types'
+import type { Bundle, CometBftDashboard, CometBftInstall, Endpoint, Fleet, Readiness, ReadinessStep, WalletDashboard } from '@/lib/types'
 import { createSavedHypervisor, loadSavedHypervisors, saveSavedHypervisors, type SavedHypervisorConnection } from '@/lib/hypervisor-connections'
 
 type NavigationItem = {
@@ -212,7 +212,7 @@ function App() {
   const nodeIdentity = data.home.data?.bootstrap.node_identity ?? data.fleet.data?.node
   const nodeName = getText(nodeIdentity, 'node_id') || 'Local Hypervisor'
   const readinessPercent = data.readiness.data?.progress.percent ?? 0
-  const hasRefreshError = [data.home, data.readiness, data.cometbft, data.fleet, data.bundles, data.endpoints, data.wallet, data.providers, data.installs, data.sessions, data.market, data.remoteEndpoints, data.events].some(
+  const hasRefreshError = [data.home, data.readiness, data.cometbft, data.cometbftInstall, data.fleet, data.bundles, data.endpoints, data.wallet, data.providers, data.installs, data.sessions, data.market, data.remoteEndpoints, data.events].some(
     (query) => query.isError,
   )
 
@@ -235,6 +235,7 @@ function App() {
       data.home.refetch(),
       data.readiness.refetch(),
       data.cometbft.refetch(),
+      data.cometbftInstall.refetch(),
       data.fleet.refetch(),
       data.bundles.refetch(),
       data.endpoints.refetch(),
@@ -2743,6 +2744,129 @@ function CompactStat({ label, value }: { label: string; value: number }) {
   return <div className="rounded-lg border border-border/80 bg-card px-4 py-3"><p className="eyebrow">{label}</p><p className="mt-2 text-xl font-semibold text-white">{formatCount(value)}</p></div>
 }
 
+function CometBftInstallWizard({ data, onRefresh, controlSupported, serviceName }: { data: DashboardData; onRefresh: () => void; controlSupported: boolean; serviceName: string }) {
+  const install: CometBftInstall | undefined = data.cometbftInstall.data
+  const defaults = getRecord(install?.defaults) ?? {}
+  const pending = getRecord(install?.pending)
+  const [hydrated, setHydrated] = useState(false)
+  const [mode, setMode] = useState<'validator' | 'non_validator'>('validator')
+  const [chainId, setChainId] = useState('aidn-localnet-1')
+  const [moniker, setMoniker] = useState('operator-local')
+  const [p2pHost, setP2pHost] = useState<'127.0.0.1' | '0.0.0.0'>('127.0.0.1')
+  const [acknowledged, setAcknowledged] = useState(false)
+  const [busy, setBusy] = useState<'install' | 'apply' | 'start' | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!install || hydrated) return
+    const initialDefaults = getRecord(install.defaults) ?? {}
+    setMode(getText(initialDefaults, 'mode') === 'non_validator' ? 'non_validator' : 'validator')
+    setChainId(getText(initialDefaults, 'chain_id') || 'aidn-localnet-1')
+    setMoniker(getText(initialDefaults, 'moniker') || 'operator-local')
+    setP2pHost(getText(initialDefaults, 'p2p_host') === '0.0.0.0' ? '0.0.0.0' : '127.0.0.1')
+    setHydrated(true)
+  }, [hydrated, install])
+
+  const version = getText(defaults, 'version') || 'v0.38.19'
+  const rpcPort = numberValue(defaults, 'rpc_port') || 26657
+  const p2pPort = numberValue(defaults, 'p2p_port') || 26656
+  const abciPort = numberValue(defaults, 'abci_port') || 26658
+  const chainValid = /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/.test(chainId)
+  const monikerValid = /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/.test(moniker)
+  const portsValid = new Set([rpcPort, p2pPort, abciPort]).size === 3
+  const readyToInstall = Boolean(install?.available) && !pending && chainValid && monikerValid && portsValid && acknowledged && busy === null
+  const paths = getRecord(install?.paths) ?? {}
+
+  async function installRuntime() {
+    if (!readyToInstall) return
+    setBusy('install')
+    setMessage('Installing the pinned CometBFT runtime. Package and Go setup may take several minutes...')
+    try {
+      await dashboardApi.installCometbft({
+        mode,
+        chain_id: chainId,
+        version,
+        moniker,
+        rpc_host: '127.0.0.1',
+        rpc_port: rpcPort,
+        p2p_host: p2pHost,
+        p2p_port: p2pPort,
+        abci_host: '127.0.0.1',
+        abci_port: abciPort,
+        acknowledge_network_scope: p2pHost === '0.0.0.0',
+      })
+      setMessage('CometBFT is installed and staged. Apply the configuration to enable it in the Hypervisor.')
+      await data.cometbftInstall.refetch()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'CometBFT installation failed.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function applyConfiguration() {
+    if (!pending || busy !== null) return
+    setBusy('apply')
+    setMessage('Applying CometBFT configuration. The Hypervisor will restart and reconnect automatically...')
+    try {
+      await dashboardApi.applyCometbft()
+      window.setTimeout(() => {
+        onRefresh()
+      }, 1800)
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'CometBFT configuration could not be applied.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function startService() {
+    if (!controlSupported || !serviceName || busy !== null) return
+    setBusy('start')
+    setMessage(`Starting ${serviceName}. Waiting for the local RPC health check...`)
+    try {
+      await dashboardApi.cometbftAction('start')
+      await Promise.allSettled([data.cometbft.refetch(), data.readiness.refetch()])
+      setMessage(`CometBFT ${serviceName} start accepted. Refreshing consensus evidence.`)
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'CometBFT could not be started.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  if (data.cometbftInstall.isLoading && !install) return <PanelSkeleton rows={5} />
+  if (data.cometbftInstall.error && !install) return <PanelError title="CometBFT installer is unavailable" error={data.cometbftInstall.error} onRetry={onRefresh} />
+
+  return <Card className="border-cyan-300/20 bg-cyan-300/[0.025] py-0 shadow-none">
+    <CardHeader className="border-b border-border/70 px-5 py-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><p className="eyebrow text-cyan-100">Guided host procedure</p><CardTitle className="mt-1 text-lg font-semibold">Install and enable CometBFT</CardTitle><p className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">The wizard installs the reviewed Ubuntu runtime, writes a user-systemd unit and activates consensus only after an explicit apply step.</p></div>
+        <StatusBadge value={install?.available ? pending ? 'ready to apply' : 'available' : 'manual'} />
+      </div>
+    </CardHeader>
+    <CardContent className="space-y-5 p-5">
+      {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
+      {!install?.available ? <div className="rounded-lg border border-amber-300/25 bg-amber-300/[0.045] p-4"><p className="font-semibold text-amber-100">Broker bootstrap is required</p><p className="mt-1 text-sm leading-5 text-amber-100/75">{install?.reason || 'The root-owned runtime broker is not configured on this node.'} Run the reviewed Ubuntu bootstrap once, then return here.</p><Button variant="outline" size="sm" className="mt-3 border-amber-300/30 bg-transparent text-amber-50 hover:bg-amber-300/10" onClick={() => onRefresh()}><RefreshCw />Recheck installer</Button></div> : null}
+      <div className="grid gap-2 sm:grid-cols-4">
+        {['1 Review', '2 Install', '3 Apply & restart', '4 Start service'].map((step, index) => <div key={step} className={cn('rounded-lg border px-3 py-2 text-center font-mono text-[10px] font-semibold uppercase tracking-[0.12em]', index === 0 ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-100' : pending && index === 1 ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-100' : pending && index === 2 ? 'border-emerald-300/35 bg-emerald-300/10 text-emerald-100' : controlSupported && !pending && index === 3 ? 'border-cyan-300/40 bg-cyan-300/10 text-cyan-100' : 'border-border/80 bg-black/10 text-slate-500')}>{step}</div>)}
+      </div>
+      <div className="grid gap-3 lg:grid-cols-2">
+        <label className="grid gap-2"><span className="eyebrow">Consensus mode</span><select value={mode} onChange={(event) => setMode(event.target.value as 'validator' | 'non_validator')} disabled={busy !== null || Boolean(pending)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300"><option value="validator">Validator · local ABCI</option><option value="non_validator">Non-validator · remote submission</option></select></label>
+        <label className="grid gap-2"><span className="eyebrow">Pinned release</span><input value={version} readOnly className="h-10 rounded-lg border border-input bg-black/15 px-3 font-mono text-xs text-slate-300" /></label>
+        <label className="grid gap-2"><span className="eyebrow">Chain ID</span><input value={chainId} onChange={(event) => setChainId(event.target.value)} disabled={busy !== null || Boolean(pending)} className={cn('h-10 rounded-lg border bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300', chainValid ? 'border-input' : 'border-rose-300/60')} /></label>
+        <label className="grid gap-2"><span className="eyebrow">Node moniker</span><input value={moniker} onChange={(event) => setMoniker(event.target.value)} disabled={busy !== null || Boolean(pending)} className={cn('h-10 rounded-lg border bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300', monikerValid ? 'border-input' : 'border-rose-300/60')} /></label>
+        <label className="grid gap-2"><span className="eyebrow">P2P bind</span><select value={p2pHost} onChange={(event) => setP2pHost(event.target.value as '127.0.0.1' | '0.0.0.0')} disabled={busy !== null || Boolean(pending)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300"><option value="127.0.0.1">127.0.0.1 · loopback</option><option value="0.0.0.0">0.0.0.0 · LAN (acknowledgement required)</option></select></label>
+        <div className="rounded-lg border border-border/70 bg-black/10 px-3 py-2"><p className="eyebrow">Fixed local ports</p><p className="mt-1 font-mono text-xs text-slate-300">RPC {rpcPort} · P2P {p2pPort} · ABCI {abciPort}</p><p className="mt-1 text-[11px] leading-4 text-muted-foreground">RPC and ABCI stay on loopback; only the P2P choice above can change scope.</p></div>
+      </div>
+      <div className="rounded-lg border border-border/70 bg-black/10 p-3"><p className="eyebrow">Host paths</p><p className="mt-1 break-all font-mono text-[11px] text-slate-400">{getText(paths, 'home') || 'Derived from Hypervisor state'} · {getText(paths, 'service') || 'user-systemd unit derived locally'}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">The browser cannot change these paths or submit arbitrary commands. Existing genesis state is validated and never overwritten.</p></div>
+      <label className="flex items-start gap-3 rounded-lg border border-amber-300/25 bg-amber-300/[0.045] p-3 text-sm text-amber-100/85"><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} disabled={busy !== null || Boolean(pending)} className="mt-0.5 size-4 accent-cyan-300" /><span>I understand this installs Ubuntu packages/Go modules and writes a user-systemd unit. Consensus remains disabled until I apply the staged configuration.</span></label>
+      <div className="flex flex-wrap gap-2"><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={!readyToInstall} onClick={() => void installRuntime()}><ServerCog />{busy === 'install' ? 'Installing...' : 'Install CometBFT'}</Button><Button variant="outline" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={!pending || busy !== null} onClick={() => void applyConfiguration()}><RotateCcw />{busy === 'apply' ? 'Applying & restarting...' : 'Apply configuration & restart'}</Button>{controlSupported && !pending ? <Button variant="outline" className="border-emerald-300/30 bg-emerald-300/[0.06] text-emerald-100" disabled={busy !== null} onClick={() => void startService()}><RadioTower />{busy === 'start' ? 'Starting...' : 'Start CometBFT'}</Button> : null}</div>
+      {p2pHost === '0.0.0.0' ? <p className="text-xs leading-5 text-amber-200/80">P2P will listen on the LAN. Keep RPC and ABCI loopback-only and expose the P2P port only on the trusted network.</p> : null}
+    </CardContent>
+  </Card>
+}
+
 function CometBftWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
   const consensus: CometBftDashboard | undefined = data.cometbft.data
   const rpc = getRecord(consensus?.rpc) ?? {}
@@ -2817,11 +2941,15 @@ function CometBftWorkspace({ data, onNavigate, onRefresh }: { data: DashboardDat
             {controlSupported ? <>
               <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/[0.04] p-3"><p className="eyebrow text-cyan-100">Managed unit</p><p className="mt-1 break-all font-mono text-sm text-cyan-50">{serviceName}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Actions run through <code className="font-mono text-cyan-100">systemctl --user</code>; no shell command or alternate unit is accepted.</p></div>
               <div className="grid gap-2 sm:grid-cols-3"><Button size="sm" className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy !== null} onClick={() => void control('start')}><RadioTower />{busy === 'start' ? 'Starting...' : 'Start'}</Button><Button size="sm" variant="outline" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={busy !== null} onClick={() => void control('restart')}><RotateCcw />{busy === 'restart' ? 'Restarting...' : 'Restart'}</Button><Button size="sm" variant="destructive" disabled={busy !== null} onClick={() => void control('stop')}><XCircle />{busy === 'stop' ? 'Stopping...' : 'Stop'}</Button></div>
-            </> : <div className="rounded-lg border border-amber-300/25 bg-amber-300/[0.045] p-4"><p className="font-semibold text-amber-100">Manual/bootstrap action required</p><p className="mt-1 text-sm leading-5 text-amber-100/75">This node has no configured user-systemd CometBFT unit, so the dashboard keeps start, stop and restart disabled. Install/configure CometBFT and set <code className="font-mono text-amber-50">AIDN_COMETBFT_SERVICE</code> during the supported bootstrap.</p><Button variant="outline" size="sm" className="mt-3 border-amber-300/30 bg-transparent text-amber-50 hover:bg-amber-300/10" onClick={() => onNavigate('settings')}><Settings />Open host settings</Button></div>}
+            </> : <div className="rounded-lg border border-amber-300/25 bg-amber-300/[0.045] p-4"><p className="font-semibold text-amber-100">Manual/bootstrap action required</p><p className="mt-1 text-sm leading-5 text-amber-100/75">This node has no configured user-systemd CometBFT unit, so the dashboard keeps start, stop and restart disabled until the reviewed installer has been applied.</p><Button variant="outline" size="sm" className="mt-3 border-amber-300/30 bg-transparent text-amber-50 hover:bg-amber-300/10" onClick={() => onNavigate('settings')}><Settings />Open host settings</Button></div>}
             {consensusStep?.action ? <p className="text-xs leading-5 text-muted-foreground"><span className="font-semibold text-slate-300">Readiness next action:</span> {consensusStep.action.label} — {consensusStep.action.detail}</p> : null}
           </CardContent>
         </Card>
       </div>
+
+      {data.cometbftInstall.data?.available && (!controlSupported || Boolean(data.cometbftInstall.data.pending) || !consensus.enabled || !rpcAvailable)
+        ? <CometBftInstallWizard data={data} onRefresh={onRefresh} controlSupported={controlSupported} serviceName={serviceName} />
+        : null}
 
       <Card className="border-border/80 bg-card py-0 shadow-none">
         <CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Network operations</p><CardTitle className="mt-1 text-lg font-semibold">Consensus-adjacent actions</CardTitle><p className="mt-1 text-sm leading-5 text-muted-foreground">Move to the canonical workspace for each network action. CometBFT control remains isolated from model execution and Endpoint lifecycle.</p></CardHeader>

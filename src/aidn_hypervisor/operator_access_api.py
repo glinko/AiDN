@@ -34,6 +34,10 @@ from aidn_hypervisor.mcp.permissions import (
 )
 from aidn_hypervisor.operator_access import DashboardAccessService
 from aidn_hypervisor.operator_cometbft import control_managed_cometbft
+from aidn_hypervisor.operator_cometbft_install import (
+    apply_pending_cometbft_configuration,
+    install_cometbft_from_dashboard,
+)
 from aidn_hypervisor.resource_probe import refresh_resource_probe_from_environment
 from aidn_hypervisor.wallet_identity import wallet_identity_registration_payload
 from aidn_hypervisor.wallet_reconciliation import reconcile_pending_wallet_transfers
@@ -147,6 +151,22 @@ class BundleRevisionOperationRequest(BaseModel):
 
 class DashboardNetworkAccessRequest(BaseModel):
     mode: Literal["loopback", "lan"]
+
+
+class ConsensusInstallRequest(BaseModel):
+    """Only the reviewed, bounded CometBFT install choices reach the host."""
+
+    mode: Literal["validator", "non_validator"] = "validator"
+    chain_id: str = Field(default="aidn-localnet-1", min_length=1, max_length=96)
+    version: str = Field(default="v0.38.19", pattern=r"^v[0-9]+\.[0-9]+\.[0-9]+$")
+    moniker: str | None = Field(default=None, max_length=96)
+    rpc_host: Literal["127.0.0.1"] = "127.0.0.1"
+    rpc_port: int = Field(default=26657, ge=1, le=65535)
+    p2p_host: Literal["127.0.0.1", "0.0.0.0"] = "127.0.0.1"
+    p2p_port: int = Field(default=26656, ge=1, le=65535)
+    abci_host: Literal["127.0.0.1"] = "127.0.0.1"
+    abci_port: int = Field(default=26658, ge=1, le=65535)
+    acknowledge_network_scope: bool = False
 
 
 def _credential_payload(credential: McpCredential, *, reveal: bool = False) -> dict:
@@ -691,6 +711,38 @@ def build_operator_access_router(
             status_code=202 if result.get("restart_scheduled") else 200,
             content=result,
         )
+
+    @router.post("/operations/cometbft/install")
+    async def install_cometbft(
+        payload: ConsensusInstallRequest,
+        request: Request,
+    ) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if payload.p2p_host == "0.0.0.0" and not payload.acknowledge_network_scope:
+            return operation_error(ValueError("LAN P2P binding requires explicit network acknowledgement"))
+        try:
+            result = install_cometbft_from_dashboard(
+                hypervisor_service,
+                payload.model_dump(exclude_none=True),
+            )
+        except (RuntimeError, ValueError, OSError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=202, content=result)
+
+    @router.post("/operations/cometbft/apply")
+    async def apply_cometbft(
+        request: Request,
+    ) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        try:
+            result = apply_pending_cometbft_configuration(hypervisor_service)
+        except (RuntimeError, ValueError, OSError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=202 if result.get("restart_scheduled") else 200, content=result)
 
     @router.post("/operations/cometbft/{action}")
     async def control_cometbft(action: str, request: Request) -> Response:
