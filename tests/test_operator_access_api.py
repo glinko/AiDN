@@ -11,9 +11,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
+from aidn_hypervisor.dashboard_network_access import DashboardNetworkAccessService
 from aidn_hypervisor.mcp.credentials import McpCredentialStore
 from aidn_hypervisor.mcp.enrollment import McpEnrollmentService
-from aidn_hypervisor.dashboard_network_access import DashboardNetworkAccessService
 from aidn_hypervisor.operator_access import DashboardAccessService
 from aidn_hypervisor.operator_access_api import build_operator_access_router
 from aidn_hypervisor.queue import InMemoryTaskQueue
@@ -385,17 +385,18 @@ def test_paired_dashboard_operations_require_pairing_and_call_bounded_service(tm
             "plugin_id": "ollama",
             "configuration": {"endpoint": "http://127.0.0.1:11434"},
             "operator_note": "Paired Dashboard one-click runtime installation",
+            "upgrade_acknowledged": False,
         },
     ) in service.calls
     lifecycle_install = client.post(
         "/operators/dashboard/access/operations/provider-plugins/ollama/runtime/install",
-        json={"configuration": {"endpoint": "http://127.0.0.1:11434"}},
+        json={"configuration": {"endpoint": "http://127.0.0.1:11434"}, "upgrade_acknowledged": True},
     )
     assert lifecycle_install.status_code == 200
     assert lifecycle_install.json()["status"] == "SUCCEEDED"
     lifecycle_change = client.post(
         "/operators/dashboard/access/operations/provider-plugins/ollama/runtime/change",
-        json={"configuration": {"endpoint": "http://127.0.0.1:11435"}},
+        json={"configuration": {"endpoint": "http://127.0.0.1:11435"}, "upgrade_acknowledged": True},
     )
     assert lifecycle_change.status_code == 200
     lifecycle_remove = client.post(
@@ -409,6 +410,9 @@ def test_paired_dashboard_operations_require_pairing_and_call_bounded_service(tm
         "provider-runtime-change",
         "provider-runtime-remove",
     ]
+    runtime_calls = [call for call in service.calls if call[0].startswith("provider-runtime-")]
+    assert runtime_calls[1][1]["upgrade_acknowledged"] is True
+    assert runtime_calls[2][1]["upgrade_acknowledged"] is True
     wallet = client.post(
         "/operators/dashboard/access/operations/wallet/create",
         json={"label": "Primary"},

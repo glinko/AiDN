@@ -2352,7 +2352,9 @@ function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefres
     setBusy(`runtime:${action}:${providerId}`)
     setMessage(`${action === 'change' ? 'Changing' : 'Installing'} ${displayName}. The reviewed runtime may take a few minutes; model setup remains separate.`)
     try {
-      const result = getRecord(await dashboardApi.providerRuntimeAction(providerId, action, runtimeConfiguration))
+      // Pressing Install/Change is the operator's explicit acknowledgement of
+      // the reviewed permission and sandbox contract for this runtime action.
+      const result = getRecord(await dashboardApi.providerRuntimeAction(providerId, action, runtimeConfiguration, undefined, true))
       const status = getText(result, 'status')
       const providerInstanceId = getText(result, 'provider_instance_id')
       if (status !== 'SUCCEEDED') {

@@ -640,6 +640,7 @@ def test_service_managed_provider_runtime_lifecycle_delegates_through_facade() -
         plugin_id="vllm",
         configuration=configuration,
         operator_note="install",
+        upgrade_acknowledged=True,
     )["status"] == "SUCCEEDED"
     assert service.change_provider_runtime(
         plugin_id="vllm",
@@ -649,6 +650,7 @@ def test_service_managed_provider_runtime_lifecycle_delegates_through_facade() -
     assert service.remove_provider_runtime(plugin_id="vllm")["status"] == "REMOVED"
     assert [name for name, _payload in inventory.calls] == ["install", "change", "remove"]
     assert inventory.calls[0][1]["operator_note"] == "install"
+    assert inventory.calls[0][1]["upgrade_acknowledged"] is True
 
 
 def test_provider_installation_approval_and_job_survive_snapshot_restore() -> None:

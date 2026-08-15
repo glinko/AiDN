@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
+from aidn_hypervisor.dashboard_network_access import DashboardNetworkAccessService
 from aidn_hypervisor.endpoint_publications.signing import sign_consensus_bytes
 from aidn_hypervisor.endpoints.endpoint_application_service import EndpointApplicationService
 from aidn_hypervisor.endpoints.models import (
@@ -32,7 +33,6 @@ from aidn_hypervisor.mcp.permissions import (
     permission_catalog_payload,
 )
 from aidn_hypervisor.operator_access import DashboardAccessService
-from aidn_hypervisor.dashboard_network_access import DashboardNetworkAccessService
 from aidn_hypervisor.resource_probe import refresh_resource_probe_from_environment
 from aidn_hypervisor.wallet_identity import wallet_identity_registration_payload
 from aidn_hypervisor.wallet_reconciliation import reconcile_pending_wallet_transfers
@@ -82,6 +82,7 @@ class ProviderRuntimeInstallRequest(BaseModel):
 
     configuration: dict[str, Any] = Field(default_factory=dict)
     operator_note: str | None = Field(default=None, max_length=500)
+    upgrade_acknowledged: bool = False
 
 
 class WalletBootstrapCreateRequest(BaseModel):
@@ -977,6 +978,7 @@ def build_operator_access_router(
                 plugin_id=plugin_id,
                 configuration=payload.configuration,
                 operator_note=payload.operator_note or "Paired Dashboard one-click runtime installation",
+                upgrade_acknowledged=payload.upgrade_acknowledged,
             )
         except (KeyError, ValueError) as error:
             return operation_error(error)
@@ -1007,12 +1009,14 @@ def build_operator_access_router(
                     plugin_id=plugin_id,
                     configuration=payload.configuration,
                     operator_note=payload.operator_note,
+                    upgrade_acknowledged=payload.upgrade_acknowledged,
                 )
             elif action == "change":
                 result = hypervisor_service.change_provider_runtime(
                     plugin_id=plugin_id,
                     configuration=payload.configuration,
                     operator_note=payload.operator_note,
+                    upgrade_acknowledged=payload.upgrade_acknowledged,
                 )
             elif action == "remove":
                 result = hypervisor_service.remove_provider_runtime(plugin_id=plugin_id)

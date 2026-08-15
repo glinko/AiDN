@@ -140,6 +140,7 @@ class ProviderInstallationService:
         plugin_id: str,
         configuration: dict,
         operator_note: str | None = None,
+        upgrade_acknowledged: bool = False,
     ) -> dict:
         """Install a managed provider runtime through the inventory service.
 
@@ -151,6 +152,7 @@ class ProviderInstallationService:
             plugin_id=plugin_id,
             configuration=configuration,
             operator_note=operator_note,
+            upgrade_acknowledged=upgrade_acknowledged,
         )
         self._host._persist_state()
         return job
@@ -161,11 +163,13 @@ class ProviderInstallationService:
         plugin_id: str,
         configuration: dict,
         operator_note: str | None = None,
+        upgrade_acknowledged: bool = False,
     ) -> dict:
         job = self._host.provider_inventory.change_provider_runtime(
             plugin_id=plugin_id,
             configuration=configuration,
             operator_note=operator_note,
+            upgrade_acknowledged=upgrade_acknowledged,
         )
         self._host._persist_state()
         return job

@@ -1522,11 +1522,13 @@ class HypervisorService:
         plugin_id: str,
         configuration: dict,
         operator_note: str | None = None,
+        upgrade_acknowledged: bool = False,
     ) -> dict:
         return self._provider_installation_facade().install_provider_runtime(
             plugin_id=plugin_id,
             configuration=configuration,
             operator_note=operator_note,
+            upgrade_acknowledged=upgrade_acknowledged,
         )
 
     def change_provider_runtime(
@@ -1535,11 +1537,13 @@ class HypervisorService:
         plugin_id: str,
         configuration: dict,
         operator_note: str | None = None,
+        upgrade_acknowledged: bool = False,
     ) -> dict:
         return self._provider_installation_facade().change_provider_runtime(
             plugin_id=plugin_id,
             configuration=configuration,
             operator_note=operator_note,
+            upgrade_acknowledged=upgrade_acknowledged,
         )
 
     def remove_provider_runtime(self, *, plugin_id: str) -> dict:

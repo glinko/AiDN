@@ -757,6 +757,7 @@ class ProviderInventoryService:
         configuration: dict,
         operator_note: str | None,
         reuse_existing_provider_instance: bool,
+        upgrade_acknowledged: bool,
     ) -> ProviderInstallationJob:
         plan = self.build_installation_plan(
             plugin_id=plugin_id,
@@ -774,7 +775,7 @@ class ProviderInventoryService:
             plugin_id=plugin_id,
             configuration=deepcopy(configuration),
             approved_permissions=approved_permissions,
-            upgrade_acknowledged=False,
+            upgrade_acknowledged=upgrade_acknowledged,
             selected_secret_handles=[],
             operator_note=operator_note or "Paired Dashboard Provider runtime action",
         )
@@ -789,6 +790,7 @@ class ProviderInventoryService:
         plugin_id: str,
         configuration: dict,
         operator_note: str | None = None,
+        upgrade_acknowledged: bool = False,
     ) -> dict:
         active_managed = [
             instance
@@ -806,6 +808,7 @@ class ProviderInventoryService:
             configuration=configuration,
             operator_note=operator_note,
             reuse_existing_provider_instance=False,
+            upgrade_acknowledged=upgrade_acknowledged,
         ).model_dump(mode="json")
 
     def change_provider_runtime(
@@ -814,6 +817,7 @@ class ProviderInventoryService:
         plugin_id: str,
         configuration: dict,
         operator_note: str | None = None,
+        upgrade_acknowledged: bool = False,
     ) -> dict:
         active_managed = [
             instance
@@ -829,6 +833,7 @@ class ProviderInventoryService:
             configuration=configuration,
             operator_note=operator_note or "Paired Dashboard Provider runtime change",
             reuse_existing_provider_instance=True,
+            upgrade_acknowledged=upgrade_acknowledged,
         ).model_dump(mode="json")
 
     def remove_provider_runtime(self, *, plugin_id: str) -> dict:
