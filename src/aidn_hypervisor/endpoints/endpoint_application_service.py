@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from aidn_hypervisor.bundle_hash import bundle_config_hash
 from aidn_hypervisor.endpoints.models import (
     CreateEndpointCommand,
     UpdateEndpointCommand,
@@ -51,6 +52,18 @@ class EndpointApplicationService:
                     str(runtime_binding_id)
                 )
             )
+        elif self._hypervisor_service is not None and not command_data.get("bundle_hash"):
+            bundle_id = str(command_data.get("bundle_id") or "")
+            bundle = next(
+                (
+                    candidate
+                    for candidate in self._hypervisor_service.bundle_config()
+                    if candidate.bundle_id == bundle_id
+                ),
+                None,
+            )
+            if bundle is not None:
+                command_data["bundle_hash"] = bundle.bundle_hash or bundle_config_hash(bundle)
 
         command = CreateEndpointCommand(**command_data)
         created = self._endpoint_service.create_endpoint(command)

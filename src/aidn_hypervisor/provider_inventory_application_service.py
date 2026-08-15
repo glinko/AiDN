@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from aidn_hypervisor.bundle_hash import bundle_config_hash
 from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
 from aidn_hypervisor.runtime_parameter_policy import (
     normalize_runtime_parameter_policy,
@@ -306,6 +307,7 @@ class ProviderInventoryApplicationService:
             runtime_parameter_policy=normalized_policy,
         )
         plugin.validate_bundle(bundle)
+        bundle = bundle.model_copy(update={"bundle_hash": bundle_config_hash(bundle)})
         self._host.bundles.append(bundle)
         job["status"] = "registered"
         job["bundle_id"] = bundle_id

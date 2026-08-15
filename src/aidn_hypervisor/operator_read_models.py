@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from aidn_hypervisor.bundle_hash import bundle_config_hash
 from aidn_hypervisor.domain.models import BundleConfig
 from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.queue import QueuedTask
@@ -161,7 +162,7 @@ class OperatorReadModelService:
             "bundle_id": bundle.bundle_id,
             "revision": bundle.revision,
             "revision_of": bundle.revision_of,
-            "bundle_hash": bundle.bundle_hash,
+            "bundle_hash": bundle.bundle_hash or bundle_config_hash(bundle),
             "plugin_id": bundle.plugin_id,
             "provider_type": bundle.provider_type,
             "workload_type": bundle.workload_type,

@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import time
 
+from aidn_hypervisor.bundle_hash import bundle_config_hash
 from aidn_hypervisor.domain.models import BundleConfig, TaskRequest
 from aidn_hypervisor.process_manager import RuntimeHandle
 
@@ -96,11 +95,7 @@ class BundleRuntimePolicyService:
 
     @staticmethod
     def _bundle_hash(bundle: BundleConfig) -> str:
-        payload = bundle.model_dump(mode="json")
-        payload.pop("bundle_hash", None)
-        payload.pop("enabled", None)
-        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        return f"sha256:{hashlib.sha256(canonical.encode('utf-8')).hexdigest()}"
+        return bundle_config_hash(bundle)
 
     def reload_bundle_config(self) -> int:
         registry = self.require_bundle_registry()
