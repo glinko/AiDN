@@ -134,6 +134,49 @@ class ProviderInstallationService:
         self._host._persist_state()
         return job.model_dump(mode="json")
 
+    def install_provider_runtime(
+        self,
+        *,
+        plugin_id: str,
+        configuration: dict,
+        operator_note: str | None = None,
+    ) -> dict:
+        """Install a managed provider runtime through the inventory service.
+
+        The dashboard-facing HypervisorService exposes these lifecycle methods
+        through this facade, so keep persistence at the orchestration boundary
+        just like the explicit plan/approval/apply methods above.
+        """
+        job = self._host.provider_inventory.install_provider_runtime(
+            plugin_id=plugin_id,
+            configuration=configuration,
+            operator_note=operator_note,
+        )
+        self._host._persist_state()
+        return job
+
+    def change_provider_runtime(
+        self,
+        *,
+        plugin_id: str,
+        configuration: dict,
+        operator_note: str | None = None,
+    ) -> dict:
+        job = self._host.provider_inventory.change_provider_runtime(
+            plugin_id=plugin_id,
+            configuration=configuration,
+            operator_note=operator_note,
+        )
+        self._host._persist_state()
+        return job
+
+    def remove_provider_runtime(self, *, plugin_id: str) -> dict:
+        result = self._host.provider_inventory.remove_provider_runtime(
+            plugin_id=plugin_id,
+        )
+        self._host._persist_state()
+        return result
+
     def rollback_provider_installation_job(self, job_id: str) -> dict:
         job = self._host.provider_inventory.rollback_installation_job(job_id)
         self._host._persist_state()

@@ -611,6 +611,46 @@ def test_service_build_provider_installation_plan_preview() -> None:
     assert plan["plugin_id"] == "fake-managed"
 
 
+def test_service_managed_provider_runtime_lifecycle_delegates_through_facade() -> None:
+    class FakeProviderInventory:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict]] = []
+
+        def install_provider_runtime(self, **payload) -> dict:
+            self.calls.append(("install", payload))
+            return {"plugin_id": payload["plugin_id"], "status": "SUCCEEDED"}
+
+        def change_provider_runtime(self, **payload) -> dict:
+            self.calls.append(("change", payload))
+            return {"plugin_id": payload["plugin_id"], "status": "SUCCEEDED"}
+
+        def remove_provider_runtime(self, **payload) -> dict:
+            self.calls.append(("remove", payload))
+            return {"plugin_id": payload["plugin_id"], "status": "REMOVED"}
+
+    inventory = FakeProviderInventory()
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        provider_inventory=inventory,
+    )
+    configuration = {"runtime_version": "0.27.1"}
+
+    assert service.install_provider_runtime(
+        plugin_id="vllm",
+        configuration=configuration,
+        operator_note="install",
+    )["status"] == "SUCCEEDED"
+    assert service.change_provider_runtime(
+        plugin_id="vllm",
+        configuration=configuration,
+        operator_note="change",
+    )["status"] == "SUCCEEDED"
+    assert service.remove_provider_runtime(plugin_id="vllm")["status"] == "REMOVED"
+    assert [name for name, _payload in inventory.calls] == ["install", "change", "remove"]
+    assert inventory.calls[0][1]["operator_note"] == "install"
+
+
 def test_provider_installation_approval_and_job_survive_snapshot_restore() -> None:
     state_store = RecordingStateStore()
     installation_executor = CustomProviderInstallationExecutor()
