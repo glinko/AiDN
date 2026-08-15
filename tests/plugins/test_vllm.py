@@ -22,6 +22,17 @@ class StubVllmPlugin(VllmPlugin):
         return {"data": []}
 
 
+class UnreachableVllmPlugin(VllmPlugin):
+    def _request_json(
+        self,
+        method: str,
+        url: str,
+        payload: dict | None = None,
+        **kwargs,
+    ) -> dict:
+        raise RuntimeError("<urlopen error [Errno 111] Connection refused>")
+
+
 def _bundle() -> BundleConfig:
     return BundleConfig(
         bundle_id="qwen-vllm",
@@ -112,3 +123,20 @@ def test_vllm_plugin_invoke_uses_runtime_execution_timeout() -> None:
 
     assert result["output_text"] == "ok"
     assert plugin.request_kwargs == [{"timeout_seconds": 37.0}]
+
+
+def test_vllm_health_diagnostic_explains_unreachable_endpoint() -> None:
+    plugin = UnreachableVllmPlugin()
+    runtime = RuntimeHandle(
+        runtime_id="provider-health",
+        command=[],
+        status="running",
+        metadata={"endpoint": "http://127.0.0.1:11234"},
+    )
+
+    diagnostic = plugin.health_check_diagnostic(runtime)
+
+    assert diagnostic["healthy"] is False
+    assert diagnostic["code"] == "provider_endpoint_unreachable"
+    assert diagnostic["probe_url"] == "http://127.0.0.1:11234/v1/models"
+    assert "Start vLLM with a model" in diagnostic["message"]

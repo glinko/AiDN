@@ -38,6 +38,32 @@ class ProviderPlugin(ABC):
     def health_check(self, runtime_handle) -> bool:
         raise NotImplementedError
 
+    def health_check_diagnostic(self, runtime_handle) -> dict:
+        """Return an operator-safe explanation for the provider health state.
+
+        Plugins that know their transport contract can override this with a
+        provider-specific probe URL and remediation hint.  Keeping the
+        default here preserves the existing boolean plugin contract while
+        allowing the Dashboard to stop presenting every failure as the same
+        opaque ``unhealthy result`` message.
+        """
+
+        try:
+            healthy = bool(self.health_check(runtime_handle))
+        except Exception as exc:  # pragma: no cover - plugin boundary
+            return {
+                "healthy": False,
+                "code": "provider_health_check_failed",
+                "message": str(exc) or f"{self.plugin_id} health check failed",
+            }
+        return {
+            "healthy": healthy,
+            "code": "provider_healthy" if healthy else "provider_unhealthy",
+            "message": None
+            if healthy
+            else "provider health check returned an unhealthy result",
+        }
+
     @abstractmethod
     def invoke(self, task, runtime_handle) -> dict:
         raise NotImplementedError

@@ -88,6 +88,7 @@ if [[ -n "$served_model_name" ]]; then valid_model_id "$served_model_name" || di
 
 venv_path="$root_path/venv"
 binary_path="$venv_path/bin/vllm"
+runtime_version_path="$root_path/runtime-version"
 unit_path="$HOME/.config/systemd/user/$SERVICE_NAME"
 
 case "$action" in
@@ -104,13 +105,31 @@ case "$action" in
       uv_bin="$(resolve_uv)" || die "uv installation did not produce an executable"
     fi
     mkdir -p "$root_path" "$root_path/cache/huggingface" "$root_path/cache/vllm"
-    "$uv_bin" venv --python "$python_version" --seed "$venv_path"
-    "$uv_bin" pip install --python "$venv_path/bin/python" "vllm==$version" --torch-backend=auto
+    expected_runtime_marker="$version python-$python_version cuda-auto"
+    reusable_venv=false
+    if [[ -x "$binary_path" && -f "$runtime_version_path" ]]; then
+      recorded_runtime_marker="$(<"$runtime_version_path")"
+      installed_version="$("$binary_path" --version 2>/dev/null || true)"
+      if [[ "$recorded_runtime_marker" == "$expected_runtime_marker" && "$installed_version" == *"$version"* ]]; then
+        reusable_venv=true
+      fi
+    fi
+    if [[ "$reusable_venv" != true ]]; then
+      if [[ -e "$venv_path" ]]; then
+        # uv refuses to overwrite an existing environment.  Clear it only
+        # when the recorded runtime is incomplete or no longer matches the
+        # reviewed pin; a matching installation is reused above.
+        "$uv_bin" venv --clear --python "$python_version" --seed "$venv_path"
+      else
+        "$uv_bin" venv --python "$python_version" --seed "$venv_path"
+      fi
+      "$uv_bin" pip install --python "$venv_path/bin/python" "vllm==$version" --torch-backend=auto
+    fi
     [[ -x "$binary_path" ]] || die "vLLM installation did not produce an executable"
-    printf '%s\n' "$version python-$python_version cuda-auto" > "$root_path/runtime-version"
-    chmod 600 "$root_path/runtime-version"
-    printf '{"status":"installed","provider":"vllm","version":"%s","python":"%s","binary":"%s"}\n' \
-      "$version" "$python_version" "$binary_path"
+    printf '%s\n' "$expected_runtime_marker" > "$runtime_version_path"
+    chmod 600 "$runtime_version_path"
+    printf '{"status":"installed","provider":"vllm","version":"%s","python":"%s","binary":"%s","reused":%s}\n' \
+      "$version" "$python_version" "$binary_path" "$([[ "$reusable_venv" == true ]] && printf true || printf false)"
     ;;
   start)
     [[ -x "$binary_path" ]] || die "vLLM runtime is not installed"

@@ -171,7 +171,15 @@ class VllmPlugin(ProviderPlugin):
     def attach_provider_schema(self) -> dict:
         return {
             "schema_id": "vllm.attach.v1",
-            "fields": [{"id": "endpoint", "type": "url", "label": "vLLM endpoint", "required": True}],
+            "fields": [
+                {
+                    "id": "endpoint",
+                    "type": "url",
+                    "label": "vLLM endpoint",
+                    "required": True,
+                    "default": self._default_endpoint,
+                }
+            ],
         }
 
     def validate_provider_configuration(self, configuration: dict) -> None:
@@ -212,11 +220,55 @@ class VllmPlugin(ProviderPlugin):
         ]
 
     def health_check(self, runtime_handle) -> bool:
+        return bool(self.health_check_diagnostic(runtime_handle).get("healthy"))
+
+    def health_check_diagnostic(self, runtime_handle) -> dict:
+        endpoint = self._endpoint(runtime_handle)
+        probe_url = f"{endpoint}/v1/models"
         try:
-            payload = self._request_json("GET", f"{self._endpoint(runtime_handle)}/v1/models")
-        except Exception:
-            return False
-        return isinstance(payload.get("data"), list)
+            payload = self._request_json("GET", probe_url)
+        except Exception as exc:  # pragma: no cover - exercised through live transport
+            detail = str(exc).strip() or exc.__class__.__name__
+            lowered = detail.lower()
+            if "connection refused" in lowered or "urlopen error" in lowered:
+                message = (
+                    f"vLLM is not listening at {endpoint}. Probe {probe_url} was refused. "
+                    "Start vLLM with a model on port 8000 or attach the endpoint where it is running."
+                )
+                code = "provider_endpoint_unreachable"
+            elif "timed out" in lowered or "timeout" in lowered:
+                message = (
+                    f"vLLM did not answer {probe_url} before the timeout. "
+                    "Check that the service is running and the endpoint is reachable from this node."
+                )
+                code = "provider_endpoint_timeout"
+            else:
+                message = f"vLLM probe failed for {probe_url}: {detail}"
+                code = "provider_health_check_failed"
+            return {
+                "healthy": False,
+                "code": code,
+                "message": message,
+                "endpoint": endpoint,
+                "probe_url": probe_url,
+                "hint": "The reviewed local runtime uses http://127.0.0.1:8000 and needs --model before start.",
+            }
+        if not isinstance(payload.get("data"), list):
+            return {
+                "healthy": False,
+                "code": "provider_invalid_response",
+                "message": f"vLLM answered {probe_url}, but its response has no valid data list.",
+                "endpoint": endpoint,
+                "probe_url": probe_url,
+                "hint": "Use the vLLM OpenAI-compatible /v1/models endpoint.",
+            }
+        return {
+            "healthy": True,
+            "code": "provider_healthy",
+            "message": None,
+            "endpoint": endpoint,
+            "probe_url": probe_url,
+        }
 
     def validate_bundle(self, bundle_config) -> None:
         if bundle_config.workload_type != "llm_text":

@@ -165,6 +165,20 @@ class OllamaPlugin(ProviderPlugin):
             "unsupported_actions": [],
         }
 
+    def attach_provider_schema(self) -> dict:
+        return {
+            "schema_id": "ollama.attach.v1",
+            "fields": [
+                {
+                    "id": "endpoint",
+                    "type": "url",
+                    "label": "Ollama endpoint",
+                    "required": True,
+                    "default": self._default_endpoint,
+                }
+            ],
+        }
+
     def attach_existing_provider(self, configuration: dict) -> dict:
         endpoint = str(configuration.get("endpoint") or configuration.get("base_url") or "").rstrip("/")
         parsed = parse.urlparse(endpoint)

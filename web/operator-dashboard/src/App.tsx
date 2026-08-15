@@ -2095,10 +2095,64 @@ function ResourceProbeControl({ fleet, onRefresh }: { fleet: DashboardData['flee
   return <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-start justify-between gap-4 border-b border-border/70 px-5 py-4"><div><p className="eyebrow">Host capacity</p><CardTitle className="mt-1 text-lg font-semibold">Resource probe</CardTitle><p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">Measure CPU, memory, storage and supported GPU capacity directly on this Hypervisor. The browser never supplies resource values.</p></div><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy} onClick={() => void refreshProbe()}><Gauge />{busy ? 'Measuring...' : 'Run probe'}</Button></CardHeader><CardContent className="p-5"><div className="rounded-lg border border-border/70 bg-[#07111d] p-3"><p className="eyebrow">Last evidence</p><p className="mt-1 text-sm text-slate-200">{getText(probe, 'source') || 'No current probe record'}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">{Array.isArray(probe?.limitations) && probe.limitations.length > 0 ? String(probe.limitations[0]) : 'A paired operator session is required to run this local measurement.'}</p></div>{message ? <div className="mt-3"><OperationNotice message={message} onDismiss={() => setMessage(null)} /></div> : null}</CardContent></Card>
 }
 
+function providerAttachFields(plugin: DashboardRecord | undefined): DashboardRecord[] {
+  const schema = getRecord(plugin?.attach_ui_schema)
+  return Array.isArray(schema?.fields)
+    ? schema.fields.filter((field): field is DashboardRecord => Boolean(getRecord(field)))
+    : []
+}
+
+function providerFieldDefault(field: DashboardRecord): unknown {
+  if (field.default !== undefined) return field.default
+  if (Array.isArray(field.options)) {
+    const firstOption = getRecord(field.options[0])
+    return firstOption?.value ?? ''
+  }
+  if (field.type === 'boolean') return false
+  return ''
+}
+
+function providerConfigurationDefaults(plugin: DashboardRecord | undefined): DashboardRecord {
+  return Object.fromEntries(providerAttachFields(plugin).map((field) => [getText(field, 'id'), providerFieldDefault(field)]).filter(([id]) => Boolean(id)))
+}
+
+function providerFieldValue(configuration: DashboardRecord, field: DashboardRecord): string | boolean {
+  const value = configuration[getText(field, 'id')]
+  if (field.type === 'boolean') return value === true
+  return typeof value === 'string' || typeof value === 'number' ? String(value) : ''
+}
+
+function providerFieldOptions(field: DashboardRecord): DashboardRecord[] {
+  return Array.isArray(field.options)
+    ? field.options.filter((option): option is DashboardRecord => Boolean(getRecord(option)))
+    : []
+}
+
+function providerConfigurationIssue(plugin: DashboardRecord | undefined, displayName: string, configuration: DashboardRecord): string | null {
+  const fields = providerAttachFields(plugin)
+  if (!displayName.trim()) return 'Set a display name for the Provider instance.'
+  for (const field of fields) {
+    const id = getText(field, 'id')
+    const value = id === 'display_name' ? displayName : configuration[id]
+    if (field.required === true && (value === undefined || value === null || String(value).trim() === '')) {
+      return `${getText(field, 'label') || id} is required.`
+    }
+    if (getText(field, 'type') === 'url' && value) {
+      try {
+        const parsed = new URL(String(value))
+        if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('unsupported protocol')
+      } catch {
+        return `${getText(field, 'label') || id} must be an absolute HTTP URL.`
+      }
+    }
+  }
+  return null
+}
+
 function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefresh }: { screen: 'providers' | 'catalog'; workspace: ProviderWorkspace | undefined; isLoading: boolean; error: Error | null; onRefresh: () => void }) {
   const [pluginId, setPluginId] = useState('')
   const [displayName, setDisplayName] = useState('')
-  const [configuration, setConfiguration] = useState('{\n  "base_url": "http://127.0.0.1:11434"\n}')
+  const [configuration, setConfiguration] = useState<DashboardRecord>({})
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const plugins = workspace?.plugin_directory ?? []
@@ -2108,41 +2162,56 @@ function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefres
   const runtimeExecutor = getRecord(workspace?.installation_executor)
   const runtimeSandbox = getRecord(runtimeExecutor?.sandbox_capabilities)
   const runtimeInstallEnabled = runtimeSandbox?.host_mutation === true
+  const selectedPlugin = plugins.find((plugin) => getText(plugin, 'plugin_id') === pluginId)
+  const attachFields = providerAttachFields(selectedPlugin)
 
   useEffect(() => {
     if (!pluginId && plugins.length > 0) {
-      const nextPlugin = getText(plugins[0], 'plugin_id')
+      const firstPlugin = plugins[0]
+      const nextPlugin = getText(firstPlugin, 'plugin_id')
       setPluginId(nextPlugin)
-      setDisplayName(getText(plugins[0], 'display_name') || nextPlugin)
+      setDisplayName(getText(firstPlugin, 'display_name') || nextPlugin)
+      setConfiguration(providerConfigurationDefaults(firstPlugin))
     }
   }, [pluginId, plugins])
 
   function choosePlugin(nextPluginId: string) {
     setPluginId(nextPluginId)
     const plugin = plugins.find((item) => getText(item, 'plugin_id') === nextPluginId)
-    if (plugin && !displayName.trim()) setDisplayName(getText(plugin, 'display_name') || nextPluginId)
+    if (plugin) {
+      setDisplayName(getText(plugin, 'display_name') || nextPluginId)
+      setConfiguration(providerConfigurationDefaults(plugin))
+    }
   }
 
   async function attach() {
-    let parsedConfiguration: DashboardRecord
-    try {
-      const candidate: unknown = JSON.parse(configuration)
-      const record = getRecord(candidate)
-      if (!record) throw new Error('Configuration must be a JSON object.')
-      parsedConfiguration = record
-    } catch (cause) {
-      setMessage(cause instanceof Error ? cause.message : 'Provider configuration is not valid JSON.')
+    const issue = providerConfigurationIssue(selectedPlugin, displayName, configuration)
+    if (!pluginId || issue) {
+      setMessage(issue || 'Select a Provider plugin and set a display name.')
       return
     }
-    if (!pluginId || !displayName.trim()) {
-      setMessage('Select a Provider plugin and set a display name.')
-      return
+    const parsedConfiguration: DashboardRecord = {
+      ...configuration,
+      ...(attachFields.some((field) => getText(field, 'id') === 'display_name') ? { display_name: displayName.trim() } : {}),
     }
     setBusy('attach')
     setMessage(null)
     try {
       const result = await dashboardApi.attachProvider({ plugin_id: pluginId, display_name: displayName.trim(), configuration: parsedConfiguration })
-      setMessage(`Provider ${getText(result, 'provider_instance_id') || displayName.trim()} was attached. Probe it before using it for a Bundle.`)
+      const providerInstanceId = getText(result, 'provider_instance_id')
+      if (providerInstanceId) {
+        try {
+          const health = getRecord(await dashboardApi.providerOperation(providerInstanceId, 'probe'))
+          const diagnostic = getRecord(health?.diagnostic)
+          setMessage(health?.healthy === true
+            ? `Provider ${providerInstanceId} was attached and is healthy.`
+            : `Provider ${providerInstanceId} was attached but is unavailable. ${getText(diagnostic, 'message') || getText(health, 'error') || 'Run Probe again after starting the service.'}`)
+        } catch {
+          setMessage(`Provider ${providerInstanceId} was attached. Probe it before using it for a Bundle.`)
+        }
+      } else {
+        setMessage(`Provider ${displayName.trim()} was attached. Probe it before using it for a Bundle.`)
+      }
       onRefresh()
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : 'Provider attachment failed.')
@@ -2156,8 +2225,16 @@ function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefres
     setMessage(null)
     try {
       const result = await dashboardApi.providerOperation(providerInstanceId, action)
-      const discovered = getRecord(result)?.items
-      setMessage(action === 'discover-models' ? `Model discovery completed: ${Array.isArray(discovered) ? discovered.length : 0} model deployment(s) found.` : `Provider ${providerInstanceId} health check completed.`)
+      const payload = getRecord(result)
+      const discovered = payload?.items
+      if (action === 'discover-models') {
+        setMessage(`Model discovery completed: ${Array.isArray(discovered) ? discovered.length : 0} model deployment(s) found.`)
+      } else {
+        const diagnostic = getRecord(payload?.diagnostic)
+        setMessage(payload?.healthy === true
+          ? `Provider ${providerInstanceId} is healthy.`
+          : `Provider ${providerInstanceId} is unhealthy. ${getText(diagnostic, 'message') || getText(payload, 'error') || 'Check the endpoint and service logs.'}`)
+      }
       onRefresh()
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : 'Provider operation failed.')
@@ -2188,7 +2265,9 @@ function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefres
       const status = getText(result, 'status')
       const providerInstanceId = getText(result, 'provider_instance_id')
       if (status !== 'SUCCEEDED') {
-        setMessage(`Provider ${providerId} installation ${status ? status.toLowerCase() : 'did not complete'}. Review the installation job details and retry.`)
+        const job = getRecord(result?.installation_job)
+        const failureDetail = getText(result, 'error') || getText(result, 'error_message') || getText(job, 'error') || getText(job, 'error_message')
+        setMessage(`Provider ${providerId} installation ${status ? status.toLowerCase() : 'did not complete'}.${failureDetail ? ` ${failureDetail}` : ' Review the installation job details and retry.'}`)
         onRefresh()
         return
       }
@@ -2223,8 +2302,8 @@ function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefres
     {error && !workspace ? <PanelError title="Provider workspace is unavailable" error={error} onRetry={onRefresh} /> : null}
     {workspace ? <>
       <Card className="border-cyan-300/20 bg-cyan-300/[0.03] py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow text-cyan-100">Reviewed Ubuntu runtimes</p><CardTitle className="mt-1 text-lg font-semibold">Provider install catalog</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">{runtimeInstallEnabled ? 'Choose a pinned runtime and install it through the root-owned allowlisted broker. Model selection and downloads remain a separate step.' : 'Installation is unavailable until this node exposes the root-owned broker. Attaching an already-running service remains available below.'}</p></CardHeader><CardContent className="divide-y divide-border/70 p-0">{plugins.filter((plugin) => { const installers = getRecord(plugin)?.runtime_installers; return Array.isArray(installers) && installers.length > 0 }).map((plugin) => { const record = getRecord(plugin); const installers = Array.isArray(record?.runtime_installers) ? record.runtime_installers : []; const installer = getRecord(installers[0]); const providerId = getText(record, 'plugin_id'); const installBusy = busy === `install:${providerId}`; return <div key={providerId} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-white">{getText(record, 'display_name') || providerId}</p><StatusBadge value={runtimeInstallEnabled ? 'ready' : 'blocked'} /></div><p className="mt-1 text-xs text-muted-foreground">{getText(installer, 'platform') || 'ubuntu'} · pinned {getText(installer, 'pinned_version') || 'reviewed'} · model setup remains a separate step</p></div><Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={!runtimeInstallEnabled || busy !== null} onClick={() => void installRuntime(plugin)}>{installBusy ? 'Installing...' : runtimeInstallEnabled ? 'Install runtime' : 'Install unavailable'}</Button></div> })}</CardContent></Card>
-      <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Attach existing Provider</p><CardTitle className="mt-1 text-lg font-semibold">Create Provider instance</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">Use the Plugin's documented configuration. For local Ollama, the usual value is a `base_url`; no Provider credentials are persisted in this form.</p></CardHeader><CardContent className="grid gap-3 p-5 lg:grid-cols-[0.8fr_0.9fr_1.5fr_auto]"><label className="grid gap-2"><span className="eyebrow">Plugin</span><select value={pluginId} onChange={(event) => choosePlugin(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300">{plugins.map((plugin) => <option key={getText(plugin, 'plugin_id')} value={getText(plugin, 'plugin_id')}>{getText(plugin, 'display_name') || getText(plugin, 'plugin_id')}</option>)}</select></label><label className="grid gap-2"><span className="eyebrow">Provider name</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Node Ollama" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Configuration JSON</span><input value={configuration} onChange={(event) => setConfiguration(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><div className="flex items-end"><Button className="w-full bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy === 'attach' || plugins.length === 0} onClick={() => void attach()}><ServerCog />{busy === 'attach' ? 'Attaching...' : 'Attach'}</Button></div></CardContent></Card>
-      <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/70 px-5 py-4"><div><p className="eyebrow">Attached inventory</p><CardTitle className="mt-1 text-lg font-semibold">Provider instances</CardTitle></div><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={onRefresh}><RefreshCw />Refresh</Button></CardHeader><CardContent className="divide-y divide-border/70 p-0">{instances.length === 0 ? <EmptyState title="No Provider instances attached" detail="Attach a known local Provider above. The Dashboard will not guess an upstream endpoint or create credentials." actionLabel="Refresh catalog" onAction={onRefresh} /> : instances.map((instance) => { const id = getText(instance, 'provider_instance_id'); return <div key={id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-white">{getText(instance, 'display_name') || id}</p><StatusBadge value={getText(instance, 'health_status') || 'unknown'} /></div><p className="mt-1 break-all font-mono text-[11px] text-slate-500">{id} · {String(getRecord(instance)?.model_count ?? 0)} models · {String(getRecord(instance)?.runtime_binding_ready_count ?? 0)} ready bindings</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" className="border-border bg-[#091725]" disabled={busy === `${id}:probe`} onClick={() => void runProviderOperation(id, 'probe')}><Gauge />Probe</Button><Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={busy === `${id}:discover-models`} onClick={() => void runProviderOperation(id, 'discover-models')}><Database />Discover models</Button></div></div> })}</CardContent></Card>
+      <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Attach existing Provider</p><CardTitle className="mt-1 text-lg font-semibold">Create Provider instance</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">Choose a plugin first. The fields below come from that plugin's contract, so vLLM uses its OpenAI-compatible endpoint instead of inheriting an Ollama URL.</p></CardHeader><CardContent className="grid gap-4 p-5 md:grid-cols-2 lg:grid-cols-4"><label className="grid gap-2"><span className="eyebrow">Plugin</span><select value={pluginId} onChange={(event) => choosePlugin(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300">{plugins.map((plugin) => <option key={getText(plugin, 'plugin_id')} value={getText(plugin, 'plugin_id')}>{getText(plugin, 'display_name') || getText(plugin, 'plugin_id')}</option>)}</select></label><label className="grid gap-2"><span className="eyebrow">Provider name</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Local vLLM" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label>{attachFields.filter((field) => getText(field, 'id') !== 'display_name').map((field) => { const id = getText(field, 'id'); const type = getText(field, 'type'); const value = providerFieldValue(configuration, field); const options = providerFieldOptions(field); return <label key={id} className="grid gap-2"><span className="eyebrow">{getText(field, 'label') || id}{field.required === true ? ' *' : ''}</span>{type === 'select' ? <select value={String(value)} onChange={(event) => setConfiguration((current) => ({ ...current, [id]: event.target.value }))} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300">{options.map((option) => <option key={String(option.value)} value={String(option.value)}>{getText(option, 'label') || String(option.value)}</option>)}</select> : type === 'boolean' ? <span className="flex h-10 items-center gap-2 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-slate-200"><input type="checkbox" checked={value === true} onChange={(event) => setConfiguration((current) => ({ ...current, [id]: event.target.checked }))} />Enabled</span> : <input type={type === 'url' ? 'url' : 'text'} value={String(value)} onChange={(event) => setConfiguration((current) => ({ ...current, [id]: event.target.value }))} placeholder={String(field.default ?? '')} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" />}</label> })}<div className="flex items-end"><Button className="w-full bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy === 'attach' || plugins.length === 0} onClick={() => void attach()}><ServerCog />{busy === 'attach' ? 'Attaching...' : 'Attach'}</Button></div></CardContent></Card>
+      <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/70 px-5 py-4"><div><p className="eyebrow">Attached inventory</p><CardTitle className="mt-1 text-lg font-semibold">Provider instances</CardTitle><p className="mt-1 text-xs text-muted-foreground">Unhealthy is an observed state, not an installation failure. Open the probe detail before changing runtime or model settings.</p></div><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={onRefresh}><RefreshCw />Refresh</Button></CardHeader><CardContent className="divide-y divide-border/70 p-0">{instances.length === 0 ? <EmptyState title="No Provider instances attached" detail="Attach a known local Provider above. The Dashboard will not guess an upstream endpoint or create credentials." actionLabel="Refresh catalog" onAction={onRefresh} /> : instances.map((instance) => { const id = getText(instance, 'provider_instance_id'); const record = getRecord(instance); const providerConfiguration = getRecord(record?.configuration); const healthError = getText(record, 'last_health_error'); return <div key={id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-white">{getText(instance, 'display_name') || id}</p><StatusBadge value={getText(instance, 'health_status') || 'unknown'} /></div><p className="mt-1 break-all font-mono text-[11px] text-slate-500">{id} · {getText(providerConfiguration, 'endpoint') || getText(providerConfiguration, 'base_url') || 'endpoint not declared'} · {String(record?.model_count ?? 0)} models · {String(record?.runtime_binding_ready_count ?? 0)} ready bindings</p>{healthError ? <p className="mt-2 max-w-3xl text-xs leading-5 text-rose-200">{healthError}</p> : null}</div><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" className="border-border bg-[#091725]" disabled={busy === `${id}:probe`} onClick={() => void runProviderOperation(id, 'probe')}><Gauge />Probe</Button><Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={busy === `${id}:discover-models`} onClick={() => void runProviderOperation(id, 'discover-models')}><Database />Discover models</Button></div></div> })}</CardContent></Card>
       <div className="grid gap-4 lg:grid-cols-2"><InventoryCard title="Model deployments" detail="Discovered model supply. Runtime binding is required before Endpoint admission." items={deployments} primaryKey="model_deployment_id" /><InventoryCard title="Runtime bindings" detail="Compatibility records backing eligible Bundle and Endpoint runtime selection." items={bindings} primaryKey="runtime_binding_id" /></div>
     </> : null}
   </div>

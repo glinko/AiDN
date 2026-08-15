@@ -57,6 +57,14 @@ def test_provider_runtime_install_is_separate_from_model_configuration() -> None
     assert "model download remains a start/configuration step" in vllm
 
 
+def test_vllm_runtime_install_reuses_a_matching_environment() -> None:
+    vllm = PROVIDER_SCRIPTS[4].read_text(encoding="utf-8")
+
+    assert "runtime-version" in vllm
+    assert "--clear" in vllm
+    assert '"reused":%s' in vllm
+
+
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash is unavailable")
 @pytest.mark.parametrize("path", PROVIDER_SCRIPTS)
 def test_provider_runtime_installers_have_valid_bash_syntax(path: Path) -> None:

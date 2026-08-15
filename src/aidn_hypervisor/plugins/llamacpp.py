@@ -189,6 +189,7 @@ class LlamaCppPlugin(ProviderPlugin):
                     "type": "url",
                     "label": "OpenAI-compatible endpoint",
                     "required": True,
+                    "default": self._default_endpoint,
                 }
             ],
         }

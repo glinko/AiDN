@@ -2122,13 +2122,29 @@ class ProviderInventoryService:
         )
         checked_at = _now_iso()
         health_error: str | None = None
+        diagnostic: dict | None = None
         try:
-            healthy = bool(plugin.health_check(runtime))
+            diagnostic_builder = getattr(plugin, "health_check_diagnostic", None)
+            if callable(diagnostic_builder):
+                candidate = diagnostic_builder(runtime)
+                diagnostic = candidate if isinstance(candidate, dict) else None
+                healthy = bool(diagnostic.get("healthy")) if diagnostic is not None else bool(candidate)
+            else:  # pragma: no cover - compatibility for external plugins
+                healthy = bool(plugin.health_check(runtime))
         except Exception as exc:  # pragma: no cover - plugin boundary
             healthy = False
             health_error = str(exc)
+            diagnostic = {
+                "healthy": False,
+                "code": "provider_health_check_failed",
+                "message": health_error or "provider health check failed",
+            }
         if not healthy and health_error is None:
-            health_error = "provider health check returned an unhealthy result"
+            health_error = (
+                str(diagnostic.get("message"))
+                if diagnostic and diagnostic.get("message")
+                else "provider health check returned an unhealthy result"
+            )
 
         updated = instance.model_copy(
             update={
@@ -2144,6 +2160,7 @@ class ProviderInventoryService:
             "healthy": healthy,
             "checked_at": checked_at,
             "error": health_error,
+            "diagnostic": diagnostic,
         }
 
     def _validate_applied_provider_instance(
