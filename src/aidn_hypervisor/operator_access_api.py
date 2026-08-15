@@ -76,6 +76,13 @@ class ProviderAttachRequest(BaseModel):
     configuration: dict[str, Any] = Field(default_factory=dict)
 
 
+class ProviderRuntimeInstallRequest(BaseModel):
+    """Approve and apply one reviewed built-in runtime from the paired Dashboard."""
+
+    configuration: dict[str, Any] = Field(default_factory=dict)
+    operator_note: str | None = Field(default=None, max_length=500)
+
+
 class WalletBootstrapCreateRequest(BaseModel):
     label: str | None = Field(default=None, max_length=128)
 
@@ -918,6 +925,55 @@ def build_operator_access_router(
         except (KeyError, ValueError) as error:
             return operation_error(error)
         return JSONResponse(status_code=201, content=result)
+
+    @router.post("/operations/provider-plugins/{plugin_id}/install")
+    async def install_provider_plugin(
+        plugin_id: str,
+        payload: ProviderRuntimeInstallRequest,
+        request: Request,
+    ) -> Response:
+        """Run the reviewed one-click install flow through the paired Dashboard.
+
+        The browser never supplies arbitrary permissions or commands. The
+        server rebuilds the current plan, approves exactly its declared
+        permission IDs, then applies the approval through the configured
+        installation executor (the root-owned runtime broker on Ubuntu).
+        """
+
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
+        try:
+            plan = hypervisor_service.build_provider_installation_plan(
+                plugin_id=plugin_id,
+                configuration=payload.configuration,
+            )
+            required_permissions = plan.get("required_permissions", [])
+            if not isinstance(required_permissions, list):
+                raise ValueError("installation plan contains an invalid permission declaration")
+            approved_permissions = [
+                item["permission_id"]
+                for item in required_permissions
+                if isinstance(item, dict) and isinstance(item.get("permission_id"), str)
+            ]
+            if len(approved_permissions) != len(required_permissions):
+                raise ValueError("installation plan contains an invalid permission declaration")
+            approval = hypervisor_service.approve_provider_installation_plan(
+                plugin_id=plugin_id,
+                configuration=payload.configuration,
+                approved_permissions=approved_permissions,
+                upgrade_acknowledged=False,
+                selected_secret_handles=[],
+                operator_note=payload.operator_note or "Paired Dashboard one-click runtime installation",
+            )
+            result = hypervisor_service.apply_provider_installation_approval(
+                approval["approval_id"]
+            )
+        except (KeyError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=200, content=result)
 
     @router.post("/operations/providers/{provider_instance_id}/{action}")
     async def provider_operation(provider_instance_id: str, action: str, request: Request) -> Response:

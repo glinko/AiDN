@@ -59,6 +59,26 @@ class _OperationService:
         self.calls.append(("attach", payload))
         return {"provider_instance_id": "pi-test", **payload}
 
+    def build_provider_installation_plan(self, *, plugin_id: str, configuration: dict) -> dict:
+        self.calls.append(("provider-plan", plugin_id, configuration))
+        return {
+            "plugin_id": plugin_id,
+            "required_permissions": [{"permission_id": "host.package_manager"}],
+        }
+
+    def approve_provider_installation_plan(self, **payload) -> dict:
+        self.calls.append(("provider-approval", payload))
+        return {"approval_id": "pia-test", **payload}
+
+    def apply_provider_installation_approval(self, approval_id: str) -> dict:
+        self.calls.append(("provider-apply", approval_id))
+        return {
+            "approval_id": approval_id,
+            "job_id": "pij-test",
+            "status": "SUCCEEDED",
+            "provider_instance_id": "pi-test",
+        }
+
     def probe_provider_instance(self, provider_instance_id: str) -> dict:
         self.calls.append(("probe", provider_instance_id))
         return {"provider_instance_id": provider_instance_id, "healthy": True}
@@ -262,6 +282,7 @@ def test_build_app_wires_secret_backed_access_management(monkeypatch, tmp_path) 
     monkeypatch.setenv("AIDN_SECRET_MANAGER_PATH", str(tmp_path / "secrets.json"))
     monkeypatch.setenv("AIDN_SECRET_MANAGER_MASTER_KEY", base64.b64encode(os.urandom(32)).decode("ascii"))
     monkeypatch.setenv("AIDN_DASHBOARD_ACCESS_ALLOW_INSECURE_LAN", "true")
+    monkeypatch.setenv("AIDN_HYPERVISOR_BUNDLES_PATH", str(tmp_path / "bundles.json"))
     app = build_app()
     client = TestClient(app)
     client.headers.update(_BROWSER_HEADERS)
@@ -290,6 +311,10 @@ def test_paired_dashboard_operations_require_pairing_and_call_bounded_service(tm
     client.headers.update(_BROWSER_HEADERS)
 
     assert client.post("/operators/dashboard/access/operations/bundles/bundle-a/enable").status_code == 401
+    assert client.post(
+        "/operators/dashboard/access/operations/provider-plugins/ollama/install",
+        json={"configuration": {"endpoint": "http://127.0.0.1:11434"}},
+    ).status_code == 401
 
     pairing = access.create_pairing(ttl_seconds=600)
     assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
@@ -302,6 +327,17 @@ def test_paired_dashboard_operations_require_pairing_and_call_bounded_service(tm
     )
     assert attached.status_code == 201
     assert attached.json()["provider_instance_id"] == "pi-test"
+    installed = client.post(
+        "/operators/dashboard/access/operations/provider-plugins/ollama/install",
+        json={"configuration": {"endpoint": "http://127.0.0.1:11434"}},
+    )
+    assert installed.status_code == 200
+    assert installed.json()["status"] == "SUCCEEDED"
+    assert ("provider-plan", "ollama", {"endpoint": "http://127.0.0.1:11434"}) in service.calls
+    approval = next(item[1] for item in service.calls if item[0] == "provider-approval")
+    assert approval["approved_permissions"] == ["host.package_manager"]
+    assert approval["upgrade_acknowledged"] is False
+    assert ("provider-apply", "pia-test") in service.calls
     wallet = client.post(
         "/operators/dashboard/access/operations/wallet/create",
         json={"label": "Primary"},

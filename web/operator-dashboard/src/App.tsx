@@ -2070,6 +2070,52 @@ function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefres
     }
   }
 
+  async function installRuntime(plugin: DashboardRecord) {
+    const providerId = getText(plugin, 'plugin_id')
+    const pluginRecord = getRecord(plugin)
+    const installers = Array.isArray(pluginRecord?.runtime_installers) ? pluginRecord.runtime_installers : []
+    const recipes = Array.isArray(pluginRecord?.installation_recipes) ? pluginRecord.installation_recipes : []
+    const recipe = getRecord(recipes[0])
+    const configuration = getRecord(recipe?.provider_configuration) ?? {}
+    if (!providerId) {
+      setMessage('The selected Provider does not declare a plugin ID.')
+      return
+    }
+    if (installers.length === 0) {
+      setMessage(`Provider ${providerId} has no reviewed Ubuntu runtime installer.`)
+      return
+    }
+    setBusy(`install:${providerId}`)
+    setMessage(`Installing ${getText(plugin, 'display_name') || providerId}. The reviewed runtime may take a few minutes; model setup remains separate.`)
+    try {
+      const result = getRecord(await dashboardApi.installProviderRuntime(providerId, configuration))
+      const status = getText(result, 'status')
+      const providerInstanceId = getText(result, 'provider_instance_id')
+      if (status !== 'SUCCEEDED') {
+        setMessage(`Provider ${providerId} installation ${status ? status.toLowerCase() : 'did not complete'}. Review the installation job details and retry.`)
+        onRefresh()
+        return
+      }
+      if (providerInstanceId) {
+        try {
+          const health = getRecord(await dashboardApi.providerOperation(providerInstanceId, 'probe'))
+          setMessage(health?.healthy === true
+            ? `${getText(plugin, 'display_name') || providerId} installed and passed its health check. Model setup remains separate.`
+            : `${getText(plugin, 'display_name') || providerId} installed, but the health check is not ready yet. Retry Probe when the runtime settles.`)
+        } catch {
+          setMessage(`${getText(plugin, 'display_name') || providerId} installed, but its health check could not complete. Retry Probe.`)
+        }
+      } else {
+        setMessage(`${getText(plugin, 'display_name') || providerId} installation completed. Refresh Provider instances to continue.`)
+      }
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Provider runtime installation failed.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const title = screen === 'catalog' ? 'Catalog' : 'Provider Plugins'
   const detail = screen === 'catalog'
     ? 'Select a real Provider Plugin, attach an existing local service, then discover its model supply. The next Bundle revision remains a separate immutable operation.'
@@ -2080,7 +2126,7 @@ function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefres
     {isLoading && !workspace ? <PanelSkeleton rows={5} /> : null}
     {error && !workspace ? <PanelError title="Provider workspace is unavailable" error={error} onRetry={onRefresh} /> : null}
     {workspace ? <>
-      <Card className="border-cyan-300/20 bg-cyan-300/[0.03] py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow text-cyan-100">Reviewed Ubuntu runtimes</p><CardTitle className="mt-1 text-lg font-semibold">Provider install catalog</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">These four runtime profiles are pinned and allowlisted. Installation stays disabled until the node exposes the root-owned broker; attaching an already-running service remains available below.</p></CardHeader><CardContent className="divide-y divide-border/70 p-0">{plugins.filter((plugin) => { const installers = getRecord(plugin)?.runtime_installers; return Array.isArray(installers) && installers.length > 0 }).map((plugin) => { const record = getRecord(plugin); const installers = Array.isArray(record?.runtime_installers) ? record.runtime_installers : []; const installer = getRecord(installers[0]); const providerId = getText(record, 'plugin_id'); return <div key={providerId} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-white">{getText(record, 'display_name') || providerId}</p><StatusBadge value={runtimeInstallEnabled ? 'ready' : 'blocked'} /></div><p className="mt-1 text-xs text-muted-foreground">{getText(installer, 'platform') || 'ubuntu'} · pinned {getText(installer, 'pinned_version') || 'reviewed'} · model setup remains a separate step</p></div><Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={!runtimeInstallEnabled}>{runtimeInstallEnabled ? 'Install runtime' : 'Install unavailable'}</Button></div> })}</CardContent></Card>
+      <Card className="border-cyan-300/20 bg-cyan-300/[0.03] py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow text-cyan-100">Reviewed Ubuntu runtimes</p><CardTitle className="mt-1 text-lg font-semibold">Provider install catalog</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">{runtimeInstallEnabled ? 'Choose a pinned runtime and install it through the root-owned allowlisted broker. Model selection and downloads remain a separate step.' : 'Installation is unavailable until this node exposes the root-owned broker. Attaching an already-running service remains available below.'}</p></CardHeader><CardContent className="divide-y divide-border/70 p-0">{plugins.filter((plugin) => { const installers = getRecord(plugin)?.runtime_installers; return Array.isArray(installers) && installers.length > 0 }).map((plugin) => { const record = getRecord(plugin); const installers = Array.isArray(record?.runtime_installers) ? record.runtime_installers : []; const installer = getRecord(installers[0]); const providerId = getText(record, 'plugin_id'); const installBusy = busy === `install:${providerId}`; return <div key={providerId} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-white">{getText(record, 'display_name') || providerId}</p><StatusBadge value={runtimeInstallEnabled ? 'ready' : 'blocked'} /></div><p className="mt-1 text-xs text-muted-foreground">{getText(installer, 'platform') || 'ubuntu'} · pinned {getText(installer, 'pinned_version') || 'reviewed'} · model setup remains a separate step</p></div><Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={!runtimeInstallEnabled || busy !== null} onClick={() => void installRuntime(plugin)}>{installBusy ? 'Installing...' : runtimeInstallEnabled ? 'Install runtime' : 'Install unavailable'}</Button></div> })}</CardContent></Card>
       <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Attach existing Provider</p><CardTitle className="mt-1 text-lg font-semibold">Create Provider instance</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">Use the Plugin's documented configuration. For local Ollama, the usual value is a `base_url`; no Provider credentials are persisted in this form.</p></CardHeader><CardContent className="grid gap-3 p-5 lg:grid-cols-[0.8fr_0.9fr_1.5fr_auto]"><label className="grid gap-2"><span className="eyebrow">Plugin</span><select value={pluginId} onChange={(event) => choosePlugin(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300">{plugins.map((plugin) => <option key={getText(plugin, 'plugin_id')} value={getText(plugin, 'plugin_id')}>{getText(plugin, 'display_name') || getText(plugin, 'plugin_id')}</option>)}</select></label><label className="grid gap-2"><span className="eyebrow">Provider name</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Node Ollama" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Configuration JSON</span><input value={configuration} onChange={(event) => setConfiguration(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><div className="flex items-end"><Button className="w-full bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy === 'attach' || plugins.length === 0} onClick={() => void attach()}><ServerCog />{busy === 'attach' ? 'Attaching...' : 'Attach'}</Button></div></CardContent></Card>
       <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/70 px-5 py-4"><div><p className="eyebrow">Attached inventory</p><CardTitle className="mt-1 text-lg font-semibold">Provider instances</CardTitle></div><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={onRefresh}><RefreshCw />Refresh</Button></CardHeader><CardContent className="divide-y divide-border/70 p-0">{instances.length === 0 ? <EmptyState title="No Provider instances attached" detail="Attach a known local Provider above. The Dashboard will not guess an upstream endpoint or create credentials." actionLabel="Refresh catalog" onAction={onRefresh} /> : instances.map((instance) => { const id = getText(instance, 'provider_instance_id'); return <div key={id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-white">{getText(instance, 'display_name') || id}</p><StatusBadge value={getText(instance, 'health_status') || 'unknown'} /></div><p className="mt-1 break-all font-mono text-[11px] text-slate-500">{id} · {String(getRecord(instance)?.model_count ?? 0)} models · {String(getRecord(instance)?.runtime_binding_ready_count ?? 0)} ready bindings</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" className="border-border bg-[#091725]" disabled={busy === `${id}:probe`} onClick={() => void runProviderOperation(id, 'probe')}><Gauge />Probe</Button><Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={busy === `${id}:discover-models`} onClick={() => void runProviderOperation(id, 'discover-models')}><Database />Discover models</Button></div></div> })}</CardContent></Card>
       <div className="grid gap-4 lg:grid-cols-2"><InventoryCard title="Model deployments" detail="Discovered model supply. Runtime binding is required before Endpoint admission." items={deployments} primaryKey="model_deployment_id" /><InventoryCard title="Runtime bindings" detail="Compatibility records backing eligible Bundle and Endpoint runtime selection." items={bindings} primaryKey="runtime_binding_id" /></div>
