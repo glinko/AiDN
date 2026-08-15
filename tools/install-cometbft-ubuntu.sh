@@ -157,6 +157,7 @@ fi
 
 mkdir -p "$home"
 chmod 700 "$home"
+consensus_root="$(dirname "$home")"
 genesis_path="$home/config/genesis.json"
 if [[ ! -f "$genesis_path" ]]; then
   "$binary_path" init --home "$home" >/dev/null
@@ -232,7 +233,11 @@ PY
 chmod 600 "$config_path"
 if [[ "$EUID" -eq 0 && "$operator_uid" != '0' ]]; then
   # The broker ran the installer as root, but the user-systemd unit must be
-  # able to read/write its CometBFT home without a privileged helper.
+  # be able to read/write its CometBFT home without a privileged helper. The
+  # Hypervisor's ABCI state store lives next to that home, so the parent must
+  # be operator-owned as well; otherwise the first committed block fails with
+  # PermissionError while creating consensus/abci-state.
+  chown "$operator_uid:$operator_gid" "$consensus_root"
   chown -R "$operator_uid:$operator_gid" "$home"
 fi
 
