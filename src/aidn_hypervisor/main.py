@@ -965,6 +965,12 @@ def _build_default_consensus_service(
         abci_state_path=configured_optional_string("abci_state_path", "AIDN_COMETBFT_ABCI_STATE_PATH"),
         abci_listen_host=str(configured("abci_host", "AIDN_COMETBFT_ABCI_HOST", "127.0.0.1")),
         abci_listen_port=int(configured("abci_port", "AIDN_COMETBFT_ABCI_PORT", "26658")),
+        abci_query_timeout_seconds=int(
+            os.getenv(
+                "AIDN_COMETBFT_ABCI_QUERY_TIMEOUT_SECONDS",
+                "10",
+            )
+        ),
         abci_retained_snapshots=int(
             os.getenv(
                 "AIDN_COMETBFT_ABCI_RETAINED_SNAPSHOTS",

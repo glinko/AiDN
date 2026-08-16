@@ -277,14 +277,51 @@ def build_operator_access_router(
                 "publication": committed.model_dump(mode="json"),
             }
 
+        # Publishing is a canonical Wallet operation.  A local projection may
+        # contain an identity from a previous chain or before an external-RPC
+        # reconnect, so never use it as evidence for this transaction.
+        identity_read = hypervisor_service.wallet_identity_read_model(record.owner_wallet)
+        identity_source = str(identity_read.get("source") or "")
+        if identity_read.get("identity") is None:
+            if identity_read.get("error"):
+                raise ValueError(
+                    "canonical Wallet identity is unavailable; check the configured CometBFT RPC "
+                    "before publishing"
+                )
+            raise ValueError(
+                "Owner Wallet identity is not registered on the current canonical chain; "
+                "open Wallet and click Register in network before publishing"
+            )
+        if identity_source in {"local_projection", "local_projection_unverified"}:
+            raise ValueError(
+                "Wallet identity is available only in a local projection; register the Wallet "
+                "in the current canonical network before publishing"
+            )
+
         local_sequence = hypervisor_service.ledger_operation_service.wallet_next_sequence(
             record.owner_wallet
         )
+        sequence_provider = getattr(
+            hypervisor_service, "canonical_wallet_sequence_provider", None
+        )
         query_sequence = getattr(consensus, "query_wallet_next_sequence", None)
-        if callable(query_sequence):
+        if callable(sequence_provider):
+            try:
+                canonical_sequence = int(sequence_provider(record.owner_wallet))
+            except (RuntimeError, OSError, ValueError, TypeError) as error:
+                raise ValueError(
+                    f"canonical Wallet sequence is unavailable; check the configured CometBFT RPC ({error})"
+                ) from error
+        elif callable(query_sequence):
             canonical_sequence = query_sequence(record.owner_wallet)
             if canonical_sequence is None:
-                raise ValueError("canonical wallet sequence is unavailable")
+                raise ValueError(
+                    "canonical Wallet sequence is unavailable; check the configured CometBFT RPC "
+                    "and try again"
+                )
+        else:
+            canonical_sequence = local_sequence
+        if canonical_sequence is not None:
             if hypervisor_service.ledger_operation_service.reconcile_wallet_sequence(
                 record.owner_wallet, canonical_sequence
             ):
@@ -374,6 +411,7 @@ def build_operator_access_router(
         wallet_id = str(wallet["wallet_id"])
         public_key = str(wallet["public_key"])
         consensus = getattr(hypervisor_service, "consensus_service", None)
+        consensus_enabled = bool(consensus is not None and getattr(consensus, "is_enabled", False))
         if consensus is None or not getattr(consensus, "is_enabled", False):
             nonce = uuid4().hex
             registration_signature = sign_consensus_bytes(
@@ -393,13 +431,17 @@ def build_operator_access_router(
             return {"status": "FINALIZED", "wallet_id": wallet_id, "identity": identity}
 
         identity_read = hypervisor_service.wallet_identity_read_model(wallet_id)
-        if identity_read.get("identity") is not None:
+        identity_source = str(identity_read.get("source") or "")
+        canonical_identity = identity_read.get("identity")
+        if consensus_enabled and identity_source in {"local_projection", "local_projection_unverified"}:
+            canonical_identity = None
+        if canonical_identity is not None:
             return {
                 "status": "FINALIZED",
                 "wallet_id": wallet_id,
                 "identity": identity_read["identity"],
             }
-        if identity_read.get("error") is not None:
+        if identity_read.get("error") is not None and identity_source != "consensus_rpc":
             raise ValueError("canonical Wallet identity is unavailable; registration was not submitted")
 
         local_sequence = hypervisor_service.ledger_operation_service.wallet_next_sequence(wallet_id)

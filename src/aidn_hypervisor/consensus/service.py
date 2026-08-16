@@ -56,6 +56,10 @@ class ConsensusServiceConfig:
     gas_limit: int = 1_000_000
     max_mempool_size: int = 1000
     submission_timeout_seconds: float = 30.0
+    # Remote RPCs can briefly stall while CometBFT advances a block.  Wallet
+    # and publication preflights must not turn that normal latency into a
+    # false "canonical sequence unavailable" result.
+    abci_query_timeout_seconds: int = 10
     retry_interval_seconds: float = 5.0
     max_retries: int = 3
     abci_state_path: str | None = None
@@ -272,6 +276,26 @@ class ConsensusService:
         except (ValueError, TypeError, UnicodeDecodeError, binascii.Error, OSError):
             return None
 
+    def query_wallet_identity(self, wallet_id: str) -> dict | None:
+        """Read the canonical Wallet identity from the active ABCI RPC.
+
+        ``None`` is a valid canonical answer when the Wallet has not yet been
+        registered on this chain.  Transport failures deliberately propagate
+        so read models can distinguish an unavailable source from a missing
+        identity and never report a local projection as finalized network
+        evidence.
+        """
+        if not self.is_enabled or not isinstance(wallet_id, str) or not wallet_id.strip():
+            return None
+        raw_value = self._query_abci_value(f"wallet/identity/{wallet_id}")
+        if raw_value is None:
+            return None
+        try:
+            identity = json.loads(raw_value.decode("utf-8"))
+        except (TypeError, UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        return identity if isinstance(identity, dict) else None
+
     def query_endpoint_publication(self, endpoint_id: str) -> dict | None:
         """Read one canonical Endpoint publication from the active ABCI RPC."""
         if not self.is_enabled or not isinstance(endpoint_id, str) or not endpoint_id.strip():
@@ -325,7 +349,7 @@ class ConsensusService:
                 "path": json.dumps(path, separators=(",", ":")),
                 "prove": "false",
             },
-            timeout_seconds=2,
+            timeout_seconds=max(1, int(self.config.abci_query_timeout_seconds)),
         )
         result = response.get("result")
         if not isinstance(result, dict):

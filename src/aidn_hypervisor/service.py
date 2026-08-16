@@ -585,6 +585,26 @@ class HypervisorService:
         local_identity = self.resolve_wallet_identity(wallet_id)
         provider = self.canonical_wallet_identity_provider
         if provider is None:
+            # An external-RPC non-validator has a live ConsensusService but
+            # may not have the optional multi-RPC finality config.  Prefer the
+            # active CometBFT ABCI read in that case; otherwise a local wallet
+            # projection can incorrectly claim that identity registration has
+            # already finalized on the remote chain.
+            consensus = self.consensus_service
+            query_identity = getattr(consensus, "query_wallet_identity", None)
+            if consensus is not None and bool(getattr(consensus, "is_enabled", False)) and callable(query_identity):
+                try:
+                    return {
+                        "identity": query_identity(wallet_id),
+                        "source": "consensus_rpc",
+                        "error": None,
+                    }
+                except Exception as error:
+                    return {
+                        "identity": local_identity,
+                        "source": "local_projection_unverified",
+                        "error": f"{type(error).__name__}: {error}",
+                    }
             return {
                 "identity": local_identity,
                 "source": "consensus_projection"

@@ -127,12 +127,35 @@ def build_operator_wallet_payload(
         service,
         str(wallet_id) if wallet_id else None,
     )
+    identity_source = identity_read_model["source"]
+    identity_is_canonical = identity_source in {
+        "consensus_projection",
+        "consensus_rpc",
+        "remote_consensus_quorum",
+        # Local projection is the canonical source only when Consensus is
+        # disabled.  When a remote source is configured, service.py labels a
+        # fallback explicitly as local_projection_unverified.
+        "local_projection",
+    }
+    if identity_source == "local_projection":
+        consensus = getattr(service, "consensus_service", None)
+        identity_is_canonical = (
+            consensus is None
+            or not bool(getattr(consensus, "is_enabled", False))
+            or not callable(getattr(consensus, "query_wallet_identity", None))
+        )
+    canonical_wallet_identity = wallet_identity if identity_is_canonical else None
+
     # A canonical identity supersedes any envelope left behind by a restart.
     # Do not present that stale envelope as an active pending action in the UI.
     latest_identity_operation = (
-        None if wallet_identity is not None else identity_operations[-1] if identity_operations else None
+        None
+        if canonical_wallet_identity is not None
+        else identity_operations[-1]
+        if identity_operations
+        else None
     )
-    if wallet_identity is not None:
+    if canonical_wallet_identity is not None:
         identity_registration_state = "registered"
     elif latest_identity_operation is not None:
         identity_registration_state = latest_identity_operation["state"]
@@ -164,10 +187,10 @@ def build_operator_wallet_payload(
             "balance_source": balance_read_model["source"],
             "balance_error": balance_read_model["error"],
             "identity_state": (
-                "registered" if wallet_identity is not None else "not_registered"
+                "registered" if canonical_wallet_identity is not None else "not_registered"
             ),
             "identity_registration_state": identity_registration_state,
-            "identity": wallet_identity,
+            "identity": canonical_wallet_identity,
             "identity_source": identity_read_model["source"],
             "identity_error": identity_read_model["error"],
             "identity_operation": latest_identity_operation,

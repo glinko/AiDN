@@ -600,12 +600,30 @@ def build_api_router(
         """Use the canonical wallet nonce before creating a publish envelope."""
         local_sequence = service.ledger_operation_service.wallet_next_sequence(wallet_id)
         consensus = getattr(service, "consensus_service", None)
+        sequence_provider = getattr(service, "canonical_wallet_sequence_provider", None)
+        if callable(sequence_provider):
+            try:
+                canonical_sequence = int(sequence_provider(wallet_id))
+            except (RuntimeError, OSError, ValueError, TypeError) as error:
+                raise ValueError(
+                    f"canonical Wallet sequence is unavailable; check the configured CometBFT RPC ({error})"
+                ) from error
+            changed = service.ledger_operation_service.reconcile_wallet_sequence(
+                wallet_id,
+                canonical_sequence,
+            )
+            if changed:
+                service._persist_state()
+            return canonical_sequence
         query_sequence = getattr(consensus, "query_wallet_next_sequence", None)
         if not callable(query_sequence):
             return local_sequence
         canonical_sequence = query_sequence(wallet_id)
         if canonical_sequence is None:
-            raise ValueError("canonical wallet sequence is unavailable")
+            raise ValueError(
+                "canonical Wallet sequence is unavailable; check the configured CometBFT RPC "
+                "and try again"
+            )
         changed = service.ledger_operation_service.reconcile_wallet_sequence(
             wallet_id,
             canonical_sequence,
@@ -2287,7 +2305,25 @@ def build_api_router(
             )
 
         consensus = service.consensus_service
+        pending: LedgerOperationEnvelope | None = None
         try:
+            identity_read = service.wallet_identity_read_model(record.owner_wallet)
+            identity_source = str(identity_read.get("source") or "")
+            if identity_read.get("identity") is None:
+                if identity_read.get("error"):
+                    raise ValueError(
+                        "canonical Wallet identity is unavailable; check the configured CometBFT RPC "
+                        "before publishing"
+                    )
+                raise ValueError(
+                    "Owner Wallet identity is not registered on the current canonical chain; "
+                    "open Wallet and click Register in network before publishing"
+                )
+            if identity_source in {"local_projection", "local_projection_unverified"}:
+                raise ValueError(
+                    "Wallet identity is available only in a local projection; register the Wallet "
+                    "in the current canonical network before publishing"
+                )
             expected_sequence = _synchronize_publication_wallet_sequence(
                 record.owner_wallet
             )
@@ -2343,12 +2379,8 @@ def build_api_router(
                 service.stage_pending_consensus_envelope(pending)
             submission = consensus.submit_operation(pending, retry_existing=True)
         except (ValueError, OSError) as error:
-            return _error(
-                409,
-                "endpoint_publication_consensus_rejected",
-                str(error),
-                details={"operation_id": pending.operation_id},
-            )
+            details = {"operation_id": pending.operation_id} if pending is not None else {}
+            return _error(409, "endpoint_publication_consensus_rejected", str(error), details=details)
         finality = service.ledger_operation_finality(pending.operation_id)
         if finality.get("consensus_finalized"):
             committed = endpoint_publication_service.commit_prepared_configuration(

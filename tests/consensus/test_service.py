@@ -310,6 +310,7 @@ def test_query_wallet_next_sequence_reads_canonical_abci_state(monkeypatch):
         ConsensusServiceConfig(
             mode=ConsensusMode.NON_VALIDATOR,
             cometbft_endpoint="tcp://127.0.0.1:26657",
+            abci_query_timeout_seconds=2,
         )
     )
 
@@ -337,6 +338,46 @@ def test_query_wallet_next_sequence_fails_closed_on_invalid_abci_value(monkeypat
     )
 
     assert service.query_wallet_next_sequence("wallet-owner") is None
+
+
+def test_query_wallet_identity_reads_canonical_abci_state(monkeypatch):
+    class FakeRpcTransport:
+        def __init__(self, endpoint):
+            del endpoint
+
+        def get(self, path, *, params, timeout_seconds):
+            assert path == "/abci_query"
+            assert json.loads(params["path"]) == "wallet/identity/wallet-owner"
+            assert params["prove"] == "false"
+            assert timeout_seconds == 10
+            return {
+                "result": {
+                    "response": {
+                        "code": 0,
+                        "value": base64.b64encode(
+                            json.dumps(
+                                {"wallet_id": "wallet-owner", "public_key": "pk"}
+                            ).encode("utf-8")
+                        ).decode("ascii"),
+                    }
+                }
+            }
+
+    monkeypatch.setattr(
+        "aidn_hypervisor.consensus.service.HttpCometBftRpcTransport",
+        FakeRpcTransport,
+    )
+    service = ConsensusService(
+        ConsensusServiceConfig(
+            mode=ConsensusMode.NON_VALIDATOR,
+            cometbft_endpoint="http://127.0.0.1:26657",
+        )
+    )
+
+    assert service.query_wallet_identity("wallet-owner") == {
+        "wallet_id": "wallet-owner",
+        "public_key": "pk",
+    }
 
 
 # ---- participation rate ----
