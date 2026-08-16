@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -190,6 +191,11 @@ def test_reconnect_replaces_only_comet_state_and_joins_source_chain(tmp_path, mo
     assert result["status"] == "reconnected"
     assert result["reset"]["hypervisor_state_preserved"] is True
     assert not (home / "data" / "old-blockstore").exists()
+    assert json.loads((home / "data" / "priv_validator_state.json").read_text(encoding="utf-8")) == {
+        "height": "0",
+        "round": -1,
+        "step": 0,
+    }
     assert not (home / "config" / "addrbook.json").exists()
     assert (home / "config" / "genesis.json").read_text(encoding="utf-8").find("chain-Anm7Jk") >= 0
     assert (tmp_path / "consensus-config.json").exists()

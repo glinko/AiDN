@@ -136,11 +136,13 @@ def test_cometbft_installer_is_pinned_idempotent_and_preserves_genesis() -> None
     assert "DEFAULT_VERSION='v0.38.19'" in script
     assert "go install \"github.com/cometbft/cometbft/cmd/cometbft@$version\"" in script
     assert "refusing to rewrite it" in script
-    assert "systemctl --user enable --now \"$service_name\"" in script
+    assert "user_systemctl enable --now \"$service_name\"" in script
     assert "ProtectSystem=strict" in script
     assert "ReadWritePaths=$home" in script
     assert "--no-start" in script
     assert "--no-abci" in script
+    assert "priv_validator_state.json" in script
+    assert "refusing to recreate signing state" in script
     assert "Restart=always" in script
 
 

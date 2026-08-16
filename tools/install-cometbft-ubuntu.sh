@@ -246,6 +246,22 @@ if actual_chain_id != expected_chain_id:
 PY
 fi
 
+# CometBFT reads this file before it opens the RPC or P2P listeners.  A
+# reconnect can intentionally keep the validated genesis/config while replacing
+# the whole data directory, so do not rely on `cometbft init` having created it.
+# Recreate the canonical empty state only for the non-ABCI (non-validator)
+# profile.  For an ABCI validator, fail closed instead of silently replacing
+# signing history and risking a double-sign.
+state_path="$home/data/priv_validator_state.json"
+if [[ ! -f "$state_path" ]]; then
+  if [[ "$use_abci" != 'false' ]]; then
+    die "validator CometBFT data is missing $state_path; refusing to recreate signing state"
+  fi
+  mkdir -p "$home/data"
+  printf '%s\n' '{"height":"0","round":-1,"step":0}' >"$state_path"
+  chmod 600 "$state_path"
+fi
+
 config_path="$home/config/config.toml"
 [[ -f "$config_path" ]] || die "CometBFT config is missing: $config_path"
 python3 - "$config_path" "$rpc_host" "$rpc_port" "$p2p_host" "$p2p_port" "$external_address" "$seeds" "$persistent_peers" "$abci_host" "$abci_port" "$use_abci" "$moniker" <<'PY'

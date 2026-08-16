@@ -615,6 +615,14 @@ def _reset_cometbft_data(home: Path, genesis: Mapping[str, Any]) -> None:
     if data.exists():
         shutil.rmtree(data)
     data.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # CometBFT requires this file even for a non-validator node.  A reconnect
+    # intentionally discards the old signing history, so start from the
+    # canonical empty state instead of letting user-systemd restart-loop on a
+    # missing file.
+    _atomic_write(
+        data / "priv_validator_state.json",
+        {"height": "0", "round": -1, "step": 0},
+    )
     addrbook = config / "addrbook.json"
     if addrbook.exists() or addrbook.is_symlink():
         addrbook.unlink()
