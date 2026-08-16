@@ -35,9 +35,9 @@ from aidn_hypervisor.endpoint_publications.service import (
     EndpointPublicationReadinessError,
 )
 from aidn_hypervisor.endpoint_publications.signing import sign_consensus_bytes, verify_publication_signature
-from aidn_hypervisor.operator_readiness import build_operator_readiness_payload
 from aidn_hypervisor.operator_cometbft import build_operator_cometbft_payload
 from aidn_hypervisor.operator_cometbft_install import build_operator_cometbft_install_payload
+from aidn_hypervisor.operator_readiness import build_operator_readiness_payload
 from aidn_hypervisor.operator_views import (
     build_operator_bundles_payload,
     build_operator_endpoints_payload,
