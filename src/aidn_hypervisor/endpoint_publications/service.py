@@ -5,6 +5,7 @@ from aidn_hypervisor.endpoint_publications.models import (
     PublishedEndpointConfiguration,
     canonical_configuration_payload,
     configuration_hash_for_publication,
+    legacy_configuration_hash_for_publication,
 )
 from aidn_hypervisor.endpoint_publications.signing import (
     public_key_for_private_key,
@@ -128,6 +129,48 @@ class EndpointPublicationService:
             # cryptographically publishable outside this Hypervisor.
             record.wallet_signature = f"legacy-unverified:{configuration_hash[:16]}"
         return record
+
+    def legacy_compatible_configuration(
+        self,
+        record: PublishedEndpointConfiguration,
+        *,
+        wallet_private_key: str,
+    ) -> PublishedEndpointConfiguration:
+        """Re-sign a publication for a validator on the pre-marketplace schema.
+
+        Marketplace HTML was added to the endpoint commitment after some
+        testnet validators had already been bootstrapped.  The old validator
+        still accepts the complete profile, but computes its hash without the
+        optional description.  This conversion is used only after that exact
+        compatibility rejection; normal publications keep the current hash.
+        """
+        description = record.profile.get("marketplace_description")
+        if description is None:
+            return record
+        compatibility_hash = legacy_configuration_hash_for_publication(
+            bundle_hash=record.bundle_hash,
+            model_class=record.model_class,
+            capabilities=record.capabilities,
+            runtime=record.runtime,
+            publication=record.publication,
+            pricing=record.pricing,
+            session=record.session,
+            execution=record.execution,
+        )
+        if compatibility_hash == record.configuration_hash:
+            return record
+        payload = record.model_dump(mode="json")
+        payload["configuration_hash"] = compatibility_hash
+        payload["wallet_signature"] = ""
+        compatible = PublishedEndpointConfiguration.model_validate(payload)
+        if compatible.owner_public_key is not None:
+            compatible.wallet_signature = sign_publication_payload(
+                private_key=wallet_private_key,
+                payload=compatible.signed_payload(),
+            )
+        else:
+            compatible.wallet_signature = f"legacy-unverified:{compatibility_hash[:16]}"
+        return compatible
 
     def commit_prepared_configuration(
         self,

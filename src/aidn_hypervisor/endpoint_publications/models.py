@@ -42,6 +42,62 @@ def configuration_hash_for_publication(payload: dict) -> str:
     return hashlib.sha256(encoded_payload).hexdigest()
 
 
+def legacy_canonical_configuration_payload(
+    *,
+    bundle_hash: str,
+    model_class: str,
+    capabilities: list[str],
+    runtime: dict,
+    publication: dict,
+    pricing: dict,
+    session: dict | None = None,
+    execution: dict | None = None,
+) -> dict:
+    """Build the pre-marketplace-description publication payload.
+
+    Nodes upgraded before marketplace HTML became part of the endpoint
+    commitment still validate this payload shape.  Keeping the compatibility
+    helper explicit lets a publisher retry against such a node without
+    silently changing the current canonical format.
+    """
+    return canonical_configuration_payload(
+        bundle_hash=bundle_hash,
+        model_class=model_class,
+        capabilities=capabilities,
+        runtime=runtime,
+        publication=publication,
+        pricing=pricing,
+        session=session,
+        execution=execution,
+    )
+
+
+def legacy_configuration_hash_for_publication(
+    *,
+    bundle_hash: str,
+    model_class: str,
+    capabilities: list[str],
+    runtime: dict,
+    publication: dict,
+    pricing: dict,
+    session: dict | None = None,
+    execution: dict | None = None,
+) -> str:
+    """Return the compatibility hash accepted by pre-marketplace nodes."""
+    return configuration_hash_for_publication(
+        legacy_canonical_configuration_payload(
+            bundle_hash=bundle_hash,
+            model_class=model_class,
+            capabilities=capabilities,
+            runtime=runtime,
+            publication=publication,
+            pricing=pricing,
+            session=session,
+            execution=execution,
+        )
+    )
+
+
 class PublishedEndpointConfiguration(BaseModel):
     schema_version: str = "epcfg.v1"
     publication_id: str
@@ -89,20 +145,39 @@ class PublishedEndpointConfiguration(BaseModel):
 
     @model_validator(mode="after")
     def _validate_configuration_hash(self):
-        expected_hash = configuration_hash_for_publication(
-            canonical_configuration_payload(
-                bundle_hash=self.bundle_hash,
-                model_class=self.model_class,
-                capabilities=self.capabilities,
-                runtime=self.runtime,
-                publication=self.publication,
-                pricing=self.pricing,
-                session=self.session,
-                execution=self.execution,
-                profile=self.profile,
+        expected_hashes = {
+            configuration_hash_for_publication(
+                canonical_configuration_payload(
+                    bundle_hash=self.bundle_hash,
+                    model_class=self.model_class,
+                    capabilities=self.capabilities,
+                    runtime=self.runtime,
+                    publication=self.publication,
+                    pricing=self.pricing,
+                    session=self.session,
+                    execution=self.execution,
+                    profile=self.profile,
+                )
             )
-        )
-        if self.configuration_hash != expected_hash:
+        }
+        # A rolling upgrade may submit a marketplace description to a
+        # validator that predates the field.  Accept the old commitment while
+        # the network converges; the payload remains fully signed and the
+        # description is still retained in the publication record.
+        if self.profile.get("marketplace_description") is not None:
+            expected_hashes.add(
+                legacy_configuration_hash_for_publication(
+                    bundle_hash=self.bundle_hash,
+                    model_class=self.model_class,
+                    capabilities=self.capabilities,
+                    runtime=self.runtime,
+                    publication=self.publication,
+                    pricing=self.pricing,
+                    session=self.session,
+                    execution=self.execution,
+                )
+            )
+        if self.configuration_hash not in expected_hashes:
             raise ValueError("configuration_hash does not match canonical payload")
         return self
 

@@ -338,8 +338,16 @@ def build_operator_access_router(
                 hypervisor_service._persist_state()
             local_sequence = canonical_sequence
 
-        def build_envelope(sequence: int, retry_nonce: str | None = None):
-            evidence = [record.publication_id, record.endpoint_id, record.configuration_hash]
+        def build_envelope(
+            publication_record,
+            sequence: int,
+            retry_nonce: str | None = None,
+        ):
+            evidence = [
+                publication_record.publication_id,
+                publication_record.endpoint_id,
+                publication_record.configuration_hash,
+            ]
             if retry_nonce is not None:
                 evidence.append(f"retry:{retry_nonce}")
             unsigned = LedgerOperationEnvelope(
@@ -347,13 +355,13 @@ def build_operator_access_router(
                 operation_version="1.0.0",
                 protocol_version="0.1",
                 origin_type="wallet",
-                initiator_id=record.endpoint_id,
-                sender_wallet=record.owner_wallet,
+                initiator_id=publication_record.endpoint_id,
+                sender_wallet=publication_record.owner_wallet,
                 sender_sequence=sequence,
-                fee_payer=record.owner_wallet,
+                fee_payer=publication_record.owner_wallet,
                 fee_class="standard",
-                created_at=record.published_at,
-                payload={"publication": record.model_dump(mode="json")},
+                created_at=publication_record.published_at,
+                payload={"publication": publication_record.model_dump(mode="json")},
                 evidence_references=evidence,
                 signatures=[],
             )
@@ -376,13 +384,29 @@ def build_operator_access_router(
             None,
         )
         if pending is None:
-            pending = build_envelope(local_sequence)
+            pending = build_envelope(record, local_sequence)
             hypervisor_service.stage_pending_consensus_envelope(pending)
         previous_submission = consensus.get_submission(pending.operation_id)
         if previous_submission is not None and previous_submission.status.value == "failed":
-            pending = build_envelope(local_sequence, uuid4().hex)
+            pending = build_envelope(record, local_sequence, uuid4().hex)
             hypervisor_service.stage_pending_consensus_envelope(pending)
         submission = consensus.submit_operation(pending, retry_existing=True)
+        if (
+            submission.status.value == "failed"
+            and "configuration_hash does not match canonical payload"
+            in (submission.error or "")
+        ):
+            compatibility_record = endpoint_publication_service.legacy_compatible_configuration(
+                record,
+                wallet_private_key=hypervisor_service.owner_wallet_private_key(),
+            )
+            if compatibility_record.configuration_hash != record.configuration_hash:
+                # Keep the rejected envelope as audit evidence, then retry
+                # with the same canonical sequence and a fresh operation id.
+                record = compatibility_record
+                pending = build_envelope(record, local_sequence, uuid4().hex)
+                hypervisor_service.stage_pending_consensus_envelope(pending)
+                submission = consensus.submit_operation(pending, retry_existing=True)
         finality = hypervisor_service.ledger_operation_finality(pending.operation_id)
         if finality.get("consensus_finalized"):
             committed = endpoint_publication_service.commit_prepared_configuration(

@@ -5,6 +5,7 @@ from aidn_hypervisor.endpoint_publications.models import (
     PublishedEndpointConfiguration,
     canonical_configuration_payload,
     configuration_hash_for_publication,
+    legacy_configuration_hash_for_publication,
 )
 from aidn_hypervisor.endpoints.models import EndpointMarketplaceDescription
 
@@ -191,6 +192,44 @@ def test_published_configuration_normalizes_marketplace_html_before_hash_check()
     assert record.profile["marketplace_description"] == description.model_dump(
         mode="json"
     )
+
+
+def test_published_configuration_accepts_legacy_hash_during_network_upgrade() -> None:
+    profile = {
+        "marketplace_description": EndpointMarketplaceDescription(
+            html="<p>Compatible</p>"
+        ).model_dump(mode="json")
+    }
+    legacy_hash = legacy_configuration_hash_for_publication(
+        bundle_hash="bundle-hash-a",
+        model_class="speech.stt",
+        capabilities=["speech.stt"],
+        runtime={},
+        publication={"visibility": "public"},
+        pricing={},
+    )
+
+    record = PublishedEndpointConfiguration(
+        publication_id="pub-legacy-marketplace",
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        node_id="node-1",
+        configuration_hash=legacy_hash,
+        bundle_id="bundle-a",
+        bundle_hash="bundle-hash-a",
+        model_class="speech.stt",
+        capabilities=["speech.stt"],
+        profile=profile,
+        runtime={},
+        publication={"visibility": "public"},
+        pricing={},
+        published_at="2026-06-30T00:00:00+00:00",
+        sequence=1,
+        wallet_signature="sig-1",
+    )
+
+    assert record.configuration_hash == legacy_hash
+    assert record.profile["marketplace_description"]["html"] == "<p>Compatible</p>"
 
 
 def test_published_endpoint_configuration_rejects_inconsistent_configuration_hash() -> None:

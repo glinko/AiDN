@@ -2390,6 +2390,26 @@ def build_api_router(
                 )
                 service.stage_pending_consensus_envelope(pending)
             submission = consensus.submit_operation(pending, retry_existing=True)
+            if (
+                submission.status.value == "failed"
+                and "configuration_hash does not match canonical payload"
+                in (submission.error or "")
+            ):
+                compatibility_record = endpoint_publication_service.legacy_compatible_configuration(
+                    record,
+                    wallet_private_key=service.owner_wallet_private_key(),
+                )
+                if compatibility_record.configuration_hash != record.configuration_hash:
+                    # Keep the rejected envelope as audit evidence, then
+                    # retry with the same canonical sequence and a fresh id.
+                    record = compatibility_record
+                    pending = _build_endpoint_publication_envelope(
+                        record,
+                        sender_sequence=expected_sequence,
+                        retry_nonce=uuid4().hex,
+                    )
+                    service.stage_pending_consensus_envelope(pending)
+                    submission = consensus.submit_operation(pending, retry_existing=True)
         except (ValueError, OSError) as error:
             details = {"operation_id": pending.operation_id} if pending is not None else {}
             return _error(409, "endpoint_publication_consensus_rejected", str(error), details=details)
