@@ -1,0 +1,566 @@
+openapi: 3.1.0
+info:
+  title: AiDN Public Website API
+  version: 0.1.0
+  summary: Browser-facing read and Faucet facade for WEB-0001
+  description: |
+    Target contract for the AiDN Public Website Backend. This API normalizes
+    Network Indexer, release, and protected Faucet services for the browser.
+    It is not a Hypervisor operator API and never exposes upstream credentials,
+    Wallet private keys, or Faucet Treasury signing material.
+servers:
+  - url: /api/site/v1
+    description: Same-origin Website Backend
+tags:
+  - name: Network
+  - name: Faucet
+  - name: Releases
+  - name: Status
+paths:
+  /network/summary:
+    get:
+      tags: [Network]
+      operationId: getNetworkSummary
+      summary: Get verified aggregate Network metrics
+      responses:
+        "200":
+          description: Network summary with per-metric provenance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkSummary"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
+  /network/endpoints:
+    get:
+      tags: [Network]
+      operationId: searchNetworkEndpoints
+      summary: Search indexed published Endpoints
+      parameters:
+        - in: query
+          name: query
+          schema: { type: string, maxLength: 200 }
+        - in: query
+          name: capability
+          schema: { type: string, maxLength: 128 }
+        - in: query
+          name: provider
+          schema: { type: string, maxLength: 128 }
+        - in: query
+          name: validation_state
+          schema: { type: string, maxLength: 64 }
+        - in: query
+          name: availability
+          schema: { type: string, maxLength: 64 }
+        - in: query
+          name: max_price_q_atoms
+          schema: { type: integer, minimum: 0 }
+        - in: query
+          name: cursor
+          schema: { type: string, maxLength: 512 }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+      responses:
+        "200":
+          description: Paginated Endpoint results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EndpointSearchResponse"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
+  /network/endpoints/{endpointId}:
+    get:
+      tags: [Network]
+      operationId: getNetworkEndpoint
+      summary: Get one indexed Endpoint with evidence provenance
+      parameters:
+        - in: path
+          name: endpointId
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+      responses:
+        "200":
+          description: Endpoint detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EndpointDetail"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
+  /faucet/status:
+    get:
+      tags: [Faucet]
+      operationId: getPublicFaucetStatus
+      summary: Get reduced public Faucet state
+      responses:
+        "200":
+          description: Public Faucet state without credentials or private policy data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicFaucetStatus"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
+  /faucet/challenges:
+    post:
+      tags: [Faucet]
+      operationId: issueFaucetChallenge
+      summary: Issue a one-time Wallet ownership challenge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FaucetChallengeRequest"
+      responses:
+        "201":
+          description: Challenge issued
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FaucetChallenge"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
+  /faucet/claims:
+    post:
+      tags: [Faucet]
+      operationId: submitFaucetClaim
+      summary: Submit an idempotent Wallet-proven Faucet claim
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FaucetClaimRequest"
+      responses:
+        "200":
+          description: Existing idempotent claim result
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FaucetClaimResult"
+        "201":
+          description: New claim accepted for processing or finalized
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FaucetClaimResult"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "409":
+          description: Proof, policy, or submission conflict
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/FaucetClaimResult"
+                  - $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
+  /faucet/claims/{requestId}/reconcile:
+    post:
+      tags: [Faucet]
+      operationId: reconcileFaucetClaim
+      summary: Reconcile the exact previously submitted claim
+      parameters:
+        - in: path
+          name: requestId
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 256 }
+      responses:
+        "200":
+          description: Current result for the original claim
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FaucetClaimResult"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
+  /releases:
+    get:
+      tags: [Releases]
+      operationId: listReviewedReleases
+      summary: List reviewed Hypervisor releases and install metadata
+      responses:
+        "200":
+          description: Reviewed releases
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, observed_at]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/ReviewedRelease" }
+                  observed_at: { $ref: "#/components/schemas/Timestamp" }
+        "503":
+          $ref: "#/components/responses/UpstreamUnavailable"
+  /status:
+    get:
+      tags: [Status]
+      operationId: getWebsiteDependencyStatus
+      summary: Get bounded Website Backend dependency state
+      responses:
+        "200":
+          description: Dependency status; individual dependencies may be degraded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteStatus"
+components:
+  responses:
+    InvalidRequest:
+      description: Invalid bounded request
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    NotFound:
+      description: Requested public record was not found
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    RateLimited:
+      description: Public or Wallet rate limit exceeded
+      headers:
+        Retry-After:
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    UpstreamUnavailable:
+      description: Required upstream is unavailable or disagrees on network identity
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+  schemas:
+    Timestamp:
+      type: string
+      format: date-time
+    AvailabilityStatus:
+      type: string
+      enum: [available, partial, unavailable]
+    MetricValue:
+      type: object
+      required: [value, status, observed_at]
+      properties:
+        value:
+          oneOf:
+            - type: integer
+            - type: number
+            - type: "null"
+        status: { $ref: "#/components/schemas/AvailabilityStatus" }
+        source_count: { type: [integer, "null"], minimum: 0 }
+        observed_at: { $ref: "#/components/schemas/Timestamp" }
+        note: { type: [string, "null"], maxLength: 500 }
+      additionalProperties: false
+    NetworkMetrics:
+      type: object
+      required:
+        - active_hypervisors
+        - active_endpoints
+        - available_gpus
+        - available_vram_mb
+        - models
+        - network_compute
+        - requests_24h
+        - q_settled_24h_q_atoms
+      properties:
+        active_hypervisors: { $ref: "#/components/schemas/MetricValue" }
+        active_endpoints: { $ref: "#/components/schemas/MetricValue" }
+        available_gpus: { $ref: "#/components/schemas/MetricValue" }
+        available_vram_mb: { $ref: "#/components/schemas/MetricValue" }
+        models: { $ref: "#/components/schemas/MetricValue" }
+        network_compute: { $ref: "#/components/schemas/MetricValue" }
+        requests_24h: { $ref: "#/components/schemas/MetricValue" }
+        q_settled_24h_q_atoms: { $ref: "#/components/schemas/MetricValue" }
+      additionalProperties: false
+    NetworkSummary:
+      type: object
+      required: [network_id, observed_at, freshness_seconds, status, metrics]
+      properties:
+        network_id: { type: string, minLength: 1 }
+        observed_at: { $ref: "#/components/schemas/Timestamp" }
+        freshness_seconds: { type: integer, minimum: 0 }
+        status: { $ref: "#/components/schemas/AvailabilityStatus" }
+        metrics: { $ref: "#/components/schemas/NetworkMetrics" }
+      additionalProperties: false
+    Price:
+      type: object
+      required: [unit]
+      properties:
+        unit: { type: string }
+        fixed_price_q_atoms: { type: [integer, "null"], minimum: 0 }
+        input_price_q_atoms: { type: [integer, "null"], minimum: 0 }
+        output_price_q_atoms: { type: [integer, "null"], minimum: 0 }
+      additionalProperties: false
+    EvidenceState:
+      type: object
+      required: [state, observed_at]
+      properties:
+        state: { type: string }
+        observed_at: { $ref: "#/components/schemas/Timestamp" }
+        source: { type: [string, "null"] }
+        detail: { type: [string, "null"] }
+      additionalProperties: false
+    EndpointSummary:
+      type: object
+      required:
+        - endpoint_id
+        - publication_id
+        - node_id
+        - operator_id
+        - display_name
+        - model_class
+        - capabilities
+        - pricing
+        - validation
+        - availability
+        - publication
+      properties:
+        endpoint_id: { type: string }
+        publication_id: { type: string }
+        node_id: { type: string }
+        operator_id: { type: string }
+        display_name: { type: string }
+        model_class: { type: string }
+        provider_type: { type: [string, "null"] }
+        capabilities:
+          type: array
+          items: { type: string }
+        context_length: { type: [integer, "null"], minimum: 1 }
+        gpu_class: { type: [string, "null"] }
+        latency_ms: { type: [number, "null"], minimum: 0 }
+        pricing: { $ref: "#/components/schemas/Price" }
+        validation: { $ref: "#/components/schemas/EvidenceState" }
+        reputation:
+          oneOf:
+            - $ref: "#/components/schemas/EvidenceState"
+            - type: "null"
+        availability: { $ref: "#/components/schemas/EvidenceState" }
+        publication:
+          type: object
+          required: [published_at, configuration_hash]
+          properties:
+            published_at: { $ref: "#/components/schemas/Timestamp" }
+            configuration_hash: { type: string }
+          additionalProperties: false
+      additionalProperties: false
+    EndpointDetail:
+      allOf:
+        - $ref: "#/components/schemas/EndpointSummary"
+        - type: object
+          properties:
+            description_html: { type: [string, "null"] }
+            runtime_limits: { type: object, additionalProperties: true }
+            provenance:
+              type: array
+              items:
+                type: object
+                required: [kind, source, observed_at]
+                properties:
+                  kind: { type: string }
+                  source: { type: string }
+                  observed_at: { $ref: "#/components/schemas/Timestamp" }
+                  hash: { type: [string, "null"] }
+                additionalProperties: false
+    EndpointSearchResponse:
+      type: object
+      required: [items, next_cursor, observed_at]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/EndpointSummary" }
+        next_cursor: { type: [string, "null"] }
+        observed_at: { $ref: "#/components/schemas/Timestamp" }
+      additionalProperties: false
+    PublicFaucetStatus:
+      type: object
+      required:
+        - enabled
+        - state
+        - policy_id
+        - policy_version
+        - treasury_activation_state
+        - low_balance_blocked
+        - paused
+      properties:
+        enabled: { type: boolean }
+        state:
+          type: string
+          enum: [ready, paused, low_balance, degraded, unavailable]
+        policy_id: { type: string }
+        policy_version: { type: string }
+        treasury_activation_state:
+          type: string
+          enum: [ACTIVE, UNVERIFIED, DEGRADED, DISABLED]
+        treasury_balance_q_atoms: { type: [integer, "null"], minimum: 0 }
+        low_balance_blocked: { type: boolean }
+        paused: { type: boolean }
+        pause_reason: { type: [string, "null"], maxLength: 512 }
+      additionalProperties: false
+    FaucetChallengeRequest:
+      type: object
+      required: [wallet_id, wallet_public_key]
+      properties:
+        wallet_id:
+          type: string
+          pattern: "^wallet-[0-9a-f]{12}$"
+        wallet_public_key:
+          type: string
+          pattern: "^ed25519:[0-9a-f]{64}$"
+      additionalProperties: false
+    FaucetChallenge:
+      type: object
+      required:
+        - challenge_id
+        - wallet_id
+        - challenge
+        - issued_at
+        - expires_at
+        - signing_domain
+      properties:
+        challenge_id: { type: string }
+        wallet_id: { type: string }
+        challenge: { type: string }
+        issued_at: { $ref: "#/components/schemas/Timestamp" }
+        expires_at: { $ref: "#/components/schemas/Timestamp" }
+        signing_domain:
+          type: string
+          const: aidn.faucet-wallet-proof.v1
+      additionalProperties: false
+    FaucetClaimRequest:
+      type: object
+      required:
+        - request_id
+        - wallet_id
+        - wallet_public_key
+        - challenge_id
+        - wallet_signature
+      properties:
+        request_id: { type: string, minLength: 1, maxLength: 256 }
+        wallet_id:
+          type: string
+          pattern: "^wallet-[0-9a-f]{12}$"
+        wallet_public_key:
+          type: string
+          pattern: "^ed25519:[0-9a-f]{64}$"
+        challenge_id: { type: string, minLength: 1, maxLength: 256 }
+        wallet_signature: { type: string, minLength: 1, maxLength: 512 }
+      additionalProperties: false
+    FaucetClaimResult:
+      type: object
+      required:
+        - request_id
+        - status
+        - amount_q_atoms
+        - policy_id
+        - policy_version
+      properties:
+        request_id: { type: string }
+        claim_id: { type: [string, "null"] }
+        status:
+          type: string
+          enum:
+            - approved
+            - pending_finality
+            - submission_rejected
+            - submission_unknown
+            - already_claimed
+            - quota_exhausted
+            - pool_empty
+        amount_q_atoms: { type: integer, minimum: 0 }
+        operation_id: { type: [string, "null"] }
+        transaction_hash: { type: [string, "null"] }
+        policy_id: { type: string }
+        policy_version: { type: string }
+        detail: { type: [string, "null"], maxLength: 1000 }
+      additionalProperties: false
+    ReviewedRelease:
+      type: object
+      required: [version, ref, released_at, support_status, install_methods]
+      properties:
+        version: { type: string }
+        ref: { type: string }
+        released_at: { $ref: "#/components/schemas/Timestamp" }
+        support_status:
+          type: string
+          enum: [supported, experimental, source_only, unsupported]
+        release_notes_url: { type: [string, "null"], format: uri }
+        checksum_url: { type: [string, "null"], format: uri }
+        signature_url: { type: [string, "null"], format: uri }
+        install_methods:
+          type: array
+          items:
+            type: object
+            required: [platform, label, command, status]
+            properties:
+              platform: { type: string }
+              label: { type: string }
+              command: { type: [string, "null"] }
+              status: { type: string }
+            additionalProperties: false
+      additionalProperties: false
+    SiteStatus:
+      type: object
+      required: [status, observed_at, dependencies]
+      properties:
+        status:
+          type: string
+          enum: [operational, degraded, unavailable]
+        observed_at: { $ref: "#/components/schemas/Timestamp" }
+        dependencies:
+          type: object
+          additionalProperties:
+            type: object
+            required: [status]
+            properties:
+              status:
+                type: string
+                enum: [operational, degraded, unavailable, disabled]
+              observed_at: { $ref: "#/components/schemas/Timestamp" }
+              detail: { type: [string, "null"], maxLength: 500 }
+            additionalProperties: false
+      additionalProperties: false
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, retryable, request_id]
+          properties:
+            code: { type: string }
+            message: { type: string, maxLength: 1000 }
+            retryable: { type: boolean }
+            request_id: { type: string }
+          additionalProperties: false
+      additionalProperties: false
