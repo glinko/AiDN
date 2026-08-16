@@ -62,6 +62,7 @@ export const endpointSchema = z.object({
   bundle_id: z.string().nullable().optional(),
   model_class: z.string().nullable().optional(),
   capabilities: z.array(z.string()).catch([]),
+  local_agent_use: z.boolean().catch(false),
   visibility: z.string().nullable().optional(),
   publication_status: z.string().catch('unknown'),
   publication_sync_status: z.string().optional(),

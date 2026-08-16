@@ -45,6 +45,30 @@ def test_configuration_hash_changes_when_execution_relevant_fields_change() -> N
     )
 
 
+def test_configuration_hash_commits_local_agent_opt_in() -> None:
+    base = canonical_configuration_payload(
+        bundle_hash="bundle-hash-a",
+        model_class="llm_text",
+        capabilities=["llm_text"],
+        runtime={"streaming": False},
+        publication={"visibility": "private"},
+        pricing={"billing_unit": "request"},
+    )
+    opted_in = canonical_configuration_payload(
+        bundle_hash="bundle-hash-a",
+        model_class="llm_text",
+        capabilities=["llm_text"],
+        runtime={"streaming": False},
+        publication={"visibility": "private"},
+        pricing={"billing_unit": "request"},
+        local_agent_use=True,
+    )
+
+    assert "local_agent_use" not in base
+    assert opted_in["local_agent_use"] is True
+    assert configuration_hash_for_publication(base) != configuration_hash_for_publication(opted_in)
+
+
 def test_configuration_hash_treats_capabilities_as_order_stable() -> None:
     payload_a = canonical_configuration_payload(
         bundle_hash="bundle-hash-a",

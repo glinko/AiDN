@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.dashboard_network_access import DashboardNetworkAccessService
+from aidn_hypervisor.endpoints.models import EndpointManifest
 from aidn_hypervisor.mcp.credentials import McpCredentialStore
 from aidn_hypervisor.mcp.enrollment import McpEnrollmentService
 from aidn_hypervisor.operator_access import DashboardAccessService
@@ -190,6 +191,58 @@ def test_credential_mutation_requires_pairing_and_reveals_only_new_value(tmp_pat
     revoked = client.delete(f"/operators/dashboard/access/credentials/{rotated.json()['credential_id']}")
     assert revoked.status_code == 204
     assert client.post("/operators/dashboard/access/logout").status_code == 204
+
+
+def test_inference_token_requires_local_agent_opt_in(tmp_path) -> None:
+    manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
+    credentials = McpCredentialStore(secret_manager=manager)
+    access = DashboardAccessService(store=credentials)
+    endpoint = EndpointManifest(
+        endpoint_id="ep-private-agent",
+        owner_wallet="wallet-test",
+        created_at="2026-08-16T00:00:00Z",
+        bundle_id="bundle-qwen",
+        bundle_hash="sha256:bundle",
+        runtime_binding_id="rtb-qwen",
+        configuration_hash="sha256:config",
+        display_name="Private Qwen",
+        model_class="llm_text",
+        local_agent_use=False,
+    )
+
+    class EndpointStub:
+        def get_endpoint(self, endpoint_id: str):
+            if endpoint_id != endpoint.endpoint_id:
+                raise KeyError(endpoint_id)
+            return SimpleNamespace(endpoint=endpoint)
+
+    class HypervisorStub:
+        def owner_wallet_state(self):
+            return {"configured": True, "wallet_id": endpoint.owner_wallet}
+
+    app = FastAPI()
+    app.include_router(
+        build_operator_access_router(
+            access_service=access,
+            credential_store=credentials,
+            allow_insecure_lan=True,
+            hypervisor_service=HypervisorStub(),
+            endpoint_service=EndpointStub(),
+        )
+    )
+    client = TestClient(app)
+    client.headers.update(_BROWSER_HEADERS)
+    pairing = access.create_pairing(ttl_seconds=600)
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+
+    rejected = client.post(
+        "/operators/dashboard/access/inference-credentials",
+        json={"label": "OpenClaw", "endpoint_id": endpoint.endpoint_id},
+    )
+
+    assert rejected.status_code == 409
+    assert rejected.json()["error"]["code"] == "INFERENCE_CREDENTIAL_REJECTED"
+    assert "Local Agent Use" in rejected.json()["error"]["message"]
 
 
 def test_dashboard_network_access_is_pair_bound_and_limited_to_loopback_or_lan(tmp_path) -> None:

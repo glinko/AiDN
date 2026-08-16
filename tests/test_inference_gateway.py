@@ -70,7 +70,7 @@ def _store(tmp_path):
     )
 
 
-def _client(tmp_path):
+def _client(tmp_path, *, local_agent_use: bool = True):
     endpoint = EndpointManifest(
         endpoint_id="ep-local",
         owner_wallet="wallet-test",
@@ -81,6 +81,7 @@ def _client(tmp_path):
         configuration_hash="sha256:config",
         display_name="Qwen local",
         model_class="llm_text",
+        local_agent_use=local_agent_use,
     )
     store = _store(tmp_path)
     issued = store.create_inference_credential(
@@ -114,6 +115,18 @@ def test_models_is_limited_to_the_credential_endpoint(tmp_path) -> None:
     assert response.status_code == 200
     assert response.json()["data"][0]["id"] == "qwen-local"
     assert response.json()["data"][0]["aidn_endpoint_id"] == "ep-local"
+
+
+def test_models_reject_endpoint_without_local_agent_opt_in(tmp_path) -> None:
+    client, issued, _, _ = _client(tmp_path, local_agent_use=False)
+
+    response = client.get(
+        "/v1/models",
+        headers={"Authorization": f"Bearer {issued.token}"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "endpoint_unavailable"
 
 
 def test_chat_completion_opens_owner_session_and_preserves_editable_parameters(tmp_path) -> None:
@@ -174,4 +187,22 @@ def test_invalid_bearer_token_cannot_reach_task_lifecycle(tmp_path) -> None:
 
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "invalid_api_key"
+    assert service.submitted == []
+
+
+def test_chat_completion_rejects_endpoint_without_local_agent_opt_in(tmp_path) -> None:
+    client, issued, service, _ = _client(tmp_path, local_agent_use=False)
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {issued.token}"},
+        json={
+            "model": "qwen-local",
+            "messages": [{"role": "user", "content": "hello"}],
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "endpoint_unavailable"
+    assert "Local Agent Use" in response.json()["error"]["message"]
     assert service.submitted == []

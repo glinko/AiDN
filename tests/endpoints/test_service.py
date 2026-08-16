@@ -29,6 +29,35 @@ def test_create_endpoint_generates_initial_configuration_snapshot() -> None:
     assert created.snapshot.configuration_hash == created.endpoint.configuration_hash
 
 
+def test_local_agent_use_is_persisted_and_changes_the_immutable_revision() -> None:
+    service = EndpointService(EndpointStore())
+    created = service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="bundle-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Local agent endpoint",
+            model_class="llm_text",
+            local_agent_use=True,
+        )
+    )
+
+    assert created.endpoint.local_agent_use is True
+    assert created.snapshot.local_agent_use is True
+
+    disabled = service.update_endpoint(
+        UpdateEndpointCommand(
+            endpoint_id=created.endpoint.endpoint_id,
+            local_agent_use=False,
+        )
+    )
+
+    assert disabled.endpoint.local_agent_use is False
+    assert disabled.snapshot is not None
+    assert disabled.snapshot.local_agent_use is False
+    assert disabled.endpoint.configuration_hash != created.endpoint.configuration_hash
+
+
 def test_validator_endpoint_draft_does_not_record_publish_operation() -> None:
     recorded: list[dict] = []
     service = EndpointService(

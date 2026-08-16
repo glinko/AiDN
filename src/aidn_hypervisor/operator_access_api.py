@@ -509,6 +509,8 @@ def build_operator_access_router(
             raise ValueError(f"Inference endpoint was not found: {endpoint_id}") from error
         if endpoint.status == "deleted":
             raise ValueError("Inference endpoint is deleted")
+        if not endpoint.local_agent_use:
+            raise ValueError("Local Agent Use is not enabled for this endpoint")
         if endpoint.execution_strategy != "local":
             raise ValueError("Personal agent inference requires a local endpoint")
         if endpoint.model_class != "llm_text":

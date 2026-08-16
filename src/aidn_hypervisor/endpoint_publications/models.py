@@ -20,6 +20,7 @@ def canonical_configuration_payload(
     session: dict | None = None,
     execution: dict | None = None,
     profile: dict | None = None,
+    local_agent_use: bool | None = None,
 ) -> dict:
     payload = {
         "bundle_hash": bundle_hash,
@@ -34,6 +35,10 @@ def canonical_configuration_payload(
     marketplace_description = (profile or {}).get("marketplace_description")
     if marketplace_description is not None:
         payload["marketplace_description"] = marketplace_description
+    # False is the backwards-compatible default.  Commit the opt-in only
+    # when it is enabled so pre-feature publication hashes remain valid.
+    if local_agent_use:
+        payload["local_agent_use"] = True
     return payload
 
 
@@ -111,6 +116,9 @@ class PublishedEndpointConfiguration(BaseModel):
     bundle_hash: str
     model_class: str
     capabilities: list[str] = Field(default_factory=list)
+    # ``None`` preserves the signed payload shape of publications created
+    # before Local Agent Use existed.  A true value is the explicit opt-in.
+    local_agent_use: bool | None = None
     profile: dict = Field(default_factory=dict)
     runtime: dict = Field(default_factory=dict)
     publication: dict = Field(default_factory=dict)
@@ -157,6 +165,7 @@ class PublishedEndpointConfiguration(BaseModel):
                     session=self.session,
                     execution=self.execution,
                     profile=self.profile,
+                    local_agent_use=self.local_agent_use,
                 )
             )
         }
@@ -184,4 +193,9 @@ class PublishedEndpointConfiguration(BaseModel):
     def signed_payload(self) -> dict:
         payload = self.model_dump(mode="json")
         payload.pop("wallet_signature", None)
+        # Do not add a null/false field to legacy signatures.  New opt-in
+        # publications carry ``true`` and therefore remain cryptographically
+        # bound to the capability.
+        if not self.local_agent_use:
+            payload.pop("local_agent_use", None)
         return payload
