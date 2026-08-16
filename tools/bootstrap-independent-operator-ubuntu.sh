@@ -16,6 +16,7 @@ Options:
   --port PORT        Loopback API port (default: 8766)
   --chain-id ID      Local CometBFT chain ID (default: aidn-testnet-1)
   --consensus-mode MODE  validator, non_validator, or disabled (default: validator)
+  --consensus-rpc URL    Verified private RPC for non_validator mode (required)
   --cometbft-version TAG CometBFT release tag (default: v0.38.19)
   --no-consensus     Disable automatic local CometBFT installation
   --no-start         Install and prepare only; do not start the loopback API
@@ -33,6 +34,7 @@ data_dir="${HOME}/.local/share/aidn"
 port='8766'
 chain_id='aidn-testnet-1'
 consensus_mode='validator'
+consensus_rpc=''
 cometbft_version='v0.38.19'
 start_local='true'
 
@@ -45,6 +47,7 @@ while [[ $# -gt 0 ]]; do
     --port) port="$2"; shift 2 ;;
     --chain-id) chain_id="$2"; shift 2 ;;
     --consensus-mode) consensus_mode="$2"; shift 2 ;;
+    --consensus-rpc) consensus_rpc="$2"; shift 2 ;;
     --cometbft-version) cometbft_version="$2"; shift 2 ;;
     --no-consensus) consensus_mode='disabled'; shift ;;
     --no-start) start_local='false'; shift ;;
@@ -62,6 +65,11 @@ done
 [[ "$consensus_mode" == 'validator' || "$consensus_mode" == 'non_validator' || "$consensus_mode" == 'disabled' ]] || {
   echo '--consensus-mode must be validator, non_validator, or disabled' >&2; exit 2;
 }
+if [[ "$consensus_mode" == 'non_validator' ]]; then
+  [[ "$consensus_rpc" =~ ^https?://[^[:space:]/]+:[0-9]+/?$ ]] || {
+    echo '--consensus-rpc must be an HTTP(S) host:port URL' >&2; exit 2;
+  }
+fi
 [[ "$cometbft_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
   echo '--cometbft-version must look like v0.38.19' >&2; exit 2;
 }
@@ -106,21 +114,19 @@ bash "$install_dir/tools/build-operator-dashboard.sh" \
   --project-root "$install_dir" --node-root "$node_root" \
   --tooling-dir "$data_dir/tooling" >/dev/null
 
-consensus_service_name=''
-consensus_home=''
-consensus_binary_path=''
+  consensus_service_name=''
+  consensus_home=''
+  consensus_binary_path=''
+consensus_transport='disabled'
 consensus_rpc_host='127.0.0.1'
 consensus_rpc_port='26657'
 consensus_abci_host='127.0.0.1'
 consensus_abci_port='26658'
-if [[ "$consensus_mode" != 'disabled' ]]; then
+if [[ "$consensus_mode" == 'validator' ]]; then
+  consensus_transport='local'
   consensus_service_name="aidn-cometbft-$peer_id.service"
   consensus_home="$data_dir/consensus/cometbft"
   consensus_binary_path="$data_dir/consensus/bin/cometbft"
-  consensus_abci_args=()
-  if [[ "$consensus_mode" == 'non_validator' ]]; then
-    consensus_abci_args=(--no-abci)
-  fi
   bash "$install_dir/tools/install-cometbft-ubuntu.sh" \
     --version "$cometbft_version" \
     --home "$consensus_home" \
@@ -134,15 +140,24 @@ if [[ "$consensus_mode" != 'disabled' ]]; then
     --p2p-port '26656' \
     --abci-host "$consensus_abci_host" \
     --abci-port "$consensus_abci_port" \
-    "${consensus_abci_args[@]}" \
     --no-start >/dev/null
+elif [[ "$consensus_mode" == 'non_validator' ]]; then
+  consensus_transport='external_rpc'
+  consensus_rpc_host=''
+  consensus_rpc_port=''
 fi
 "$uv_bin" --directory "$install_dir" run python tools/prepare-independent-operator-kit.py init \
   --output "$data_dir/operator-kit" --peer-id "$peer_id" --force
 
 mkdir -p "$data_dir/logs"
+consensus_rpc_endpoint=""
+if [[ "$consensus_mode" == 'non_validator' ]]; then
+  consensus_rpc_endpoint="$consensus_rpc"
+elif [[ "$consensus_mode" == 'validator' ]]; then
+  consensus_rpc_endpoint="http://$consensus_rpc_host:$consensus_rpc_port"
+fi
 cat > "$data_dir/bootstrap-state.json" <<EOF
-{"peer_id":"$peer_id","commit":"$commit","api":"http://127.0.0.1:$port","replication":"disabled_until_mutual_peer_approval","consensus":{"mode":"$consensus_mode","service":"$consensus_service_name","home":"$consensus_home","binary":"$consensus_binary_path","rpc":"http://$consensus_rpc_host:$consensus_rpc_port","automatic_install":$([[ "$consensus_mode" != 'disabled' ]] && printf true || printf false)}}
+{"peer_id":"$peer_id","commit":"$commit","api":"http://127.0.0.1:$port","replication":"disabled_until_mutual_peer_approval","consensus":{"mode":"$consensus_mode","transport":"$consensus_transport","service":"$consensus_service_name","home":"$consensus_home","binary":"$consensus_binary_path","rpc":"$consensus_rpc_endpoint","automatic_install":$([[ "$consensus_mode" == 'validator' ]] && printf true || printf false)}}
 EOF
 chmod 600 "$data_dir/bootstrap-state.json"
 
@@ -152,7 +167,7 @@ if [[ "$start_local" == 'true' ]]; then
     exit 1
   fi
   consensus_env=("AIDN_CONSENSUS_MODE=$consensus_mode")
-  if [[ "$consensus_mode" != 'disabled' ]]; then
+  if [[ "$consensus_mode" == 'validator' ]]; then
     consensus_env+=(
       "AIDN_CONSENSUS_NODE_ID=$peer_id"
       "AIDN_COMETBFT_ENDPOINT=tcp://$consensus_rpc_host:$consensus_rpc_port"
@@ -161,6 +176,14 @@ if [[ "$start_local" == 'true' ]]; then
       "AIDN_COMETBFT_ABCI_STATE_PATH=$data_dir/consensus/abci-state"
       "AIDN_COMETBFT_ABCI_HOST=$consensus_abci_host"
       "AIDN_COMETBFT_ABCI_PORT=$consensus_abci_port"
+    )
+  elif [[ "$consensus_mode" == 'non_validator' ]]; then
+    consensus_env+=(
+      "AIDN_CONSENSUS_NODE_ID=$peer_id"
+      "AIDN_COMETBFT_ENDPOINT=$consensus_rpc"
+      "AIDN_COMETBFT_CHAIN_ID=$chain_id"
+      'AIDN_COMETBFT_SERVICE='
+      'AIDN_COMETBFT_ABCI_STATE_PATH='
     )
   fi
   nohup env \
@@ -178,7 +201,7 @@ if [[ "$start_local" == 'true' ]]; then
   curl --fail --silent "http://127.0.0.1:$port/health" >/dev/null || {
     echo "Hypervisor did not become healthy; inspect $data_dir/logs/hypervisor.log" >&2; exit 1;
   }
-  if [[ "$consensus_mode" != 'disabled' ]]; then
+  if [[ "$consensus_mode" == 'validator' ]]; then
     sudo loginctl enable-linger "$USER"
     uid="$(id -u)"
     export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$uid}"
@@ -200,8 +223,10 @@ fi
 
 if [[ "$consensus_mode" == 'disabled' ]]; then
   consensus_json='{"mode":"disabled","automatic_install":false}'
+elif [[ "$consensus_mode" == 'non_validator' ]]; then
+  consensus_json="{\"mode\":\"non_validator\",\"transport\":\"external_rpc\",\"service\":null,\"home\":null,\"binary\":null,\"rpc\":\"$consensus_rpc\",\"automatic_install\":false}"
 else
-  consensus_json="{\"mode\":\"$consensus_mode\",\"service\":\"$consensus_service_name\",\"home\":\"$consensus_home\",\"binary\":\"$consensus_binary_path\",\"rpc\":\"http://$consensus_rpc_host:$consensus_rpc_port\",\"automatic_install\":true}"
+  consensus_json="{\"mode\":\"validator\",\"transport\":\"local\",\"service\":\"$consensus_service_name\",\"home\":\"$consensus_home\",\"binary\":\"$consensus_binary_path\",\"rpc\":\"http://$consensus_rpc_host:$consensus_rpc_port\",\"automatic_install\":true}"
 fi
 printf '{"status":"ok","commit":"%s","operator_workspace":"%s","api":"http://127.0.0.1:%s","replication":"disabled_until_mutual_peer_approval","consensus":%s}\n' \
   "$commit" "$data_dir/operator-kit" "$port" "$consensus_json"

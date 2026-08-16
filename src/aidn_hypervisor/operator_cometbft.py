@@ -58,9 +58,26 @@ def _peer_items(value: object) -> list[str]:
 
 def _network_payload(service: object) -> dict[str, object]:
     active = load_active_cometbft_configuration(service) or {}
+    transport = str(active.get("transport") or "local").strip().lower()
+    if transport == "external_rpc" or active.get("profile") == "operator-cometbft-external-rpc-v1":
+        source_rpc = _safe_endpoint(active.get("source_rpc") or active.get("cometbft_endpoint"))
+        return {
+            "transport": "external_rpc",
+            "local_p2p_enabled": False,
+            "p2p_host": None,
+            "p2p_port": None,
+            "external_address": "",
+            "pex": False,
+            "seeds": [],
+            "persistent_peers": [],
+            "source_rpc": source_rpc,
+            "configured_sources": ["external_rpc"] if source_rpc else [],
+        }
     seeds = _peer_items(active.get("seeds"))
     persistent_peers = _peer_items(active.get("persistent_peers"))
     return {
+        "transport": "local",
+        "local_p2p_enabled": True,
         "p2p_host": str(active.get("p2p_host") or "127.0.0.1"),
         "p2p_port": active.get("p2p_port") or 26656,
         "external_address": str(active.get("external_address") or ""),
@@ -100,6 +117,9 @@ def build_operator_cometbft_payload(service) -> dict:
         }
 
     config = getattr(consensus, "config", None)
+    active = load_active_cometbft_configuration(service) or {}
+    transport = str(active.get("transport") or "local").strip().lower()
+    external_rpc = transport == "external_rpc" or active.get("profile") == "operator-cometbft-external-rpc-v1"
     try:
         status = consensus.status()
     except Exception as error:  # pragma: no cover - defensive control-plane boundary
@@ -114,17 +134,21 @@ def build_operator_cometbft_payload(service) -> dict:
             "protocol_authority": {},
         }
 
-    service_name = _service_name(consensus)
+    service_name = None if external_rpc else _service_name(consensus)
     management_payload = {
         "managed": service_name is not None,
         "service": service_name,
         "control_supported": service_name is not None,
     }
+    if external_rpc:
+        management_payload["reason"] = "external_rpc"
     rpc = status.get("rpc") if isinstance(status, Mapping) else {}
     metrics = status.get("metrics") if isinstance(status, Mapping) else {}
     authority = status.get("protocol_authority") if isinstance(status, Mapping) else {}
     return {
         "profile": "operator-cometbft-v1",
+        "transport": "external_rpc" if external_rpc else "local",
+        "local_p2p_enabled": not external_rpc,
         "configured": True,
         "enabled": bool(status.get("enabled", False)) if isinstance(status, Mapping) else False,
         "mode": str(status.get("mode") or getattr(getattr(config, "mode", None), "value", "unknown"))

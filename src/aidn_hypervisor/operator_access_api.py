@@ -773,7 +773,10 @@ def build_operator_access_router(
         denied = require_session(request)
         if denied is not None:
             return denied
-        network_configuration_requested = bool(
+        # Non-validator reconnects use the verified external-RPC profile and
+        # deliberately do not open a local P2P listener.  Keep the network
+        # acknowledgement gate for validator/local installs only.
+        network_configuration_requested = payload.mode != "non_validator" and bool(
             payload.p2p_host == "0.0.0.0"
             or payload.external_address.strip()
             or payload.seeds.strip()

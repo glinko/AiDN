@@ -104,8 +104,10 @@ def _consensus_step(consensus_status: Mapping[str, Any] | None) -> dict[str, Any
                 label="Enable consensus",
                 detail=(
                     "Re-run the operator bootstrap with --consensus-mode validator or "
-                    "--consensus-mode non_validator. The installer provisions CometBFT "
-                    "automatically; use --consensus-mode disabled only for local-only work."
+                    "--consensus-mode non_validator. Validator mode provisions the local "
+                    "CometBFT/ABCI service; non_validator requires --consensus-rpc and "
+                    "uses an external verified RPC. Use --consensus-mode disabled only "
+                    "for local-only work."
                 ),
             ),
             evidence={"enabled": False, "rpc": dict(rpc), "management": dict(management)},

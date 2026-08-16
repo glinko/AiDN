@@ -940,8 +940,20 @@ def _build_default_consensus_service(
     )
 
     def configured(name: str, environment: str, default):
-        value = (active_config or {}).get(name)
-        return value if value not in (None, "") else os.getenv(environment, default)
+        # An applied dashboard configuration is authoritative, including an
+        # explicit null/empty value.  Falling back to the bootstrap environment
+        # here resurrected a retired local CometBFT unit after an external-RPC
+        # non-validator reconnect.
+        if active_config is not None and name in active_config:
+            return active_config[name]
+        return os.getenv(environment, default)
+
+    def configured_optional_string(name: str, environment: str) -> str | None:
+        value = configured(name, environment, "")
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
 
     config = ConsensusServiceConfig(
         node_id=str(configured("node_id", "AIDN_CONSENSUS_NODE_ID", hypervisor_service.node_id)),
@@ -949,8 +961,8 @@ def _build_default_consensus_service(
         cometbft_endpoint=str(configured("cometbft_endpoint", "AIDN_COMETBFT_ENDPOINT", "tcp://localhost:26657")),
         validator_pubkey=os.getenv("AIDN_CONSENSUS_VALIDATOR_PUBKEY", ""),
         chain_id=str(configured("chain_id", "AIDN_COMETBFT_CHAIN_ID", "aidn-localnet-1")),
-        managed_service_name=(str(configured("managed_service_name", "AIDN_COMETBFT_SERVICE", "")) or None),
-        abci_state_path=(str(configured("abci_state_path", "AIDN_COMETBFT_ABCI_STATE_PATH", "")) or None),
+        managed_service_name=configured_optional_string("managed_service_name", "AIDN_COMETBFT_SERVICE"),
+        abci_state_path=configured_optional_string("abci_state_path", "AIDN_COMETBFT_ABCI_STATE_PATH"),
         abci_listen_host=str(configured("abci_host", "AIDN_COMETBFT_ABCI_HOST", "127.0.0.1")),
         abci_listen_port=int(configured("abci_port", "AIDN_COMETBFT_ABCI_PORT", "26658")),
         abci_retained_snapshots=int(

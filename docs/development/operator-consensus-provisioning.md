@@ -33,22 +33,27 @@ genesis and peer/network profile remain required for a multi-operator network.
 ## Modes
 
 - `validator`: starts the local AiDN ABCI application and CometBFT validator.
-- `non_validator`: starts CometBFT with `proxy_app = "noop"`; it does not claim
-  local validator participation.
+- `non_validator`: uses an external, verified CometBFT RPC as the consensus
+  transport. It does not install a local `noop` CometBFT process, blockstore or
+  P2P listener. A `noop` process cannot replay AiDN application AppHash values
+  and is therefore not a valid observer for an AiDN chain.
 - `disabled`: leaves consensus disabled for explicitly local-only work.
 
 `--no-consensus` is an alias for `--consensus-mode disabled`.
 
 ## Dashboard Installation Wizard
 
+The dashboard has separate local-validator and external-RPC non-validator
+paths; it never treats a CometBFT `noop` process as an AiDN observer.
+
 The paired Advanced → CometBFT workspace now exposes a three-step, bounded
 installation procedure for an already bootstrapped Ubuntu host. It never
 executes an arbitrary shell command received over HTTP.
 
-1. Review the mode, chain ID, moniker and fixed local ports. RPC and ABCI are
-   always loopback; P2P may be changed to `0.0.0.0` only with an explicit LAN
-   acknowledgement.
-2. Press `Install CometBFT`. The request crosses the UID-restricted root
+1. For a validator, review the chain ID, moniker and fixed local ports. RPC and
+   ABCI are always loopback; P2P may be changed to `0.0.0.0` only with an
+   explicit LAN acknowledgement.
+2. Press `Install CometBFT` for the validator profile. The request crosses the UID-restricted root
    runtime broker and runs the reviewed installer with paths derived from the
    Hypervisor state directory. Existing genesis state is validated, never
    overwritten. The resulting configuration is staged as
@@ -58,10 +63,18 @@ executes an arbitrary shell command received over HTTP.
    its own systemd restart. On reconnect, the normal Start/Restart/Stop controls
    become available for the configured unit.
 
-If the host has not installed the root broker, the wizard remains manual and
-points the operator back to the reviewed Ubuntu bootstrap. If RPC is down after
-activation, the service card shows the bounded recovery state instead of
-claiming that installation succeeded.
+For a non-validator, use `Use external RPC and restart` in the reconnect card.
+The Hypervisor fetches `/status` and `/genesis`, verifies the requested Chain ID,
+removes only the managed local CometBFT unit/home, and writes an explicit
+`transport: "external_rpc"` profile. Hypervisor state, models and Provider
+runtimes are preserved. The dashboard then reports peers from the source RPC
+and hides local service/P2P controls.
+
+If the host has not installed the root broker, a validator install remains
+manual and points the operator back to the reviewed Ubuntu bootstrap. An
+external-RPC profile only needs the broker when a stale local unit must be
+retired. If RPC is down after activation, the service card shows the bounded
+recovery state instead of claiming that installation succeeded.
 
 After recovery, press `Refresh consensus`. The consensus step is ready only after
 both `/status` and `/net_info` respond through the configured RPC endpoint.

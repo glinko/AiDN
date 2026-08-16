@@ -49,22 +49,27 @@ def test_install_argv_derives_paths_and_keeps_rpc_loopback(tmp_path, monkeypatch
     monkeypatch.setenv("AIDN_HYPERVISOR_STATE_PATH", str(tmp_path / "hypervisor-state.json"))
     service = _service(tmp_path)
 
+    with pytest.raises(ValueError, match="external-RPC"):
+        build_cometbft_install_argv(
+            service,
+            {
+                "mode": "non_validator",
+                "chain_id": "aidn-testnet-1",
+                "moniker": "node-a",
+                "p2p_host": "0.0.0.0",
+            },
+        )
+
     plan, argv = build_cometbft_install_argv(
         service,
-        {
-            "mode": "non_validator",
-            "chain_id": "aidn-testnet-1",
-            "moniker": "node-a",
-            "p2p_host": "0.0.0.0",
-        },
+        {"mode": "validator", "chain_id": "aidn-testnet-1", "moniker": "node-a"},
     )
-
     assert argv[:3] == [
         "/usr/libexec/aidn-provider-runtime/aidn-provider-runtime-ubuntu.sh",
         "consensus",
         "install",
     ]
-    assert "--no-abci" in argv
+    assert "--no-abci" not in argv
     assert plan.rpc_host == "127.0.0.1"
     assert plan.home.endswith("consensus\\cometbft") or plan.home.endswith("consensus/cometbft")
     assert "--external-address" not in argv
@@ -137,7 +142,7 @@ def test_install_rejects_colliding_ports(tmp_path, monkeypatch) -> None:
         build_cometbft_install_argv(_service(tmp_path), {"rpc_port": 26656})
 
 
-def test_reconnect_replaces_only_comet_state_and_joins_source_chain(tmp_path, monkeypatch) -> None:
+def test_reconnect_configures_external_rpc_and_retires_only_comet_state(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("AIDN_HYPERVISOR_STATE_PATH", str(tmp_path / "hypervisor-state.json"))
     monkeypatch.setenv("AIDN_HYPERVISOR_RESTART_ON_BIND_CHANGE", "false")
     home = tmp_path / "consensus" / "cometbft"
@@ -149,6 +154,16 @@ def test_reconnect_replaces_only_comet_state_and_joins_source_chain(tmp_path, mo
     (home / "config" / "config.toml").write_text("# reviewed test config\n", encoding="utf-8")
     (home / "data" / "old-blockstore").write_text("discarded", encoding="utf-8")
     (home / "config" / "addrbook.json").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "consensus-config.json").write_text(
+        json.dumps(
+            {
+                "mode": "non_validator",
+                "chain_id": "aidn-localnet-1",
+                "managed_service_name": "aidn-cometbft-gpu-3090.service",
+            }
+        ),
+        encoding="utf-8",
+    )
 
     class Executor:
         def invoke(self, **kwargs):
@@ -162,15 +177,17 @@ def test_reconnect_replaces_only_comet_state_and_joins_source_chain(tmp_path, mo
     }
     monkeypatch.setattr(
         "aidn_hypervisor.operator_cometbft_install._fetch_source_genesis",
-        lambda _source, _chain: (source_genesis, {"rpc": "http://192.168.88.128:26657", "chain_id": _chain}),
-    )
-    monkeypatch.setattr(
-        "aidn_hypervisor.operator_cometbft.control_managed_cometbft",
-        lambda _service, action: {"status": "ok", "action": action},
-    )
-    monkeypatch.setattr(
-        "aidn_hypervisor.operator_cometbft_install._restart_managed_cometbft",
-        lambda _service: True,
+        lambda _source, _chain: (
+            source_genesis,
+            {
+                "rpc": "http://192.168.88.128:26657",
+                "chain_id": _chain,
+                "node_id": "source-node",
+                "app_version": "1",
+                "height": "42",
+                "genesis_sha256": "abc",
+            },
+        ),
     )
     service = _service(tmp_path, executor=Executor())
     result = reconnect_cometbft_from_dashboard(
@@ -188,17 +205,17 @@ def test_reconnect_replaces_only_comet_state_and_joins_source_chain(tmp_path, mo
         },
     )
 
-    assert result["status"] == "reconnected"
+    assert result["status"] == "external_rpc_configured"
+    assert result["transport"] == "external_rpc"
     assert result["reset"]["hypervisor_state_preserved"] is True
-    assert not (home / "data" / "old-blockstore").exists()
-    assert json.loads((home / "data" / "priv_validator_state.json").read_text(encoding="utf-8")) == {
-        "height": "0",
-        "round": -1,
-        "step": 0,
-    }
-    assert not (home / "config" / "addrbook.json").exists()
-    assert (home / "config" / "genesis.json").read_text(encoding="utf-8").find("chain-Anm7Jk") >= 0
-    assert (tmp_path / "consensus-config.json").exists()
+    assert result["reset"]["models_preserved"] is True
+    assert result["reset"]["providers_preserved"] is True
+    assert not home.exists()
+    active = json.loads((tmp_path / "consensus-config.json").read_text(encoding="utf-8"))
+    assert active["profile"] == "operator-cometbft-external-rpc-v1"
+    assert active["cometbft_endpoint"] == "http://192.168.88.128:26657"
+    assert active["managed_service_name"] is None
+    assert active["local_p2p_enabled"] is False
 
 
 def test_reconnect_requires_non_validator_and_explicit_reset_acknowledgement(tmp_path, monkeypatch) -> None:
@@ -241,7 +258,7 @@ def test_install_route_is_paired_and_accepts_only_reviewed_payload(tmp_path, mon
     assert response.json()["status"] == "installed_pending_apply"
 
 
-def test_reconnect_route_requires_reset_and_network_acknowledgements(tmp_path, monkeypatch) -> None:
+def test_reconnect_route_requires_reset_but_not_local_network_acknowledgement(tmp_path, monkeypatch) -> None:
     manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=b"r" * 32)
     credentials = McpCredentialStore(secret_manager=manager)
     access = DashboardAccessService(store=credentials)
@@ -272,11 +289,6 @@ def test_reconnect_route_requires_reset_and_network_acknowledgements(tmp_path, m
         "persistent_peers": "peer-a@192.168.88.128:26656",
         "acknowledge_reset": True,
     }
-    rejected = client.post("/operators/dashboard/access/operations/cometbft/reconnect", json=payload)
-    assert rejected.status_code == 409
-    assert "network acknowledgement" in rejected.json()["error"]["message"]
-
-    payload["acknowledge_network_scope"] = True
     response = client.post("/operators/dashboard/access/operations/cometbft/reconnect", json=payload)
     assert response.status_code == 202
     assert response.json()["status"] == "reconnected"

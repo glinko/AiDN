@@ -37,6 +37,7 @@ Options:
   --chain-id ID             Chain ID (default: aidn-testnet-1)
   --network-revision REV    Network revision (default: 1.0)
   --consensus-mode MODE     validator, non_validator, or disabled (default: validator)
+  --consensus-rpc URL       Verified private RPC for non_validator mode (required)
   --cometbft-version TAG   CometBFT release tag (default: v0.38.19)
   --no-consensus             Disable automatic local CometBFT installation
   --no-start                Install and write the user service, but do not start it
@@ -80,6 +81,10 @@ valid_path() {
 
 is_loopback_host() {
   [[ "$1" == "127.0.0.1" || "$1" == "::1" || "$1" == "localhost" ]]
+}
+
+valid_consensus_rpc() {
+  [[ "$1" =~ ^https?://[^[:space:]/]+:[0-9]+/?$ ]]
 }
 
 sanitize_hostname() {
@@ -161,6 +166,7 @@ network_id='aidn'
 chain_id='aidn-testnet-1'
 network_revision='1.0'
 consensus_mode='validator'
+consensus_rpc=''
 cometbft_version='v0.38.19'
 no_start='false'
 non_interactive='false'
@@ -170,6 +176,7 @@ agent_action=''
 operator_id_supplied='false'
 enable_registry_supplied='false'
 consensus_mode_supplied='false'
+consensus_rpc_supplied='false'
 wallet_action_supplied='false'
 dashboard_pairing_supplied='false'
 agent_action_supplied='false'
@@ -264,6 +271,12 @@ while [[ $# -gt 0 ]]; do
       consensus_mode_supplied='true'
       shift 2
       ;;
+    --consensus-rpc)
+      require_value "$1" "$@"
+      consensus_rpc="$2"
+      consensus_rpc_supplied='true'
+      shift 2
+      ;;
     --cometbft-version)
       require_value "$1" "$@"
       cometbft_version="$2"
@@ -329,6 +342,7 @@ case "$consensus_mode" in
   validator|non_validator|disabled) ;;
   *) die 'consensus mode must be validator, non_validator, or disabled' ;;
 esac
+
 [[ "$cometbft_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 'CometBFT version must look like v0.38.19'
 
 default_install_dir="$HOME/aidn/$operator_id/AiDN"
@@ -349,6 +363,14 @@ case "$consensus_mode" in
   validator|non_validator|disabled) ;;
   *) die 'consensus mode must be validator, non_validator, or disabled' ;;
 esac
+
+if [[ "$consensus_mode" == 'non_validator' ]]; then
+  if [[ -z "$consensus_rpc" && "$non_interactive" != 'true' ]]; then
+    consensus_rpc="$(prompt_value 'Source CometBFT RPC (private HTTP URL)' '')"
+  fi
+  [[ -n "$consensus_rpc" ]] || die 'non_validator mode requires --consensus-rpc or an interactive source RPC'
+  valid_consensus_rpc "$consensus_rpc" || die 'source CometBFT RPC must be an HTTP(S) host:port URL'
+fi
 
 if [[ "$wallet_action_supplied" != 'true' ]]; then
   if [[ "$non_interactive" == 'true' ]]; then
@@ -551,9 +573,12 @@ consensus_home=''
 consensus_binary_path=''
 consensus_rpc_host='127.0.0.1'
 consensus_rpc_port='26657'
+consensus_rpc_endpoint=''
+consensus_transport='disabled'
 consensus_abci_host='127.0.0.1'
 consensus_abci_port='26658'
-if [[ "$consensus_mode" != 'disabled' ]]; then
+if [[ "$consensus_mode" == 'validator' ]]; then
+  consensus_transport='local'
   consensus_service_name="aidn-cometbft-$operator_id.service"
   consensus_home="$data_dir/consensus/cometbft"
   consensus_binary_path="$data_dir/consensus/bin/cometbft"
@@ -579,6 +604,9 @@ if [[ "$consensus_mode" != 'disabled' ]]; then
     --abci-port "$consensus_abci_port" \
     "${consensus_abci_args[@]}" \
     --no-start >/dev/null
+elif [[ "$consensus_mode" == 'non_validator' ]]; then
+  consensus_transport='external_rpc'
+  consensus_rpc_endpoint="$consensus_rpc"
 fi
 operator_public_key="$($python_bin - "$identity_root/operator-identity.json" <<'PY'
 import json
@@ -659,7 +687,7 @@ export AIDN_PROVIDER_RUNTIME_DISPATCHER=/usr/libexec/aidn-provider-runtime/aidn-
 export AIDN_PROVIDER_RUNTIME_BROKER_SOCKET=$runtime_broker_socket
 export PYTHONUNBUFFERED=1
 EOF
-if [[ "$consensus_mode" != 'disabled' ]]; then
+if [[ "$consensus_mode" == 'validator' ]]; then
   cat >> "$wrapper" <<EOF
 export AIDN_CONSENSUS_MODE=$(shell_quote "$consensus_mode")
 export AIDN_CONSENSUS_NODE_ID=$(shell_quote "$operator_id")
@@ -669,6 +697,15 @@ export AIDN_COMETBFT_SERVICE=$(shell_quote "$consensus_service_name")
 export AIDN_COMETBFT_ABCI_STATE_PATH="\$data/consensus/abci-state"
 export AIDN_COMETBFT_ABCI_HOST=$(shell_quote "$consensus_abci_host")
 export AIDN_COMETBFT_ABCI_PORT=$(shell_quote "$consensus_abci_port")
+EOF
+elif [[ "$consensus_mode" == 'non_validator' ]]; then
+  cat >> "$wrapper" <<EOF
+export AIDN_CONSENSUS_MODE=non_validator
+export AIDN_CONSENSUS_NODE_ID=$(shell_quote "$operator_id")
+export AIDN_COMETBFT_ENDPOINT=$(shell_quote "$consensus_rpc_endpoint")
+export AIDN_COMETBFT_CHAIN_ID=$(shell_quote "$chain_id")
+export AIDN_COMETBFT_SERVICE=''
+export AIDN_COMETBFT_ABCI_STATE_PATH=''
 EOF
 else
   cat >> "$wrapper" <<'EOF'
@@ -728,7 +765,7 @@ service_name="aidn-hypervisor-$operator_id.service"
 unit_path="$HOME/.config/systemd/user/$service_name"
 wrapper_q="$(shell_quote "$wrapper")"
 consensus_unit_dependency=''
-if [[ "$consensus_mode" != 'disabled' ]]; then
+if [[ "$consensus_mode" == 'validator' ]]; then
   consensus_unit_dependency="Wants=$consensus_service_name"
 fi
 cat > "$unit_path" <<EOF
@@ -754,7 +791,7 @@ WorkingDirectory=$repo_q
 WantedBy=default.target
 EOF
 chmod 600 "$unit_path"
-if [[ "$consensus_mode" != 'disabled' ]]; then
+if [[ "$consensus_mode" == 'validator' ]]; then
   consensus_dropin_dir="$HOME/.config/systemd/user/$consensus_service_name.d"
   mkdir -p "$consensus_dropin_dir"
   cat > "$consensus_dropin_dir/10-aidn-hypervisor.conf" <<EOF
@@ -788,7 +825,7 @@ if [[ "$no_start" != 'true' ]]; then
     systemctl --user --no-pager --full status "$service_name" >&2 || true
     die "Hypervisor did not become healthy; inspect journalctl --user -u $service_name"
   }
-  if [[ "$consensus_mode" != 'disabled' ]]; then
+  if [[ "$consensus_mode" == 'validator' ]]; then
     systemctl --user enable --now "$consensus_service_name"
     for _ in $(seq 1 30); do
       if curl --fail --silent "http://$consensus_rpc_host:$consensus_rpc_port/status" >/dev/null; then
@@ -882,7 +919,7 @@ fi
   "$api_host" "$api_port" "$registry_state" "$service_name" "$identity_root" \
   "$registry_root" "$operator_public_key" "$ref" "$consensus_mode" \
   "$consensus_service_name" "$consensus_home" "$consensus_binary_path" \
-  "$consensus_rpc_host" "$consensus_rpc_port" "$resource_capacity_path" \
+  "$consensus_rpc_host" "$consensus_rpc_port" "$consensus_rpc_endpoint" "$consensus_transport" "$resource_capacity_path" \
   "$wallet_action" "$wallet_bootstrap_status" "$wallet_bootstrap_id" \
   "$wallet_bootstrap_public_key" "$dashboard_pairing_status" "$agent_onboarding_status" <<'PY'
 import json
@@ -909,6 +946,8 @@ import sys
     consensus_binary_path,
     consensus_rpc_host,
     consensus_rpc_port,
+    consensus_rpc_endpoint,
+    consensus_transport,
     resource_capacity_path,
     wallet_action,
     wallet_bootstrap_status,
@@ -934,11 +973,12 @@ payload = {
     "replication": registry_state,
     "consensus": {
         "mode": consensus_mode,
+        "transport": consensus_transport,
         "service": consensus_service_name or None,
         "home": consensus_home or None,
         "binary": consensus_binary_path or None,
-        "rpc": f"http://{consensus_rpc_host}:{consensus_rpc_port}" if consensus_service_name else None,
-        "automatic_install": consensus_mode != "disabled",
+        "rpc": consensus_rpc_endpoint or (f"http://{consensus_rpc_host}:{consensus_rpc_port}" if consensus_service_name else None),
+        "automatic_install": consensus_mode == "validator",
     },
     "resource_probe": {
         "mode": "auto",
@@ -976,8 +1016,10 @@ else
 fi
 echo "  Capacity: $resource_capacity_path (automatic host probe)" >&2
 echo "  Registry: $registry_state" >&2
-if [[ "$consensus_mode" != 'disabled' ]]; then
-  echo "  CometBFT: $consensus_service_name ($consensus_rpc_host:$consensus_rpc_port)" >&2
+if [[ "$consensus_mode" == 'validator' ]]; then
+  echo "  CometBFT: local validator $consensus_service_name ($consensus_rpc_host:$consensus_rpc_port)" >&2
+elif [[ "$consensus_mode" == 'non_validator' ]]; then
+  echo "  CometBFT: external RPC observer ($consensus_rpc_endpoint)" >&2
 else
   echo '  CometBFT: disabled (--no-consensus)' >&2
 fi

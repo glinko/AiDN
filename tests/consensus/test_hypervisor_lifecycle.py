@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
 from aidn_hypervisor.consensus.state_store import ABCIStateStoreError
-from aidn_hypervisor.main import build_app
+from aidn_hypervisor.main import _build_default_consensus_service, build_app
+from aidn_hypervisor.persistence import FileStateStore
 
 
 def _configure_validator(monkeypatch, tmp_path) -> None:
@@ -117,3 +119,39 @@ def test_validator_mode_requires_both_durable_state_paths(monkeypatch, tmp_path)
     monkeypatch.delenv("AIDN_COMETBFT_ABCI_STATE_PATH")
     with pytest.raises(ValueError, match="AIDN_COMETBFT_ABCI_STATE_PATH"):
         build_app()
+
+
+def test_external_rpc_profile_does_not_resurrect_retired_local_service(
+    monkeypatch, tmp_path
+):
+    state_path = tmp_path / "hypervisor.json"
+    config_path = tmp_path / "consensus-config.json"
+    config_path.write_text(
+        '{"mode":"non_validator","cometbft_endpoint":"http://192.168.88.128:26657",'
+        '"chain_id":"chain-Anm7Jk","managed_service_name":null,"abci_state_path":null}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AIDN_HYPERVISOR_STATE_PATH", str(state_path))
+    monkeypatch.setenv("AIDN_CONSENSUS_MODE", "non_validator")
+    monkeypatch.setenv("AIDN_COMETBFT_SERVICE", "aidn-cometbft-old.service")
+    monkeypatch.setenv("AIDN_COMETBFT_ABCI_STATE_PATH", str(tmp_path / "old-abci"))
+
+    class Ledger:
+        @staticmethod
+        def remove_noncanonical_operations(_types):
+            return []
+
+    hypervisor = SimpleNamespace(
+        node_id="gpu-3090",
+        ledger_operation_service=Ledger(),
+        state_store=FileStateStore(state_path),
+    )
+    consensus = _build_default_consensus_service(
+        hypervisor_service=hypervisor,
+        state_store=hypervisor.state_store,
+    )
+
+    assert consensus is not None
+    assert consensus.config.cometbft_endpoint == "http://192.168.88.128:26657"
+    assert consensus.config.managed_service_name is None
+    assert consensus.config.abci_state_path is None

@@ -73,10 +73,13 @@ executes arbitrary host commands. A legacy node without managed consensus
 metadata receives a concrete migration instruction instead of a misleading
 in-dashboard shell action.
 
-The installer supports `validator`, `non_validator` and `disabled` modes. A
-new local genesis is created only when the CometBFT home is empty; an existing
-`genesis.json` is checked against the requested chain ID and is never rewritten
-by a rerun.
+The bootstrap supports `validator`, `non_validator` and `disabled` modes. A
+local CometBFT runtime and ABCI service are installed only for `validator`.
+`non_validator` is an external-RPC observer: it requires a verified private
+source RPC, does not create a local genesis or noop application, and keeps
+local P2P/service controls disabled. A new local genesis is created only when
+the validator CometBFT home is empty; an existing `genesis.json` is checked
+against the requested chain ID and is never rewritten by a rerun.
 
 ## 4. Readiness Projection
 

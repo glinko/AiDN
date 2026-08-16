@@ -29,6 +29,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 DEFAULT_VERSION = "v0.38.19"
 DEFAULT_CHAIN_ID = "aidn-localnet-1"
+EXTERNAL_RPC_PROFILE = "operator-cometbft-external-rpc-v1"
 LOOPBACK = "127.0.0.1"
 LAN = "0.0.0.0"
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$")
@@ -41,6 +42,7 @@ _MAX_REMOTE_GENESIS_BYTES = 4 * 1024 * 1024
 _REMOTE_RPC_TIMEOUT_SECONDS = 8
 _HOST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$")
 _IPV6 = re.compile(r"^[0-9A-Fa-f:]{2,45}$")
+_SERVICE_NAME = re.compile(r"^[A-Za-z0-9_.@-]+\.service$")
 
 
 class ConsensusRuntimeExecutor(Protocol):
@@ -85,6 +87,8 @@ class CometBftInstallPlan:
     def as_config(self) -> dict[str, Any]:
         return {
             "profile": "operator-cometbft-install-v1",
+            "transport": "local",
+            "local_p2p_enabled": True,
             "mode": self.mode,
             "version": self.version,
             "chain_id": self.chain_id,
@@ -366,6 +370,11 @@ def build_cometbft_install_argv(
     values: Mapping[str, object] | None = None,
 ) -> tuple[CometBftInstallPlan, list[str]]:
     plan = build_cometbft_install_plan(service, values)
+    if plan.mode != "validator":
+        raise ValueError(
+            "Local CometBFT installation is supported only for validator mode; "
+            "use the external-RPC reconnect flow for non_validator"
+        )
     argv = [
         _dispatcher_path(),
         "consensus",
@@ -439,6 +448,10 @@ def build_operator_cometbft_install_payload(service: Any) -> dict[str, Any]:
             "profile": "operator-cometbft-install-v1",
             "available": False,
             "reason": str(error),
+            "capabilities": {
+                "local_install_supported": False,
+                "external_rpc_supported": True,
+            },
             "broker": {"configured": False},
             "defaults": {"version": DEFAULT_VERSION, "mode": "validator", "chain_id": DEFAULT_CHAIN_ID},
             "current": load_active_cometbft_configuration(service),
@@ -452,6 +465,10 @@ def build_operator_cometbft_install_payload(service: Any) -> dict[str, Any]:
         "profile": "operator-cometbft-install-v1",
         "available": executor_available,
         "reason": None if executor_available else "Root-owned runtime broker is not configured",
+        "capabilities": {
+            "local_install_supported": plan.mode == "validator",
+            "external_rpc_supported": True,
+        },
         "broker": {
             "configured": executor_available,
             "dispatcher": _dispatcher_path() if executor_available else None,
@@ -582,6 +599,12 @@ def _fetch_source_genesis(source_rpc: object, expected_chain_id: str) -> tuple[d
         raise ValueError(
             f"Source RPC belongs to chain {source_chain_id!r}, not {expected_chain_id!r}"
         )
+    protocol_version = node_info.get("protocol_version")
+    if not isinstance(protocol_version, Mapping):
+        protocol_version = {}
+    app_version = str(protocol_version.get("app") or "").strip()
+    if app_version and (not app_version.isdigit() or int(app_version) < 0):
+        raise ValueError("Source RPC reported an invalid CometBFT application version")
     genesis_payload = _fetch_source_json(endpoint, "/genesis")
     genesis_result = genesis_payload.get("result")
     if not isinstance(genesis_result, Mapping):
@@ -598,6 +621,7 @@ def _fetch_source_genesis(source_rpc: object, expected_chain_id: str) -> tuple[d
         "node_id": str(node_info.get("id") or ""),
         "moniker": str(node_info.get("moniker") or ""),
         "chain_id": expected_chain_id,
+        "app_version": app_version,
         "height": str(sync_info.get("latest_block_height") or ""),
         "genesis_sha256": hashlib.sha256(canonical_genesis).hexdigest(),
     }
@@ -629,43 +653,162 @@ def _reset_cometbft_data(home: Path, genesis: Mapping[str, Any]) -> None:
     _atomic_write(genesis_path, genesis)
 
 
-def reconnect_cometbft_from_dashboard(service: Any, values: Mapping[str, object]) -> dict[str, Any]:
-    """Join an existing private network by replacing only local CometBFT state.
+def _retire_cometbft_home(home: Path) -> None:
+    """Remove a deliberately retired local CometBFT home.
 
-    The existing local genesis and blockstore are intentionally discarded after
-    the operator has acknowledged the reset. Hypervisor state, models and
-    provider data remain outside the reset boundary. Reconnect currently uses a
-    non-validator profile so a fresh host cannot accidentally claim validator
-    power that is not present in the source genesis.
+    An external-RPC non-validator does not need a local blockstore, genesis or
+    P2P listener.  Keep this boundary narrow and fail closed on symlinks so a
+    reconnect cannot delete anything outside the derived consensus directory.
+    """
+
+    home = home.expanduser()
+    if home.is_symlink():
+        raise ValueError("CometBFT home cannot be a symlink")
+    home = home.resolve()
+    if home.exists():
+        if not home.is_dir():
+            raise ValueError("CometBFT home is not a directory")
+        shutil.rmtree(home)
+
+
+def _remove_managed_cometbft(service: Any, service_name: str) -> dict[str, Any]:
+    """Remove the reviewed user-systemd CometBFT unit through the broker."""
+
+    if not service_name:
+        return {"status": "skipped", "action": "remove"}
+    result = _executor(service).invoke(
+        argv=[
+            _dispatcher_path(),
+            "consensus",
+            "remove",
+            "--service-name",
+            service_name,
+        ],
+        timeout_seconds=60,
+    )
+    returncode, stdout, stderr = _result_detail(result)
+    if returncode != 0:
+        detail = stderr.splitlines()[0][:512] if stderr.strip() else "broker returned a non-zero status"
+        raise RuntimeError(f"CometBFT unit removal failed: {detail}")
+    return {"status": "removed", "action": "remove", "stdout": stdout}
+
+
+def configure_external_cometbft_from_dashboard(service: Any, values: Mapping[str, object]) -> dict[str, Any]:
+    """Configure a non-validator to observe an existing network through RPC.
+
+    AiDN's Hypervisor state is the application state.  A plain CometBFT
+    ``noop`` ABCI process cannot replay the validator application's AppHash,
+    so starting one locally creates a misleading peer/sync state and eventually
+    fails with an application-version or block-header mismatch.  The supported
+    non-validator profile therefore keeps the Hypervisor's consensus client
+    pointed at a verified source RPC and retires the incompatible local
+    CometBFT home/unit.  Validator installation remains the only local ABCI
+    installation path.
     """
 
     if str(values.get("mode") or "").strip() != "non_validator":
-        raise ValueError("Reconnect to an existing network currently requires non_validator mode")
+        raise ValueError("External RPC reconnect requires non_validator mode")
     if values.get("acknowledge_reset") is not True:
-        raise ValueError("Reconnect requires explicit acknowledgement of the local consensus reset")
-    if _read_object(_pending_path(service)) is not None:
+        raise ValueError("External RPC reconnect requires explicit acknowledgement of the local consensus reset")
+    pending_path = _pending_path(service)
+    if _read_object(pending_path) is not None:
         raise ValueError("Apply or finish the pending CometBFT configuration before reconnecting")
-    plan, _ = build_cometbft_install_argv(service, values)
-    genesis, source = _fetch_source_genesis(values.get("source_rpc"), plan.chain_id)
-    from aidn_hypervisor.operator_cometbft import control_managed_cometbft
 
-    control_managed_cometbft(service, "stop")
-    _reset_cometbft_data(Path(plan.home), genesis)
-    installed = install_cometbft_from_dashboard(service, values)
-    applied = apply_pending_cometbft_configuration(service)
+    # Build the plan only for bounded identity/path defaults.  No installer is
+    # invoked in this profile and no browser-supplied filesystem path is used.
+    # Ignore legacy UI P2P fields rather than allowing an old dashboard bundle
+    # to accidentally re-enable a local listener during migration.
+    bounded_values = dict(values)
+    bounded_values.update(
+        {
+            "p2p_host": LOOPBACK,
+            "external_address": "",
+            "seeds": "",
+            "persistent_peers": "",
+        }
+    )
+    plan = build_cometbft_install_plan(service, bounded_values)
+    source_genesis, source = _fetch_source_genesis(values.get("source_rpc"), plan.chain_id)
+    del source_genesis  # The external profile never writes a foreign genesis.
+
+    active_path = _config_path(service)
+    if active_path is None:
+        raise ValueError("Persistent Hypervisor state is required for CometBFT configuration")
+    active = load_active_cometbft_configuration(service) or {}
+    configured_service = str(active.get("managed_service_name") or "").strip()
+    if configured_service and not _SERVICE_NAME.fullmatch(configured_service):
+        raise ValueError("Active CometBFT service name is invalid")
+    if not configured_service:
+        # A process created by the old environment-only bootstrap can still be
+        # present while active JSON is missing the managed unit.  Derive the
+        # reviewed unit name from the immutable operator identity, but only
+        # remove it when the broker reports the operation successfully.
+        consensus = getattr(service, "consensus_service", None)
+        configured_service = str(
+            getattr(getattr(consensus, "config", None), "managed_service_name", "") or ""
+        ).strip()
+        if configured_service and not _SERVICE_NAME.fullmatch(configured_service):
+            raise ValueError("Configured CometBFT service name is invalid")
+
+    removed = _remove_managed_cometbft(service, configured_service)
+    _retire_cometbft_home(Path(plan.home))
+
+    external = plan.as_config()
+    external.update(
+        {
+            "profile": EXTERNAL_RPC_PROFILE,
+            "transport": "external_rpc",
+            "local_p2p_enabled": False,
+            "mode": "non_validator",
+            "cometbft_endpoint": source["rpc"],
+            "rpc_host": None,
+            "rpc_port": None,
+            "p2p_host": None,
+            "p2p_port": None,
+            "external_address": "",
+            "seeds": "",
+            "persistent_peers": "",
+            "pex": False,
+            "abci_state_path": None,
+            "service_name": None,
+            "managed_service_name": None,
+            "source_rpc": source["rpc"],
+            "source_node_id": source.get("node_id"),
+            "source_moniker": source.get("moniker"),
+            "source_app_version": source.get("app_version"),
+            "source_height": source.get("height"),
+            "source_genesis_sha256": source.get("genesis_sha256"),
+        }
+    )
+    _atomic_write(active_path, external)
+    if pending_path is not None:
+        try:
+            pending_path.unlink()
+        except FileNotFoundError:
+            pass
+    restart_scheduled = _schedule_restart()
     return {
-        "status": "reconnected",
+        "status": "external_rpc_configured",
+        "transport": "external_rpc",
         "source": source,
+        "local_service": {"status": removed.get("status"), "service": configured_service or None},
         "reset": {
-            "scope": "cometbft_data_and_genesis",
+            "scope": "cometbft_home_removed",
             "home": plan.home,
             "hypervisor_state_preserved": True,
             "models_preserved": True,
+            "providers_preserved": True,
         },
-        "installation": installed,
-        "applied": applied,
-        "next_action": "refresh",
+        "active": external,
+        "restart_scheduled": restart_scheduled,
+        "next_action": "refresh" if restart_scheduled else "restart_hypervisor_manually",
     }
+
+
+def reconnect_cometbft_from_dashboard(service: Any, values: Mapping[str, object]) -> dict[str, Any]:
+    """Backward-compatible API name for the external-RPC reconnect flow."""
+
+    return configure_external_cometbft_from_dashboard(service, values)
 
 
 def _schedule_restart() -> bool:

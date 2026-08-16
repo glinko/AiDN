@@ -50,8 +50,10 @@ The non-interactive form still requires the caller's ordinary sudo access. It
 does not silently enable a public API or a Registry listener.
 
 Consensus is enabled as a local validator by default. Use
-`--consensus-mode non_validator` for a participant without local validator
-execution, or `--no-consensus` for an explicitly local-only installation. See
+`--consensus-mode non_validator --consensus-rpc http://<private-rpc>:26657` for
+a participant that observes an existing network through an external RPC; this
+mode does not install a local CometBFT/ABCI process. Use `--no-consensus` for
+an explicitly local-only installation. See
 [Operator Consensus Provisioning](./operator-consensus-provisioning.md) for
 startup ordering, legacy migration, and the boundary between a local genesis
 and a joined multi-validator network.

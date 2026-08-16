@@ -2770,7 +2770,7 @@ function CometBftInstallWizard({ data, onRefresh, controlSupported, serviceName 
   useEffect(() => {
     if (!install || hydrated) return
     const initialDefaults = getRecord(install.defaults) ?? {}
-    setMode(getText(initialDefaults, 'mode') === 'non_validator' ? 'non_validator' : 'validator')
+    setMode('validator')
     setChainId(getText(initialDefaults, 'chain_id') || 'aidn-localnet-1')
     setMoniker(getText(initialDefaults, 'moniker') || 'operator-local')
     setP2pHost(getText(initialDefaults, 'p2p_host') === '0.0.0.0' ? '0.0.0.0' : '127.0.0.1')
@@ -2788,7 +2788,7 @@ function CometBftInstallWizard({ data, onRefresh, controlSupported, serviceName 
   const monikerValid = /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/.test(moniker)
   const portsValid = new Set([rpcPort, p2pPort, abciPort]).size === 3
   const networkConfigurationRequested = p2pHost === '0.0.0.0' || Boolean(externalAddress.trim() || seeds.trim() || persistentPeers.trim())
-  const readyToInstall = Boolean(install?.available) && !pending && chainValid && monikerValid && portsValid && acknowledged && (!networkConfigurationRequested || networkAcknowledged) && busy === null
+  const readyToInstall = Boolean(install?.available) && mode === 'validator' && !pending && chainValid && monikerValid && portsValid && acknowledged && (!networkConfigurationRequested || networkAcknowledged) && busy === null
   const paths = getRecord(install?.paths) ?? {}
   const hasActiveConfiguration = Boolean(getRecord(install?.current))
 
@@ -2862,7 +2862,7 @@ function CometBftInstallWizard({ data, onRefresh, controlSupported, serviceName 
   return <Card className="border-cyan-300/20 bg-cyan-300/[0.025] py-0 shadow-none">
     <CardHeader className="border-b border-border/70 px-5 py-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><p className="eyebrow text-cyan-100">Guided host procedure</p><CardTitle className="mt-1 text-lg font-semibold">Install and enable CometBFT</CardTitle><p className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">The wizard installs the reviewed Ubuntu runtime, writes a user-systemd unit and activates consensus only after an explicit apply step.</p></div>
+        <div><p className="eyebrow text-cyan-100">Guided host procedure</p><CardTitle className="mt-1 text-lg font-semibold">Install and enable CometBFT</CardTitle><p className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">The wizard installs the reviewed Ubuntu runtime, writes a user-systemd unit and activates consensus only after an explicit apply step.</p><p className="mt-2 max-w-3xl text-xs leading-5 text-amber-100/80">This wizard is for validators with the AiDN ABCI application. Non-validators must use the external-RPC procedure below; a local noop app cannot replay the application state.</p></div>
         <StatusBadge value={install?.available ? pending ? 'ready to apply' : 'available' : 'manual'} />
       </div>
     </CardHeader>
@@ -2908,19 +2908,25 @@ function inferCometBftSourceRpc(peers: string[]): string {
   return host ? `http://${host}:26657` : ''
 }
 
-function CometBftReconnectCard({ data, onRefresh, configuredChainId, observedChainId, network, persistentPeers }: { data: DashboardData; onRefresh: () => void; configuredChainId: string; observedChainId: string; network: DashboardRecord; persistentPeers: string[] }) {
+function LegacyCometBftReconnectCard({ data, onRefresh, configuredChainId, observedChainId, rpcEndpoint }: { data: DashboardData; onRefresh: () => void; configuredChainId: string; observedChainId: string; rpcEndpoint: string }) {
   const install: CometBftInstall | undefined = data.cometbftInstall.data
   const defaults = getRecord(install?.defaults) ?? {}
+  const current = getRecord(install?.current) ?? {}
   const pending = getRecord(install?.pending)
-  const [sourceRpc, setSourceRpc] = useState(() => inferCometBftSourceRpc(persistentPeers))
-  const [chainId, setChainId] = useState('')
-  const [persistentPeerText, setPersistentPeerText] = useState(() => persistentPeers.join(','))
-  const [externalAddress, setExternalAddress] = useState(() => getText(network, 'external_address') || getText(defaults, 'external_address'))
-  const [p2pHost, setP2pHost] = useState<'127.0.0.1' | '0.0.0.0'>(() => getText(network, 'p2p_host') === '0.0.0.0' || getText(defaults, 'p2p_host') === '0.0.0.0' ? '0.0.0.0' : '127.0.0.1')
+  const initialSourceRpc = getText(current, 'source_rpc') || (rpcEndpoint.startsWith('http') ? rpcEndpoint : '')
+  const [sourceRpc, setSourceRpc] = useState(initialSourceRpc)
+  const [chainId, setChainId] = useState(observedChainId || configuredChainId)
+  const [persistentPeerText, setPersistentPeerText] = useState('')
+  const [externalAddress, setExternalAddress] = useState('')
+  const [p2pHost, setP2pHost] = useState<'127.0.0.1' | '0.0.0.0'>('127.0.0.1')
   const [acknowledgeReset, setAcknowledgeReset] = useState(false)
   const [acknowledgeNetwork, setAcknowledgeNetwork] = useState(false)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  void persistentPeerText
+  void setPersistentPeerText
+  void externalAddress
+  void setExternalAddress
 
   const version = getText(defaults, 'version') || 'v0.38.19'
   const moniker = getText(defaults, 'moniker') || 'operator-local'
@@ -2928,13 +2934,13 @@ function CometBftReconnectCard({ data, onRefresh, configuredChainId, observedCha
   const p2pPort = numberValue(defaults, 'p2p_port') || 26656
   const abciPort = numberValue(defaults, 'abci_port') || 26658
   const chainValid = /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/.test(chainId.trim())
-  const networkConfigurationRequested = p2pHost === '0.0.0.0' || Boolean(externalAddress.trim() || persistentPeerText.trim())
-  const ready = Boolean(install?.available) && !pending && !busy && sourceRpc.trim().length > 0 && chainValid && acknowledgeReset && (!networkConfigurationRequested || acknowledgeNetwork)
+  const networkConfigurationRequested = false
+  const ready = !pending && !busy && sourceRpc.trim().length > 0 && chainValid && acknowledgeReset && !networkConfigurationRequested
 
   async function reconnect() {
     if (!ready) return
     setBusy(true)
-    setMessage('Verifying the source RPC and replacing only local CometBFT state...')
+    setMessage('Verifying the source RPC and retiring the incompatible local CometBFT observer...')
     try {
       const result = getRecord(await dashboardApi.reconnectCometbft({
         mode: 'non_validator',
@@ -2943,19 +2949,19 @@ function CometBftReconnectCard({ data, onRefresh, configuredChainId, observedCha
         moniker,
         rpc_host: '127.0.0.1',
         rpc_port: rpcPort,
-        p2p_host: p2pHost,
+        p2p_host: '127.0.0.1',
         p2p_port: p2pPort,
-        external_address: externalAddress.trim(),
-        seeds: getText(defaults, 'seeds'),
-        persistent_peers: persistentPeerText.trim(),
+        external_address: '',
+        seeds: '',
+        persistent_peers: '',
         abci_host: '127.0.0.1',
         abci_port: abciPort,
-        acknowledge_network_scope: networkConfigurationRequested,
+        acknowledge_network_scope: false,
         source_rpc: sourceRpc.trim(),
         acknowledge_reset: acknowledgeReset,
       }))
       const source = getRecord(result?.source)
-      setMessage(`Reconnected to ${getText(source, 'chain_id') || chainId.trim()}. Local CometBFT data was replaced; the Hypervisor is restarting.`)
+      setMessage(`External RPC configured for ${getText(source, 'chain_id') || chainId.trim()}. Local CometBFT service and home were retired; Hypervisor state, models and providers were preserved.`)
       window.setTimeout(onRefresh, 2500)
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : 'CometBFT reconnect failed.')
@@ -2967,8 +2973,8 @@ function CometBftReconnectCard({ data, onRefresh, configuredChainId, observedCha
   return <Card className="border-amber-300/25 bg-amber-300/[0.025] py-0 shadow-none">
     <CardHeader className="border-b border-amber-300/15 px-5 py-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div><CardTitle className="text-lg font-semibold">Reconnect to an existing network</CardTitle><p className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">Use a reachable peer RPC to verify the target genesis, discard this node&apos;s wrong local CometBFT chain and join as a non-validator. Hypervisor state, models and Provider runtimes stay untouched.</p></div>
-        <StatusBadge value="non-validator" />
+        <div><CardTitle className="text-lg font-semibold">Use an external RPC for this non-validator</CardTitle><p className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">The source RPC is checked for Chain ID and genesis before this node switches profiles. No local CometBFT ABCI process or P2P listener is started; the Hypervisor observes and submits through the verified RPC. Hypervisor state, models and Provider runtimes stay untouched.</p></div>
+        <StatusBadge value="external RPC" />
       </div>
     </CardHeader>
     <CardContent className="space-y-4 p-5">
@@ -2980,13 +2986,91 @@ function CometBftReconnectCard({ data, onRefresh, configuredChainId, observedCha
       <div className="grid gap-3 lg:grid-cols-2">
         <label className="grid gap-2"><span className="eyebrow">Source RPC</span><input value={sourceRpc} onChange={(event) => setSourceRpc(event.target.value)} placeholder="http://192.168.88.128:26657" disabled={busy || Boolean(pending)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /><span className="text-xs leading-5 text-muted-foreground">Private or loopback HTTP(S) only. The RPC&apos;s /status and /genesis must agree with the target Chain ID.</span></label>
         <label className="grid gap-2"><span className="eyebrow">Target Chain ID</span><input value={chainId} onChange={(event) => setChainId(event.target.value)} placeholder="chain-Anm7Jk" disabled={busy || Boolean(pending)} className={cn('h-10 rounded-lg border bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300', chainValid ? 'border-input' : 'border-rose-300/60')} /><span className="text-xs leading-5 text-muted-foreground">Enter the network identity reported by the source RPC, not the wrong local value.</span></label>
-        <label className="grid gap-2"><span className="eyebrow">Persistent peers to keep</span><input value={persistentPeerText} onChange={(event) => setPersistentPeerText(event.target.value)} placeholder="node_id@192.168.88.128:26656,node_id@192.168.88.129:26656" disabled={busy || Boolean(pending)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /><span className="text-xs leading-5 text-muted-foreground">Comma- or newline-separated node_id@host:26656 entries.</span></label>
-        <label className="grid gap-2"><span className="eyebrow">Advertised P2P address</span><input value={externalAddress} onChange={(event) => setExternalAddress(event.target.value)} placeholder="192.168.88.122:26656" disabled={busy || Boolean(pending)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /><span className="text-xs leading-5 text-muted-foreground">Leave blank for a local-only listener; TCP 26656 is the only port that peers need.</span></label>
+        <div className="rounded-lg border border-border/70 bg-black/10 p-3"><p className="eyebrow">Transport</p><p className="mt-1 font-mono text-sm text-cyan-50">External RPC only</p><p className="mt-1 text-xs leading-5 text-muted-foreground">The node does not open TCP 26656, maintain a local blockstore or run a noop ABCI app. Peer information is reported by the source RPC.</p></div>
       </div>
       <label className="grid gap-2 sm:max-w-xs"><span className="eyebrow">P2P bind</span><select value={p2pHost} onChange={(event) => setP2pHost(event.target.value as '127.0.0.1' | '0.0.0.0')} disabled={busy || Boolean(pending)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300"><option value="127.0.0.1">Loopback · local only</option><option value="0.0.0.0">LAN · listen on all interfaces</option></select></label>
       <label className="flex items-start gap-3 rounded-lg border border-amber-300/25 bg-amber-300/[0.045] p-3 text-sm text-amber-100/85"><input type="checkbox" checked={acknowledgeReset} onChange={(event) => setAcknowledgeReset(event.target.checked)} disabled={busy || Boolean(pending)} className="mt-0.5 size-4 accent-cyan-300" /><span>I understand this permanently replaces only this node&apos;s CometBFT blockstore, address book and genesis. The current local chain will not be preserved.</span></label>
       {networkConfigurationRequested ? <label className="flex items-start gap-3 rounded-lg border border-cyan-300/25 bg-cyan-300/[0.045] p-3 text-sm text-cyan-50"><input type="checkbox" checked={acknowledgeNetwork} onChange={(event) => setAcknowledgeNetwork(event.target.checked)} disabled={busy || Boolean(pending)} className="mt-0.5 size-4 accent-cyan-300" /><span>I understand this enables peer dialing on TCP {p2pPort}. I will allow it only on the intended LAN and will not expose RPC or ABCI.</span></label> : null}
       <div className="flex flex-wrap items-center gap-2"><Button className="bg-amber-300 text-[#1c1305] hover:bg-amber-200" disabled={!ready} onClick={() => void reconnect()}><RotateCcw />{busy ? 'Reconnecting...' : 'Reconnect and restart'}</Button><span className="text-xs leading-5 text-muted-foreground">The source genesis is fetched and validated before any local state is changed.</span></div>
+    </CardContent>
+  </Card>
+}
+
+void inferCometBftSourceRpc
+void LegacyCometBftReconnectCard
+
+function CometBftReconnectCard({ data, onRefresh, configuredChainId, observedChainId, rpcEndpoint }: { data: DashboardData; onRefresh: () => void; configuredChainId: string; observedChainId: string; rpcEndpoint: string }) {
+  const install: CometBftInstall | undefined = data.cometbftInstall.data
+  const defaults = getRecord(install?.defaults) ?? {}
+  const current = getRecord(install?.current) ?? {}
+  const pending = getRecord(install?.pending)
+  const [sourceRpc, setSourceRpc] = useState(() => getText(current, 'source_rpc') || (rpcEndpoint.startsWith('http') ? rpcEndpoint : ''))
+  const [chainId, setChainId] = useState(() => observedChainId || configuredChainId)
+  const [acknowledgeReset, setAcknowledgeReset] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  const version = getText(defaults, 'version') || 'v0.38.19'
+  const moniker = getText(defaults, 'moniker') || 'operator-local'
+  const rpcPort = numberValue(defaults, 'rpc_port') || 26657
+  const p2pPort = numberValue(defaults, 'p2p_port') || 26656
+  const abciPort = numberValue(defaults, 'abci_port') || 26658
+  const chainValid = /^[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/.test(chainId.trim())
+  const ready = !pending && !busy && sourceRpc.trim().length > 0 && chainValid && acknowledgeReset
+
+  async function reconnect() {
+    if (!ready) return
+    setBusy(true)
+    setMessage('Verifying the source RPC and retiring the incompatible local CometBFT observer...')
+    try {
+      const result = getRecord(await dashboardApi.reconnectCometbft({
+        mode: 'non_validator',
+        chain_id: chainId.trim(),
+        version,
+        moniker,
+        rpc_host: '127.0.0.1',
+        rpc_port: rpcPort,
+        p2p_host: '127.0.0.1',
+        p2p_port: p2pPort,
+        external_address: '',
+        seeds: '',
+        persistent_peers: '',
+        abci_host: '127.0.0.1',
+        abci_port: abciPort,
+        acknowledge_network_scope: false,
+        source_rpc: sourceRpc.trim(),
+        acknowledge_reset: acknowledgeReset,
+      }))
+      const source = getRecord(result?.source)
+      setMessage(`External RPC configured for ${getText(source, 'chain_id') || chainId.trim()}. Local CometBFT service and home were retired; Hypervisor state, models and providers were preserved.`)
+      window.setTimeout(onRefresh, 2500)
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'External RPC configuration failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <Card className="border-amber-300/25 bg-amber-300/[0.025] py-0 shadow-none">
+    <CardHeader className="border-b border-amber-300/15 px-5 py-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><CardTitle className="text-lg font-semibold">Use an external RPC for this non-validator</CardTitle><p className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">The source RPC is checked for Chain ID and genesis before this node switches profiles. No local CometBFT ABCI process or P2P listener is started; the Hypervisor observes and submits through the verified RPC. Hypervisor state, models and Provider runtimes stay untouched.</p></div>
+        <StatusBadge value="external RPC" />
+      </div>
+    </CardHeader>
+    <CardContent className="space-y-4 p-5">
+      {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <NetworkFact label="Configured Chain ID" value={configuredChainId || 'not configured'} detail="current local configuration" />
+        <NetworkFact label="RPC reports" value={observedChainId || 'not available'} detail="current source or local CometBFT network" />
+      </div>
+      <div className="grid gap-3 lg:grid-cols-2">
+        <label className="grid gap-2"><span className="eyebrow">Source RPC</span><input value={sourceRpc} onChange={(event) => setSourceRpc(event.target.value)} placeholder="http://192.168.88.128:26657" disabled={busy || Boolean(pending)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /><span className="text-xs leading-5 text-muted-foreground">Private or loopback HTTP(S) only. The RPC&apos;s /status and /genesis must agree with the target Chain ID.</span></label>
+        <label className="grid gap-2"><span className="eyebrow">Target Chain ID</span><input value={chainId} onChange={(event) => setChainId(event.target.value)} placeholder="chain-Anm7Jk" disabled={busy || Boolean(pending)} className={cn('h-10 rounded-lg border bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300', chainValid ? 'border-input' : 'border-rose-300/60')} /><span className="text-xs leading-5 text-muted-foreground">Enter the network identity reported by the source RPC, not the wrong local value.</span></label>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3"><NetworkFact label="Local P2P" value="Disabled" detail="no TCP 26656 listener" /><NetworkFact label="Local ABCI" value="Disabled" detail="no noop application" /><NetworkFact label="Reset scope" value="CometBFT only" detail="Hypervisor data remains" /></div>
+      <label className="flex items-start gap-3 rounded-lg border border-amber-300/25 bg-amber-300/[0.045] p-3 text-sm text-amber-100/85"><input type="checkbox" checked={acknowledgeReset} onChange={(event) => setAcknowledgeReset(event.target.checked)} disabled={busy || Boolean(pending)} className="mt-0.5 size-4 accent-cyan-300" /><span>I understand this retires this node&apos;s local CometBFT service and home. The local chain is not preserved; Hypervisor state, models and Provider runtimes are preserved.</span></label>
+      <div className="flex flex-wrap items-center gap-2"><Button className="bg-amber-300 text-[#1c1305] hover:bg-amber-200" disabled={!ready} onClick={() => void reconnect()}><RotateCcw />{busy ? 'Configuring...' : 'Use external RPC and restart'}</Button><span className="text-xs leading-5 text-muted-foreground">The source status and genesis are fetched before any local state is changed.</span></div>
     </CardContent>
   </Card>
 }
@@ -2998,6 +3082,8 @@ function CometBftWorkspace({ data, onNavigate, onRefresh }: { data: DashboardDat
   const management = getRecord(consensus?.management) ?? {}
   const metrics = getRecord(consensus?.metrics) ?? {}
   const authority = getRecord(consensus?.protocol_authority) ?? {}
+  const transport = getText(consensus, 'transport') || getText(network, 'transport') || 'local'
+  const externalRpc = transport === 'external_rpc'
   const serviceName = getText(management, 'service')
   const controlSupported = management.control_supported === true && Boolean(serviceName)
   const rpcAvailable = rpc.available === true
@@ -3033,7 +3119,7 @@ function CometBftWorkspace({ data, onNavigate, onRefresh }: { data: DashboardDat
   }
 
   return <div className="space-y-4">
-    <ScreenHeading eyebrow="Consensus control" title="CometBFT" detail="Manage the configured local consensus service and inspect network finality separately from local model execution." />
+    <ScreenHeading eyebrow="Consensus control" title="CometBFT" detail={externalRpc ? "Observe and submit through the verified external RPC. This Hypervisor does not run a local CometBFT process or P2P listener." : "Manage the configured local consensus service and inspect network finality separately from local model execution."} />
     {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
     <div className="flex flex-wrap gap-2">
       <Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" onClick={onRefresh}><RefreshCw className={cn(data.cometbft.isFetching && 'animate-spin')} />Refresh consensus</Button>
@@ -3047,7 +3133,7 @@ function CometBftWorkspace({ data, onNavigate, onRefresh }: { data: DashboardDat
         <Card className="border-border/80 bg-card py-0 shadow-none">
           <CardHeader className="border-b border-border/70 px-5 py-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div><p className="eyebrow">Local consensus status</p><CardTitle className="mt-1 text-lg font-semibold">CometBFT node</CardTitle><p className="mt-1 text-sm text-muted-foreground">{consensus.enabled ? 'The Hypervisor is configured to use CometBFT.' : 'Consensus is disabled for this Hypervisor.'}</p></div>
+              <div><p className="eyebrow">{externalRpc ? 'External consensus status' : 'Local consensus status'}</p><CardTitle className="mt-1 text-lg font-semibold">CometBFT node</CardTitle><p className="mt-1 text-sm text-muted-foreground">{externalRpc ? 'The Hypervisor uses a verified remote RPC; no local CometBFT process is required.' : consensus.enabled ? 'The Hypervisor is configured to use CometBFT.' : 'Consensus is disabled for this Hypervisor.'}</p></div>
               <StatusBadge value={status} />
             </div>
           </CardHeader>
@@ -3055,7 +3141,7 @@ function CometBftWorkspace({ data, onNavigate, onRefresh }: { data: DashboardDat
             <div className="grid gap-3 sm:grid-cols-2">
               <NetworkFact label="Mode" value={consensus.mode || 'unknown'} detail="consensus participation profile" />
               <NetworkFact label="Chain ID" value={consensus.chain_id || 'not configured'} detail="configured network identity" />
-              <NetworkFact label="RPC endpoint" value={consensus.rpc_endpoint || 'not configured'} detail={rpcAvailable ? 'RPC is responding' : getText(rpc, 'reason') || getText(rpc, 'error_type') || 'RPC is not responding'} />
+              <NetworkFact label={externalRpc ? 'Source RPC' : 'RPC endpoint'} value={consensus.rpc_endpoint || 'not configured'} detail={rpcAvailable ? externalRpc ? 'remote RPC is responding' : 'RPC is responding' : getText(rpc, 'reason') || getText(rpc, 'error_type') || 'RPC is not responding'} />
               <NetworkFact label="Node ID" value={consensus.node_id || 'not configured'} detail="local consensus identity" />
             </div>
             <div className="grid gap-3 sm:grid-cols-4">
@@ -3070,7 +3156,7 @@ function CometBftWorkspace({ data, onNavigate, onRefresh }: { data: DashboardDat
         <Card className="border-border/80 bg-card py-0 shadow-none">
           <CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Bounded host action</p><CardTitle className="mt-1 text-lg font-semibold">Service controls</CardTitle><p className="mt-1 text-sm leading-5 text-muted-foreground">Only the explicitly configured user-systemd unit can be controlled from this browser.</p></CardHeader>
           <CardContent className="space-y-4 p-5">
-            {controlSupported ? <>
+            {externalRpc ? <div className="rounded-lg border border-cyan-300/25 bg-cyan-300/[0.045] p-4"><p className="font-semibold text-cyan-100">External RPC observer</p><p className="mt-1 text-sm leading-5 text-cyan-100/75">Local start, stop and restart controls are intentionally unavailable. This Hypervisor reads consensus evidence from the verified source RPC and does not expose a local CometBFT unit or P2P listener.</p></div> : controlSupported ? <>
               <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/[0.04] p-3"><p className="eyebrow text-cyan-100">Managed unit</p><p className="mt-1 break-all font-mono text-sm text-cyan-50">{serviceName}</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Actions run through <code className="font-mono text-cyan-100">systemctl --user</code>; no shell command or alternate unit is accepted.</p></div>
               <div className="grid gap-2 sm:grid-cols-3"><Button size="sm" className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy !== null} onClick={() => void control('start')}><RadioTower />{busy === 'start' ? 'Starting...' : 'Start'}</Button><Button size="sm" variant="outline" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={busy !== null} onClick={() => void control('restart')}><RotateCcw />{busy === 'restart' ? 'Restarting...' : 'Restart'}</Button><Button size="sm" variant="destructive" disabled={busy !== null} onClick={() => void control('stop')}><XCircle />{busy === 'stop' ? 'Stopping...' : 'Stop'}</Button></div>
             </> : <div className="rounded-lg border border-amber-300/25 bg-amber-300/[0.045] p-4"><p className="font-semibold text-amber-100">Manual/bootstrap action required</p><p className="mt-1 text-sm leading-5 text-amber-100/75">This node has no configured user-systemd CometBFT unit, so the dashboard keeps start, stop and restart disabled until the reviewed installer has been applied.</p><Button variant="outline" size="sm" className="mt-3 border-amber-300/30 bg-transparent text-amber-50 hover:bg-amber-300/10" onClick={() => onNavigate('settings')}><Settings />Open host settings</Button></div>}
@@ -3079,29 +3165,29 @@ function CometBftWorkspace({ data, onNavigate, onRefresh }: { data: DashboardDat
         </Card>
        </div>
 
-       {chainMismatch ? <div role="alert" className="flex items-start gap-3 rounded-lg border border-amber-300/30 bg-amber-300/[0.06] p-4 text-amber-100"><GitBranch className="mt-0.5 size-5 shrink-0" /><div><p className="font-semibold">Network identity mismatch</p><p className="mt-1 text-sm leading-5 text-amber-100/80">This node is configured for <code className="font-mono text-amber-50">{configuredChainId}</code>, but its RPC reports <code className="font-mono text-amber-50">{observedChainId}</code>. It cannot connect to peers on the other chain. Use the reconnect procedure below to replace only the local CometBFT state.</p></div></div> : null}
+       {chainMismatch && !externalRpc ? <div role="alert" className="flex items-start gap-3 rounded-lg border border-amber-300/30 bg-amber-300/[0.06] p-4 text-amber-100"><GitBranch className="mt-0.5 size-5 shrink-0" /><div><p className="font-semibold">Network identity mismatch</p><p className="mt-1 text-sm leading-5 text-amber-100/80">This node is configured for <code className="font-mono text-amber-50">{configuredChainId}</code>, but its RPC reports <code className="font-mono text-amber-50">{observedChainId}</code>. It cannot connect to peers on the other chain. Use the external-RPC procedure below to replace the incompatible local observer.</p></div></div> : null}
 
-       {data.cometbftInstall.data?.available
-         ? <CometBftReconnectCard data={data} onRefresh={onRefresh} configuredChainId={configuredChainId} observedChainId={observedChainId} network={network} persistentPeers={persistentPeers} />
+       {data.cometbftInstall.data
+         ? <CometBftReconnectCard data={data} onRefresh={onRefresh} configuredChainId={configuredChainId} observedChainId={observedChainId} rpcEndpoint={consensus.rpc_endpoint} />
          : null}
 
        <Card className="border-border/80 bg-card py-0 shadow-none">
          <CardHeader className="border-b border-border/70 px-5 py-4">
-           <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow">Peer discovery</p><CardTitle className="mt-1 text-lg font-semibold">Bootstrap and PEX</CardTitle><p className="mt-1 text-sm leading-5 text-muted-foreground">Seeds and persistent peers establish the first connection; PEX can exchange additional addresses after that.</p></div><StatusBadge value={connectedPeers.length > 0 ? 'connected' : configuredSources.length > 0 ? 'waiting' : 'local only'} /></div>
+           <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow">{externalRpc ? 'Remote RPC network view' : 'Peer discovery'}</p><CardTitle className="mt-1 text-lg font-semibold">{externalRpc ? 'Peers reported by source RPC' : 'Bootstrap and PEX'}</CardTitle><p className="mt-1 text-sm leading-5 text-muted-foreground">{externalRpc ? 'These peers belong to the source CometBFT node. This Hypervisor does not listen on TCP 26656.' : 'Seeds and persistent peers establish the first connection; PEX can exchange additional addresses after that.'}</p></div><StatusBadge value={connectedPeers.length > 0 ? 'connected' : configuredSources.length > 0 ? 'waiting' : 'local only'} /></div>
          </CardHeader>
          <CardContent className="space-y-4 p-5">
            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-             <NetworkFact label="P2P bind" value={`${getText(network, 'p2p_host') || '127.0.0.1'}:${operatorMetric(network.p2p_port || 26656)}`} detail="listener address" />
-             <NetworkFact label="Advertised" value={getText(network, 'external_address') || 'not declared'} detail="address shared with peers" />
-             <NetworkFact label="Seeds" value={formatCount(seeds.length)} detail="bootstrap hints" />
-             <NetworkFact label="Persistent peers" value={formatCount(persistentPeers.length)} detail="continuously retried" />
+             <NetworkFact label={externalRpc ? 'Source RPC' : 'P2P bind'} value={externalRpc ? getText(network, 'source_rpc') || consensus.rpc_endpoint || 'not configured' : `${getText(network, 'p2p_host') || '127.0.0.1'}:${operatorMetric(network.p2p_port || 26656)}`} detail={externalRpc ? 'remote read-only transport' : 'listener address'} />
+             <NetworkFact label={externalRpc ? 'Local P2P' : 'Advertised'} value={externalRpc ? 'Disabled' : getText(network, 'external_address') || 'not declared'} detail={externalRpc ? 'no TCP 26656 listener' : 'address shared with peers'} />
+             <NetworkFact label={externalRpc ? 'Remote peers' : 'Seeds'} value={externalRpc ? operatorMetric(rpc.peer_count) : formatCount(seeds.length)} detail={externalRpc ? 'reported by source RPC' : 'bootstrap hints'} />
+             <NetworkFact label={externalRpc ? 'Transport' : 'Persistent peers'} value={externalRpc ? 'external RPC' : formatCount(persistentPeers.length)} detail={externalRpc ? 'no local P2P dialing' : 'continuously retried'} />
            </div>
-           <div className="rounded-lg border border-border/70 bg-black/10 p-3"><p className="eyebrow">Configured sources</p><div className="mt-2 flex flex-wrap gap-2">{configuredSources.length > 0 ? configuredSources.map((source) => <StatusBadge key={source} value={source} />) : <span className="text-xs text-muted-foreground">No bootstrap source. A local-only node cannot discover remote peers by itself.</span>}</div></div>
-           {connectedPeers.length === 0 ? <div className="rounded-lg border border-amber-300/20 bg-amber-300/[0.035] p-3"><div className="flex items-center gap-2"><StatusBadge value={configuredSources.length > 0 ? 'waiting' : 'local only'} /><p className="text-sm font-medium text-slate-200">No connected peers</p></div><p className="mt-2 text-xs leading-5 text-muted-foreground">{configuredSources.length > 0 ? 'CometBFT is waiting for a seed or persistent peer. Check the peer address and firewall TCP 26656.' : 'Add a node_id@host:26656 persistent peer or seed in the install wizard, then stage and apply the network update.'}</p></div> : <div className="divide-y divide-border/70 rounded-lg border border-border/70">{connectedPeers.slice(0, 8).map((peer, index) => <div key={`${getText(peer, 'node_id') || 'peer'}:${index}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5"><div className="min-w-0"><p className="truncate font-mono text-xs text-slate-200">{getText(peer, 'node_id') || 'anonymous peer'}</p><p className="mt-0.5 truncate text-[11px] text-slate-500">{getText(peer, 'network') || getText(peer, 'remote_ip') || 'address not reported'}</p></div><StatusBadge value={getText(peer, 'direction') || 'connected'} /></div>)}</div>}
+           <div className="rounded-lg border border-border/70 bg-black/10 p-3"><p className="eyebrow">{externalRpc ? 'Source' : 'Configured sources'}</p><div className="mt-2 flex flex-wrap gap-2">{configuredSources.length > 0 ? configuredSources.map((source) => <StatusBadge key={source} value={source} />) : <span className="text-xs text-muted-foreground">{externalRpc ? 'Source RPC is not configured.' : 'No bootstrap source. A local-only node cannot discover remote peers by itself.'}</span>}</div></div>
+           {connectedPeers.length === 0 ? <div className="rounded-lg border border-amber-300/20 bg-amber-300/[0.035] p-3"><div className="flex items-center gap-2"><StatusBadge value={configuredSources.length > 0 ? 'waiting' : 'local only'} /><p className="text-sm font-medium text-slate-200">{externalRpc ? 'Source RPC reports no peers' : 'No connected peers'}</p></div><p className="mt-2 text-xs leading-5 text-muted-foreground">{externalRpc ? 'The source RPC is reachable, but its current net_info has no connected peers.' : configuredSources.length > 0 ? 'CometBFT is waiting for a seed or persistent peer. Check the peer address and firewall TCP 26656.' : 'Add a node_id@host:26656 persistent peer or seed in the install wizard, then stage and apply the network update.'}</p></div> : <div className="divide-y divide-border/70 rounded-lg border border-border/70">{connectedPeers.slice(0, 8).map((peer, index) => <div key={`${getText(peer, 'node_id') || 'peer'}:${index}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5"><div className="min-w-0"><p className="truncate font-mono text-xs text-slate-200">{getText(peer, 'node_id') || 'anonymous peer'}</p><p className="mt-0.5 truncate text-[11px] text-slate-500">{getText(peer, 'network') || getText(peer, 'remote_ip') || 'address not reported'}</p></div><StatusBadge value={getText(peer, 'direction') || 'connected'} /></div>)}</div>}
          </CardContent>
        </Card>
 
-       {data.cometbftInstall.data?.available
+       {!externalRpc && data.cometbftInstall.data?.available
          ? <CometBftInstallWizard data={data} onRefresh={onRefresh} controlSupported={controlSupported} serviceName={serviceName} />
          : null}
 

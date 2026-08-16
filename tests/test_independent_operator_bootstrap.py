@@ -8,7 +8,11 @@ def test_ubuntu_bootstrap_is_loopback_only_and_requires_explicit_peer_identity()
     assert "--host 127.0.0.1" in script
     assert "install-cometbft-ubuntu.sh" in script
     assert "--consensus-mode MODE" in script
+    assert "--consensus-rpc URL" in script
     assert "AIDN_COMETBFT_ENDPOINT" in script
+    assert "consensus_transport='external_rpc'" in script
+    assert "if [[ \"$consensus_mode\" == 'validator' ]]; then" in script
+    assert "automatic_install\":false" in script
     assert "systemctl --user enable --now \"$consensus_service_name\"" in script
     assert "replication\":\"disabled_until_mutual_peer_approval" in script
     assert "AIDN_REGISTRY_REPLICATION_CONFIG" not in script
