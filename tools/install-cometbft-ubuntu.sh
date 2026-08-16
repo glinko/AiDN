@@ -283,7 +283,7 @@ import sys
 ) = sys.argv[1:]
 rpc_laddr = f"tcp://{rpc_host}:{rpc_port}"
 p2p_laddr = f"tcp://{p2p_host}:{p2p_port}"
-proxy_app = f"tcp://{abci_host}:{abci_port}" if use_abci == "true" else "nil"
+proxy_app = f"tcp://{abci_host}:{abci_port}" if use_abci == "true" else "noop"
 with open(path, encoding="utf-8") as stream:
     lines = stream.readlines()
 section = ""

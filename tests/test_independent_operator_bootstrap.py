@@ -141,6 +141,7 @@ def test_cometbft_installer_is_pinned_idempotent_and_preserves_genesis() -> None
     assert "ReadWritePaths=$home" in script
     assert "--no-start" in script
     assert "--no-abci" in script
+    assert 'else "noop"' in script
     assert "priv_validator_state.json" in script
     assert "refusing to recreate signing state" in script
     assert "Restart=always" in script

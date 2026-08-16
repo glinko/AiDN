@@ -33,7 +33,7 @@ genesis and peer/network profile remain required for a multi-operator network.
 ## Modes
 
 - `validator`: starts the local AiDN ABCI application and CometBFT validator.
-- `non_validator`: starts CometBFT with `proxy_app = "nil"`; it does not claim
+- `non_validator`: starts CometBFT with `proxy_app = "noop"`; it does not claim
   local validator participation.
 - `disabled`: leaves consensus disabled for explicitly local-only work.
 
