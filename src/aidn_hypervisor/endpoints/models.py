@@ -175,9 +175,8 @@ class EndpointManifest(BaseModel):
     display_name: str
     model_class: str
     capabilities: list[str] = Field(default_factory=list)
-    # Explicit opt-in for the owner-agent inference data plane.  This is
-    # intentionally separate from public visibility: a private endpoint can
-    # still be used by a local agent when the operator enables this flag.
+    # Local runtime permission for the owner-agent inference data plane. This
+    # is deliberately outside immutable configuration and publication state.
     local_agent_use: bool = False
     profile: EndpointProfile = Field(default_factory=EndpointProfile)
     runtime: EndpointRuntimeConfig = Field(default_factory=EndpointRuntimeConfig)
@@ -196,7 +195,6 @@ class EndpointConfigurationSnapshot(BaseModel):
     bundle_hash: str
     runtime_binding_id: str | None = None
     created_at: str
-    local_agent_use: bool = False
     profile: EndpointProfile = Field(default_factory=EndpointProfile)
     runtime: EndpointRuntimeConfig
     publication: EndpointPublicationPolicy
@@ -214,7 +212,6 @@ class CreateEndpointCommand(BaseModel):
     display_name: str
     model_class: str
     capabilities: list[str] = Field(default_factory=list)
-    local_agent_use: bool = False
     profile: EndpointProfile = Field(default_factory=EndpointProfile)
     runtime: EndpointRuntimeConfig = Field(default_factory=EndpointRuntimeConfig)
     publication: EndpointPublicationPolicy = Field(default_factory=EndpointPublicationPolicy)
@@ -226,7 +223,6 @@ class CreateEndpointCommand(BaseModel):
 class UpdateEndpointCommand(BaseModel):
     endpoint_id: str | None = None
     display_name: str | None = None
-    local_agent_use: bool | None = None
     profile: EndpointProfile | None = None
     runtime: EndpointRuntimeConfig | None = None
     publication: EndpointPublicationPolicy | None = None

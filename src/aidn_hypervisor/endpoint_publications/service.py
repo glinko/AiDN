@@ -84,7 +84,6 @@ class EndpointPublicationService:
             session=manifest.session.model_dump(mode="json"),
             execution=execution_payload,
             profile=manifest.profile.model_dump(mode="json"),
-            local_agent_use=manifest.local_agent_use,
         )
         configuration_hash = configuration_hash_for_publication(payload)
         compatible_hash = (
@@ -123,7 +122,6 @@ class EndpointPublicationService:
             bundle_hash=manifest.bundle_hash,
             model_class=manifest.model_class,
             capabilities=list(manifest.capabilities),
-            local_agent_use=(True if manifest.local_agent_use else None),
             profile=manifest.profile.model_dump(mode="json"),
             runtime=manifest.runtime.model_dump(mode="json"),
             publication=manifest.publication.model_dump(mode="json"),

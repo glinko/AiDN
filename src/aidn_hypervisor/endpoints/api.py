@@ -158,7 +158,6 @@ def build_endpoint_router(
             session=endpoint.session.model_dump(mode="json"),
             execution=_publication_execution_payload(endpoint),
             profile=endpoint.profile.model_dump(mode="json"),
-            local_agent_use=endpoint.local_agent_use,
         )
         return configuration_hash_for_publication(payload)
 

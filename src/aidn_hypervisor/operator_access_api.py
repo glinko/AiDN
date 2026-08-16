@@ -172,6 +172,12 @@ class DashboardNetworkAccessRequest(BaseModel):
     mode: Literal["loopback", "lan"]
 
 
+class LocalAgentUseRequest(BaseModel):
+    """A local-only inference permission; never part of endpoint publication."""
+
+    enabled: bool
+
+
 class ConsensusInstallRequest(BaseModel):
     """Only the reviewed, bounded CometBFT install choices reach the host."""
 
@@ -1644,6 +1650,58 @@ def build_operator_access_router(
         except (KeyError, ValueError) as error:
             return operation_error(error)
         return JSONResponse(status_code=200, content=result["payload"])
+
+    @router.post("/operations/endpoints/{endpoint_id}/local-agent-use")
+    async def set_local_agent_use(
+        endpoint_id: str,
+        payload: LocalAgentUseRequest,
+        request: Request,
+    ) -> Response:
+        """Change local agent gateway access without changing endpoint config."""
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if endpoint_service is None:
+            return JSONResponse(
+                status_code=503,
+                content={"error": {"code": "DASHBOARD_ENDPOINTS_UNAVAILABLE"}},
+            )
+        try:
+            result = endpoint_service.set_local_agent_use(
+                endpoint_id,
+                enabled=payload.enabled,
+            )
+        except (KeyError, ValueError) as error:
+            return operation_error(error)
+
+        revoked_credential_ids: list[str] = []
+        closed_session_ids: list[str] = []
+        if not payload.enabled and credential_store is not None:
+            active_credentials = [
+                item
+                for item in credential_store.list_inference_credentials()
+                if item.endpoint_id == endpoint_id and item.state == "active"
+            ]
+            for credential in active_credentials:
+                if credential_store.revoke_inference_credential(credential.credential_id):
+                    revoked_credential_ids.append(credential.credential_id)
+                    if credential.session_id and session_service is not None:
+                        try:
+                            session_service.close_session(credential.session_id)
+                            closed_session_ids.append(credential.session_id)
+                        except (KeyError, RuntimeError, ValueError):
+                            # Token revocation remains authoritative even when
+                            # the linked zero-fee session has already expired.
+                            pass
+        return JSONResponse(
+            status_code=200,
+            content={
+                "endpoint": result.endpoint.model_dump(mode="json"),
+                "local_agent_use": result.endpoint.local_agent_use,
+                "revoked_inference_credential_ids": revoked_credential_ids,
+                "closed_session_ids": closed_session_ids,
+            },
+        )
 
     @router.post("/operations/endpoints/{endpoint_id}/publish")
     async def publish_endpoint(endpoint_id: str, request: Request) -> Response:

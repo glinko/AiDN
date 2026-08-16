@@ -268,6 +268,7 @@ export const dashboardApi = {
   createEndpoint: (payload: DashboardRecord) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/endpoints', { method: 'POST', body: JSON.stringify(payload) }),
   previewMarketplaceDescription: (html: string) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/endpoints/marketplace-description/preview', { method: 'POST', body: JSON.stringify({ html }) }),
   updateEndpoint: (endpointId: string, payload: DashboardRecord) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/endpoints/${encodeURIComponent(endpointId)}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  setEndpointLocalAgentUse: (endpointId: string, enabled: boolean) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/endpoints/${encodeURIComponent(endpointId)}/local-agent-use`, { method: 'POST', body: JSON.stringify({ enabled }) }),
   publishEndpoint: (endpointId: string) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/endpoints/${encodeURIComponent(endpointId)}/publish`, { method: 'POST' }),
   requestEndpointValidation: (endpointId: string) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/endpoints/${encodeURIComponent(endpointId)}/validation`, { method: 'POST' }),
   closeSession: (sessionId: string) => writeDashboard<DashboardRecord>('/operators/dashboard/sessions/actions/close', { method: 'POST', body: JSON.stringify({ session_id: sessionId }) }),

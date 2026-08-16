@@ -6,6 +6,7 @@ from aidn_hypervisor.endpoint_publications.models import (
     canonical_configuration_payload,
     configuration_hash_for_publication,
     legacy_configuration_hash_for_publication,
+    legacy_local_agent_use_configuration_hash,
 )
 from aidn_hypervisor.endpoints.models import EndpointMarketplaceDescription
 
@@ -45,7 +46,7 @@ def test_configuration_hash_changes_when_execution_relevant_fields_change() -> N
     )
 
 
-def test_configuration_hash_commits_local_agent_opt_in() -> None:
+def test_configuration_hash_has_no_local_agent_permission_field() -> None:
     base = canonical_configuration_payload(
         bundle_hash="bundle-hash-a",
         model_class="llm_text",
@@ -54,19 +55,7 @@ def test_configuration_hash_commits_local_agent_opt_in() -> None:
         publication={"visibility": "private"},
         pricing={"billing_unit": "request"},
     )
-    opted_in = canonical_configuration_payload(
-        bundle_hash="bundle-hash-a",
-        model_class="llm_text",
-        capabilities=["llm_text"],
-        runtime={"streaming": False},
-        publication={"visibility": "private"},
-        pricing={"billing_unit": "request"},
-        local_agent_use=True,
-    )
-
     assert "local_agent_use" not in base
-    assert opted_in["local_agent_use"] is True
-    assert configuration_hash_for_publication(base) != configuration_hash_for_publication(opted_in)
 
 
 def test_configuration_hash_treats_capabilities_as_order_stable() -> None:
@@ -168,6 +157,37 @@ def test_published_endpoint_configuration_excludes_signature_from_signed_payload
     )
 
     assert "wallet_signature" not in record.signed_payload()
+
+
+def test_published_configuration_accepts_pre_migration_local_agent_signature() -> None:
+    canonical_payload = canonical_configuration_payload(
+        bundle_hash="bundle-hash-a",
+        model_class="llm_text",
+        capabilities=["llm_text"],
+        runtime={"streaming": False},
+        publication={"visibility": "private"},
+        pricing={"billing_unit": "request"},
+    )
+    record = PublishedEndpointConfiguration(
+        publication_id="pub-local-agent-legacy",
+        endpoint_id="ep-1",
+        owner_wallet="wallet-1",
+        node_id="node-1",
+        configuration_hash=legacy_local_agent_use_configuration_hash(canonical_payload),
+        bundle_id="bundle-a",
+        bundle_hash="bundle-hash-a",
+        model_class="llm_text",
+        capabilities=["llm_text"],
+        local_agent_use=True,
+        runtime={"streaming": False},
+        publication={"visibility": "private"},
+        pricing={"billing_unit": "request"},
+        published_at="2026-08-16T00:00:00+00:00",
+        sequence=1,
+        wallet_signature="sig-legacy",
+    )
+
+    assert record.signed_payload()["local_agent_use"] is True
 
 
 def test_published_configuration_normalizes_marketplace_html_before_hash_check() -> None:

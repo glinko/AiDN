@@ -1215,13 +1215,23 @@ function EndpointsScreen({ endpoints, isLoading, error, onNavigate, onRefresh, o
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
 
-  async function runEndpointAction(endpoint: Endpoint, action: 'publish' | 'validate') {
+  async function runEndpointAction(endpoint: Endpoint, action: 'publish' | 'validate' | 'toggle-local-agent-use') {
     setBusy(`${endpoint.endpoint_id}:${action}`)
     setMessage(null)
     try {
       let result: DashboardRecord | undefined
       if (action === 'publish') result = await dashboardApi.publishEndpoint(endpoint.endpoint_id)
       if (action === 'validate') await dashboardApi.requestEndpointValidation(endpoint.endpoint_id)
+      if (action === 'toggle-local-agent-use') {
+        const nextEnabled = !endpoint.local_agent_use
+        const update = await dashboardApi.setEndpointLocalAgentUse(endpoint.endpoint_id, nextEnabled)
+        const revoked = Array.isArray(update?.revoked_inference_credential_ids) ? update.revoked_inference_credential_ids.length : 0
+        setMessage(nextEnabled
+          ? `${endpoint.endpoint_id}: local agent access enabled. Issue a new token in Settings when ready.`
+          : `${endpoint.endpoint_id}: local agent access disabled.${revoked ? ` Revoked ${revoked} active token${revoked === 1 ? '' : 's'}.` : ''}`)
+        onRefresh()
+        return
+      }
       if (action === 'publish') {
         const consensusStatus = getText(result, 'status')
         setMessage(consensusStatus === 'CONSENSUS_PENDING'
@@ -1246,7 +1256,7 @@ function EndpointsScreen({ endpoints, isLoading, error, onNavigate, onRefresh, o
       {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
       <Card className="border-border/80 bg-card py-0 shadow-none">
         <CardHeader className="border-b border-border/75 px-5 py-4">
-          <div><p className="eyebrow">Endpoint inventory</p><CardTitle className="mt-1 text-lg font-semibold tracking-[-0.03em]">Published and local offers</CardTitle></div>
+          <div><p className="eyebrow">Endpoint inventory</p><CardTitle className="mt-1 text-lg font-semibold tracking-[-0.03em]">Published and local offers</CardTitle><p className="mt-1 text-xs leading-5 text-muted-foreground">Local agent access is a node-only permission. Toggling it never changes a Bundle, publication, or immutable endpoint configuration.</p></div>
           <Button variant="ghost" size="sm" className="text-cyan-200 hover:bg-cyan-300/10 hover:text-cyan-100" onClick={() => onNavigate('bundles')}>View Bundles<ChevronRight /></Button>
         </CardHeader>
         <CardContent className="p-0">
@@ -1269,7 +1279,6 @@ function EndpointDraftControl({ ownerWallet, bundles, bindings, onRefresh }: { o
   const [visibility, setVisibility] = useState<'private' | 'shared' | 'public'>('private')
   const [sharedWalletIds, setSharedWalletIds] = useState('')
   const [acceptsExternal, setAcceptsExternal] = useState(false)
-  const [localAgentUse, setLocalAgentUse] = useState(false)
   const [validationEnabled, setValidationEnabled] = useState(false)
   const [fixedPrice, setFixedPrice] = useState('0')
   const [minimumDeposit, setMinimumDeposit] = useState('0')
@@ -1322,7 +1331,6 @@ function EndpointDraftControl({ ownerWallet, bundles, bindings, onRefresh }: { o
         display_name: displayName.trim(),
         model_class: modelClass.trim() || 'llm.chat',
         capabilities: [modelClass.trim() || 'llm.chat'],
-        local_agent_use: localAgentUse,
         profile: marketplaceHtml.trim()
           ? { marketplace_description: { html: marketplaceHtml } }
           : {},
@@ -1391,7 +1399,7 @@ function EndpointDraftControl({ ownerWallet, bundles, bindings, onRefresh }: { o
           </div>
           {marketplacePreview?.html ? <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/[0.04] p-4" aria-live="polite"><p className="eyebrow text-emerald-200">Server preview</p><div className="prose prose-invert mt-2 max-w-none text-sm" dangerouslySetInnerHTML={{ __html: marketplacePreview.html }} /></div> : null}
         </div>
-        <div className="flex flex-col gap-2 lg:col-span-3"><div className="flex flex-wrap items-center gap-3"><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={acceptsExternal} onChange={(event) => setAcceptsExternal(event.target.checked)} />Accept external requests</label><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={validationEnabled} onChange={(event) => setValidationEnabled(event.target.checked)} />Require validation</label><label className="flex items-center gap-2 rounded-md border border-cyan-300/20 bg-cyan-300/[0.04] px-2.5 py-2 text-xs text-cyan-50"><input type="checkbox" checked={localAgentUse} onChange={(event) => setLocalAgentUse(event.target.checked)} className="accent-cyan-300" />Local Agent Use</label></div><p className="text-xs leading-5 text-muted-foreground">Enable this only for an owner-local agent. It allows the Settings workspace to issue a dedicated OpenAI-compatible token for this Endpoint; it does not make the Endpoint public.</p></div>
+        <div className="flex flex-col gap-2 lg:col-span-3"><div className="flex flex-wrap items-center gap-3"><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={acceptsExternal} onChange={(event) => setAcceptsExternal(event.target.checked)} />Accept external requests</label><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={validationEnabled} onChange={(event) => setValidationEnabled(event.target.checked)} />Require validation</label></div><p className="text-xs leading-5 text-muted-foreground">Local agent access is managed separately after the draft is created, so it never becomes part of the published configuration.</p></div>
         <div className="flex items-end justify-end"><Button className="w-full bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy} onClick={() => void createDraft()}><RadioTower />{busy ? 'Creating...' : 'Create draft'}</Button></div>
         {message ? <div className="lg:col-span-4"><OperationNotice message={message} onDismiss={() => setMessage(null)} /></div> : null}
       </CardContent>
@@ -1399,13 +1407,14 @@ function EndpointDraftControl({ ownerWallet, bundles, bindings, onRefresh }: { o
   )
 }
 
-function EndpointTable({ endpoints, onAction }: { endpoints: Endpoint[]; onAction: (endpoint: Endpoint, action: 'publish' | 'validate') => void }) {
+function EndpointTable({ endpoints, onAction }: { endpoints: Endpoint[]; onAction: (endpoint: Endpoint, action: 'publish' | 'validate' | 'toggle-local-agent-use') => void }) {
   const columns: ColumnDef<Endpoint>[] = [
     { accessorKey: 'display_name', header: 'Endpoint', cell: ({ row }) => <div><p className="font-medium text-slate-100">{row.original.display_name || shortId(row.original.endpoint_id, 22)}</p><p className="mt-0.5 font-mono text-[10px] text-slate-500">{shortId(row.original.endpoint_id)}</p></div> },
     { accessorKey: 'model_class', header: 'Capability', cell: ({ row }) => <span className="text-xs text-slate-200">{row.original.model_class || row.original.capabilities[0] || '—'}</span> },
     { accessorKey: 'visibility', header: 'Visibility', cell: ({ row }) => <StatusBadge value={row.original.visibility || 'private'} /> },
-    { accessorKey: 'publication_status', header: 'Publication', cell: ({ row }) => <div><StatusBadge value={row.original.publication_status} />{row.original.local_agent_use ? <p className="mt-1 text-[10px] font-medium text-cyan-200">Local Agent Use enabled</p> : null}</div> },
+    { accessorKey: 'publication_status', header: 'Publication', cell: ({ row }) => <StatusBadge value={row.original.publication_status} /> },
     { accessorKey: 'runtime_status', header: 'Runtime', cell: ({ row }) => <StatusBadge value={row.original.runtime_status} /> },
+    { id: 'local_agent', header: 'Local agent', cell: ({ row }) => <Button type="button" variant="outline" size="xs" className={row.original.local_agent_use ? 'border-cyan-300/35 bg-cyan-300/[0.08] text-cyan-100' : 'border-border bg-[#091725] text-slate-300'} aria-pressed={row.original.local_agent_use} onClick={() => onAction(row.original, 'toggle-local-agent-use')}>{row.original.local_agent_use ? 'Enabled' : 'Enable'}</Button> },
     { id: 'controls', header: 'Controls', cell: ({ row }) => <div className="flex flex-wrap gap-1.5"><Button variant="outline" size="xs" className="border-cyan-300/25 bg-[#091725] text-cyan-100" onClick={() => onAction(row.original, 'publish')}>Publish</Button><Button variant="outline" size="xs" className="border-amber-300/25 bg-[#091725] text-amber-100" onClick={() => onAction(row.original, 'validate')}>Validate</Button></div> },
   ]
   const table = useReactTable({ data: endpoints, columns, getCoreRowModel: getCoreRowModel() })

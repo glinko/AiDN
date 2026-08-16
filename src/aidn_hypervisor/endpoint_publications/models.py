@@ -20,7 +20,6 @@ def canonical_configuration_payload(
     session: dict | None = None,
     execution: dict | None = None,
     profile: dict | None = None,
-    local_agent_use: bool | None = None,
 ) -> dict:
     payload = {
         "bundle_hash": bundle_hash,
@@ -35,16 +34,23 @@ def canonical_configuration_payload(
     marketplace_description = (profile or {}).get("marketplace_description")
     if marketplace_description is not None:
         payload["marketplace_description"] = marketplace_description
-    # False is the backwards-compatible default.  Commit the opt-in only
-    # when it is enabled so pre-feature publication hashes remain valid.
-    if local_agent_use:
-        payload["local_agent_use"] = True
     return payload
 
 
 def configuration_hash_for_publication(payload: dict) -> str:
     encoded_payload = json.dumps(payload, sort_keys=True).encode("utf-8")
     return hashlib.sha256(encoded_payload).hexdigest()
+
+
+def legacy_local_agent_use_configuration_hash(payload: dict) -> str:
+    """Return the pre-local-permission commitment for an upgraded node.
+
+    Versions that briefly treated Local Agent Use as publication data signed
+    this extra key.  It is accepted only to read those historical records;
+    current publishers never call this helper.
+    """
+    historical_payload = {**payload, "local_agent_use": True}
+    return configuration_hash_for_publication(historical_payload)
 
 
 def legacy_canonical_configuration_payload(
@@ -116,8 +122,9 @@ class PublishedEndpointConfiguration(BaseModel):
     bundle_hash: str
     model_class: str
     capabilities: list[str] = Field(default_factory=list)
-    # ``None`` preserves the signed payload shape of publications created
-    # before Local Agent Use existed.  A true value is the explicit opt-in.
+    # Compatibility-only: old records may contain a signed value from the
+    # short-lived design where local gateway permission was publication data.
+    # New publication code never writes it and runtime authorization ignores it.
     local_agent_use: bool | None = None
     profile: dict = Field(default_factory=dict)
     runtime: dict = Field(default_factory=dict)
@@ -153,22 +160,22 @@ class PublishedEndpointConfiguration(BaseModel):
 
     @model_validator(mode="after")
     def _validate_configuration_hash(self):
-        expected_hashes = {
-            configuration_hash_for_publication(
-                canonical_configuration_payload(
-                    bundle_hash=self.bundle_hash,
-                    model_class=self.model_class,
-                    capabilities=self.capabilities,
-                    runtime=self.runtime,
-                    publication=self.publication,
-                    pricing=self.pricing,
-                    session=self.session,
-                    execution=self.execution,
-                    profile=self.profile,
-                    local_agent_use=self.local_agent_use,
-                )
+        canonical_payload = canonical_configuration_payload(
+            bundle_hash=self.bundle_hash,
+            model_class=self.model_class,
+            capabilities=self.capabilities,
+            runtime=self.runtime,
+            publication=self.publication,
+            pricing=self.pricing,
+            session=self.session,
+            execution=self.execution,
+            profile=self.profile,
+        )
+        expected_hashes = {configuration_hash_for_publication(canonical_payload)}
+        if self.local_agent_use:
+            expected_hashes.add(
+                legacy_local_agent_use_configuration_hash(canonical_payload)
             )
-        }
         # A rolling upgrade may submit a marketplace description to a
         # validator that predates the field.  Accept the old commitment while
         # the network converges; the payload remains fully signed and the
@@ -193,9 +200,6 @@ class PublishedEndpointConfiguration(BaseModel):
     def signed_payload(self) -> dict:
         payload = self.model_dump(mode="json")
         payload.pop("wallet_signature", None)
-        # Do not add a null/false field to legacy signatures.  New opt-in
-        # publications carry ``true`` and therefore remain cryptographically
-        # bound to the capability.
         if not self.local_agent_use:
             payload.pop("local_agent_use", None)
         return payload

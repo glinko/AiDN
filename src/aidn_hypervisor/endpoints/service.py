@@ -65,7 +65,6 @@ class EndpointService:
             proxy_target=None,
             execution_config=execution_config,
             profile=cmd.profile,
-            local_agent_use=cmd.local_agent_use,
         )
         manifest = EndpointManifest(
             endpoint_id=endpoint_id,
@@ -78,7 +77,6 @@ class EndpointService:
             display_name=cmd.display_name,
             model_class=cmd.model_class,
             capabilities=cmd.capabilities,
-            local_agent_use=cmd.local_agent_use,
             profile=cmd.profile,
             runtime=cmd.runtime,
             publication=cmd.publication,
@@ -95,7 +93,6 @@ class EndpointService:
             bundle_hash=cmd.bundle_hash,
             runtime_binding_id=cmd.runtime_binding_id,
             created_at=created_at,
-            local_agent_use=cmd.local_agent_use,
             profile=cmd.profile,
             runtime=cmd.runtime,
             publication=cmd.publication,
@@ -118,18 +115,12 @@ class EndpointService:
         next_session = cmd.session or current.session
         next_profile = cmd.profile or current.profile
         next_validation = cmd.validation or current.validation
-        next_local_agent_use = (
-            current.local_agent_use
-            if cmd.local_agent_use is None
-            else cmd.local_agent_use
-        )
         next_execution_strategy = cmd.execution_strategy or current.execution_strategy
         next_proxy_target = cmd.proxy_target if cmd.proxy_target is not None else current.proxy_target
         should_rotate_config = (
             cmd.profile is not None
             or
             cmd.runtime is not None
-            or cmd.local_agent_use is not None
             or cmd.publication is not None
             or cmd.pricing is not None
             or cmd.session is not None
@@ -157,7 +148,6 @@ class EndpointService:
                 proxy_target=next_proxy_target,
                 execution_config=execution_config,
                 profile=next_profile,
-                local_agent_use=next_local_agent_use,
             )
             snapshot = EndpointConfigurationSnapshot(
                 configuration_hash=configuration_hash,
@@ -165,7 +155,6 @@ class EndpointService:
                 bundle_hash=current.bundle_hash,
                 runtime_binding_id=current.runtime_binding_id,
                 created_at=datetime.now(UTC).isoformat(),
-                local_agent_use=next_local_agent_use,
                 profile=next_profile,
                 runtime=next_runtime,
                 publication=next_publication,
@@ -178,7 +167,6 @@ class EndpointService:
         updated = current.model_copy(
             update={
                 "display_name": cmd.display_name or current.display_name,
-                "local_agent_use": next_local_agent_use,
                 "profile": next_profile,
                 "runtime": next_runtime,
                 "publication": next_publication,
@@ -197,6 +185,20 @@ class EndpointService:
             snapshot=snapshot,
         )
         return UpdateEndpointResult(endpoint=updated, snapshot=snapshot)
+
+    def set_local_agent_use(self, endpoint_id: str, *, enabled: bool) -> EndpointResult:
+        """Set the local owner-agent permission without rotating configuration.
+
+        This value governs only the local inference gateway.  It must never
+        affect Bundle identity, immutable snapshots, publication hashes, or
+        consensus operations.
+        """
+        current = self.store.get_manifest(endpoint_id)
+        if current.status == "deleted":
+            raise EndpointStateError("Local Agent Use cannot be changed on a deleted endpoint")
+        updated = current.model_copy(update={"local_agent_use": enabled})
+        self.store.save_manifest(updated)
+        return EndpointResult(endpoint=updated)
 
     def attach_proxy_target(self, endpoint_id: str, remote_endpoint) -> UpdateEndpointResult:
         current = self.store.get_manifest(endpoint_id)
@@ -234,7 +236,6 @@ class EndpointService:
             proxy_target=proxy_target,
             execution_config=execution_config,
             profile=current.profile,
-            local_agent_use=current.local_agent_use,
         )
         snapshot = EndpointConfigurationSnapshot(
             configuration_hash=configuration_hash,
@@ -242,7 +243,6 @@ class EndpointService:
             bundle_hash=current.bundle_hash,
             runtime_binding_id=current.runtime_binding_id,
             created_at=attached_at,
-            local_agent_use=current.local_agent_use,
             profile=current.profile,
             runtime=current.runtime,
             publication=current.publication,
@@ -288,7 +288,6 @@ class EndpointService:
             proxy_target=None,
             execution_config=execution_config,
             profile=current.profile,
-            local_agent_use=current.local_agent_use,
         )
         snapshot = EndpointConfigurationSnapshot(
             configuration_hash=configuration_hash,
@@ -296,7 +295,6 @@ class EndpointService:
             bundle_hash=current.bundle_hash,
             runtime_binding_id=current.runtime_binding_id,
             created_at=detached_at,
-            local_agent_use=current.local_agent_use,
             profile=current.profile,
             runtime=current.runtime,
             publication=current.publication,
@@ -385,7 +383,6 @@ class EndpointService:
                 "display_name": manifest.display_name,
                 "endpoint_configuration_hash": manifest.configuration_hash,
                 "visibility": manifest.publication.visibility,
-                "local_agent_use": manifest.local_agent_use,
                 "execution_strategy": manifest.execution_strategy,
             },
             created_at=manifest.created_at,
@@ -413,7 +410,6 @@ class EndpointService:
                 "previous_configuration_hash": previous.configuration_hash,
                 "next_configuration_hash": current.configuration_hash,
                 "visibility": current.publication.visibility,
-                "local_agent_use": current.local_agent_use,
                 "execution_strategy": current.execution_strategy,
                 "status": current.status,
             },
@@ -437,7 +433,6 @@ class EndpointService:
         proxy_target,
         execution_config,
         profile,
-        local_agent_use: bool,
     ) -> str:
         payload = {
             "bundle_hash": bundle_hash,
@@ -453,8 +448,6 @@ class EndpointService:
             ),
             "execution_config": execution_config,
         }
-        if local_agent_use:
-            payload["local_agent_use"] = True
         marketplace_description = profile.model_dump(mode="json").get(
             "marketplace_description"
         )

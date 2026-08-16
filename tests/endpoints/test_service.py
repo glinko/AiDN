@@ -29,7 +29,7 @@ def test_create_endpoint_generates_initial_configuration_snapshot() -> None:
     assert created.snapshot.configuration_hash == created.endpoint.configuration_hash
 
 
-def test_local_agent_use_is_persisted_and_changes_the_immutable_revision() -> None:
+def test_local_agent_use_is_a_local_permission_not_an_immutable_revision() -> None:
     service = EndpointService(EndpointStore())
     created = service.create_endpoint(
         CreateEndpointCommand(
@@ -38,24 +38,23 @@ def test_local_agent_use_is_persisted_and_changes_the_immutable_revision() -> No
             bundle_hash="bundle-hash-a",
             display_name="Local agent endpoint",
             model_class="llm_text",
-            local_agent_use=True,
         )
     )
 
-    assert created.endpoint.local_agent_use is True
-    assert created.snapshot.local_agent_use is True
-
-    disabled = service.update_endpoint(
-        UpdateEndpointCommand(
-            endpoint_id=created.endpoint.endpoint_id,
-            local_agent_use=False,
-        )
+    assert created.endpoint.local_agent_use is False
+    original_hash = created.endpoint.configuration_hash
+    original_snapshot_count = len(
+        service.list_configuration_snapshots(created.endpoint.endpoint_id)
     )
 
-    assert disabled.endpoint.local_agent_use is False
-    assert disabled.snapshot is not None
-    assert disabled.snapshot.local_agent_use is False
-    assert disabled.endpoint.configuration_hash != created.endpoint.configuration_hash
+    enabled = service.set_local_agent_use(
+        created.endpoint.endpoint_id,
+        enabled=True,
+    )
+
+    assert enabled.endpoint.local_agent_use is True
+    assert enabled.endpoint.configuration_hash == original_hash
+    assert len(service.list_configuration_snapshots(created.endpoint.endpoint_id)) == original_snapshot_count
 
 
 def test_validator_endpoint_draft_does_not_record_publish_operation() -> None:

@@ -245,6 +245,77 @@ def test_inference_token_requires_local_agent_opt_in(tmp_path) -> None:
     assert "Local Agent Use" in rejected.json()["error"]["message"]
 
 
+def test_disabling_local_agent_use_revokes_endpoint_tokens_without_rotating_config(tmp_path) -> None:
+    manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
+    credentials = McpCredentialStore(secret_manager=manager)
+    access = DashboardAccessService(store=credentials)
+    endpoint = EndpointManifest(
+        endpoint_id="ep-private-agent",
+        owner_wallet="wallet-test",
+        created_at="2026-08-16T00:00:00Z",
+        bundle_id="bundle-qwen",
+        bundle_hash="sha256:bundle",
+        runtime_binding_id="rtb-qwen",
+        configuration_hash="sha256:config",
+        display_name="Private Qwen",
+        model_class="llm_text",
+        local_agent_use=True,
+    )
+
+    class EndpointStub:
+        def get_endpoint(self, endpoint_id: str):
+            if endpoint_id != endpoint.endpoint_id:
+                raise KeyError(endpoint_id)
+            return SimpleNamespace(endpoint=endpoint)
+
+        def set_local_agent_use(self, endpoint_id: str, *, enabled: bool):
+            nonlocal endpoint
+            if endpoint_id != endpoint.endpoint_id:
+                raise KeyError(endpoint_id)
+            endpoint = endpoint.model_copy(update={"local_agent_use": enabled})
+            return SimpleNamespace(endpoint=endpoint)
+
+    class SessionStub:
+        def __init__(self) -> None:
+            self.closed: list[str] = []
+
+        def close_session(self, session_id: str) -> None:
+            self.closed.append(session_id)
+
+    issued = credentials.create_inference_credential(
+        label="OpenClaw",
+        endpoint_id=endpoint.endpoint_id,
+        owner_wallet=endpoint.owner_wallet,
+    )
+    credentials.bind_inference_session(issued.credential_id, "session-agent")
+    sessions = SessionStub()
+    app = FastAPI()
+    app.include_router(
+        build_operator_access_router(
+            access_service=access,
+            credential_store=credentials,
+            allow_insecure_lan=True,
+            endpoint_service=EndpointStub(),
+            session_service=sessions,
+        )
+    )
+    client = TestClient(app)
+    client.headers.update(_BROWSER_HEADERS)
+    pairing = access.create_pairing(ttl_seconds=600)
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+
+    response = client.post(
+        f"/operators/dashboard/access/operations/endpoints/{endpoint.endpoint_id}/local-agent-use",
+        json={"enabled": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["endpoint"]["configuration_hash"] == "sha256:config"
+    assert response.json()["revoked_inference_credential_ids"] == [issued.credential_id]
+    assert sessions.closed == ["session-agent"]
+    assert credentials.list_inference_credentials()[0].state == "revoked"
+
+
 def test_dashboard_network_access_is_pair_bound_and_limited_to_loopback_or_lan(tmp_path) -> None:
     manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
     credentials = McpCredentialStore(secret_manager=manager)
