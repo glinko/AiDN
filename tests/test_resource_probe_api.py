@@ -47,6 +47,10 @@ def test_validator_write_boundary_allows_only_bounded_resource_measurement() -> 
 
 
 def test_validator_write_boundary_allows_bounded_local_provider_installation() -> None:
+    assert _is_validator_consensus_write_path(
+        "/operators/dashboard/access/operations/cometbft/reconnect",
+        "POST",
+    ) is True
     assert (
         _is_validator_consensus_write_path(
             "/operators/provider-plugins/whisper/installation-plan"

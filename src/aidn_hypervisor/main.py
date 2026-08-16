@@ -468,7 +468,7 @@ def _is_validator_consensus_write_path(path: str, method: str | None = None) -> 
     if (
         len(parts) == 6
         and parts[:5] == ["operators", "dashboard", "access", "operations", "cometbft"]
-        and parts[5] in {"start", "stop", "restart", "install", "apply"}
+        and parts[5] in {"start", "stop", "restart", "install", "apply", "reconnect"}
         and (method is None or method == "POST")
     ):
         # CometBFT control is limited to the user-systemd unit declared by the
