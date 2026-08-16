@@ -37,6 +37,7 @@ from aidn_hypervisor.operator_cometbft import control_managed_cometbft
 from aidn_hypervisor.operator_cometbft_install import (
     apply_pending_cometbft_configuration,
     install_cometbft_from_dashboard,
+    reconnect_cometbft_from_dashboard,
 )
 from aidn_hypervisor.resource_probe import refresh_resource_probe_from_environment
 from aidn_hypervisor.wallet_identity import wallet_identity_registration_payload
@@ -170,6 +171,13 @@ class ConsensusInstallRequest(BaseModel):
     abci_host: Literal["127.0.0.1"] = "127.0.0.1"
     abci_port: int = Field(default=26658, ge=1, le=65535)
     acknowledge_network_scope: bool = False
+
+
+class ConsensusReconnectRequest(ConsensusInstallRequest):
+    """Bounded request for joining an existing private CometBFT network."""
+
+    source_rpc: str = Field(min_length=1, max_length=256)
+    acknowledge_reset: bool = False
 
 
 def _credential_payload(credential: McpCredential, *, reveal: bool = False) -> dict:
@@ -756,6 +764,35 @@ def build_operator_access_router(
         except (RuntimeError, ValueError, OSError) as error:
             return operation_error(error)
         return JSONResponse(status_code=202 if result.get("restart_scheduled") else 200, content=result)
+
+    @router.post("/operations/cometbft/reconnect")
+    async def reconnect_cometbft(
+        payload: ConsensusReconnectRequest,
+        request: Request,
+    ) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        network_configuration_requested = bool(
+            payload.p2p_host == "0.0.0.0"
+            or payload.external_address.strip()
+            or payload.seeds.strip()
+            or payload.persistent_peers.strip()
+        )
+        if network_configuration_requested and not payload.acknowledge_network_scope:
+            return operation_error(
+                ValueError(
+                    "P2P discovery configuration requires explicit network acknowledgement"
+                )
+            )
+        try:
+            result = reconnect_cometbft_from_dashboard(
+                hypervisor_service,
+                payload.model_dump(exclude_none=True),
+            )
+        except (RuntimeError, ValueError, OSError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=202, content=result)
 
     @router.post("/operations/cometbft/{action}")
     async def control_cometbft(action: str, request: Request) -> Response:

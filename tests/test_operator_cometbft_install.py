@@ -14,6 +14,7 @@ from aidn_hypervisor.operator_cometbft_install import (
     build_cometbft_install_argv,
     build_operator_cometbft_install_payload,
     install_cometbft_from_dashboard,
+    reconnect_cometbft_from_dashboard,
 )
 from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.secrets import FileSecretManager
@@ -135,6 +136,72 @@ def test_install_rejects_colliding_ports(tmp_path, monkeypatch) -> None:
         build_cometbft_install_argv(_service(tmp_path), {"rpc_port": 26656})
 
 
+def test_reconnect_replaces_only_comet_state_and_joins_source_chain(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AIDN_HYPERVISOR_STATE_PATH", str(tmp_path / "hypervisor-state.json"))
+    monkeypatch.setenv("AIDN_HYPERVISOR_RESTART_ON_BIND_CHANGE", "false")
+    home = tmp_path / "consensus" / "cometbft"
+    (home / "config").mkdir(parents=True)
+    (home / "data").mkdir(parents=True)
+    (home / "config" / "genesis.json").write_text(
+        '{"chain_id":"aidn-localnet-1","app_state":{}}\n', encoding="utf-8"
+    )
+    (home / "config" / "config.toml").write_text("# reviewed test config\n", encoding="utf-8")
+    (home / "data" / "old-blockstore").write_text("discarded", encoding="utf-8")
+    (home / "config" / "addrbook.json").write_text("{}\n", encoding="utf-8")
+
+    class Executor:
+        def invoke(self, **kwargs):
+            return SimpleNamespace(returncode=0, stdout='{"status":"ok"}', stderr="")
+
+    source_genesis = {
+        "chain_id": "chain-Anm7Jk",
+        "genesis_time": "2026-08-13T00:00:00Z",
+        "validators": [],
+        "app_state": {},
+    }
+    monkeypatch.setattr(
+        "aidn_hypervisor.operator_cometbft_install._fetch_source_genesis",
+        lambda _source, _chain: (source_genesis, {"rpc": "http://192.168.88.128:26657", "chain_id": _chain}),
+    )
+    monkeypatch.setattr(
+        "aidn_hypervisor.operator_cometbft.control_managed_cometbft",
+        lambda _service, action: {"status": "ok", "action": action},
+    )
+    monkeypatch.setattr(
+        "aidn_hypervisor.operator_cometbft_install._restart_managed_cometbft",
+        lambda _service: True,
+    )
+    service = _service(tmp_path, executor=Executor())
+    result = reconnect_cometbft_from_dashboard(
+        service,
+        {
+            "mode": "non_validator",
+            "chain_id": "chain-Anm7Jk",
+            "moniker": "node-a",
+            "p2p_host": "0.0.0.0",
+            "external_address": "192.168.88.122:26656",
+            "persistent_peers": "peer-a@192.168.88.128:26656",
+            "source_rpc": "http://192.168.88.128:26657",
+            "acknowledge_reset": True,
+            "acknowledge_network_scope": True,
+        },
+    )
+
+    assert result["status"] == "reconnected"
+    assert result["reset"]["hypervisor_state_preserved"] is True
+    assert not (home / "data" / "old-blockstore").exists()
+    assert not (home / "config" / "addrbook.json").exists()
+    assert (home / "config" / "genesis.json").read_text(encoding="utf-8").find("chain-Anm7Jk") >= 0
+    assert (tmp_path / "consensus-config.json").exists()
+
+
+def test_reconnect_requires_non_validator_and_explicit_reset_acknowledgement(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("AIDN_HYPERVISOR_STATE_PATH", str(tmp_path / "hypervisor-state.json"))
+    service = _service(tmp_path)
+    with pytest.raises(ValueError, match="non_validator"):
+        reconnect_cometbft_from_dashboard(service, {"mode": "validator"})
+
+
 def test_install_route_is_paired_and_accepts_only_reviewed_payload(tmp_path, monkeypatch) -> None:
     manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=b"m" * 32)
     credentials = McpCredentialStore(secret_manager=manager)
@@ -166,3 +233,44 @@ def test_install_route_is_paired_and_accepts_only_reviewed_payload(tmp_path, mon
 
     assert response.status_code == 202
     assert response.json()["status"] == "installed_pending_apply"
+
+
+def test_reconnect_route_requires_reset_and_network_acknowledgements(tmp_path, monkeypatch) -> None:
+    manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=b"r" * 32)
+    credentials = McpCredentialStore(secret_manager=manager)
+    access = DashboardAccessService(store=credentials)
+    service = _service(tmp_path)
+    app = FastAPI()
+    app.include_router(
+        build_operator_access_router(
+            access_service=access,
+            credential_store=credentials,
+            allow_insecure_lan=True,
+            hypervisor_service=service,
+        )
+    )
+    monkeypatch.setattr(
+        "aidn_hypervisor.operator_access_api.reconnect_cometbft_from_dashboard",
+        lambda _service, payload: {"status": "reconnected", "chain_id": payload["chain_id"]},
+    )
+    client = TestClient(app)
+    client.headers.update(_BROWSER_HEADERS)
+    pairing = access.create_pairing(ttl_seconds=600)
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+
+    payload = {
+        "mode": "non_validator",
+        "chain_id": "chain-Anm7Jk",
+        "source_rpc": "http://192.168.88.128:26657",
+        "p2p_host": "0.0.0.0",
+        "persistent_peers": "peer-a@192.168.88.128:26656",
+        "acknowledge_reset": True,
+    }
+    rejected = client.post("/operators/dashboard/access/operations/cometbft/reconnect", json=payload)
+    assert rejected.status_code == 409
+    assert "network acknowledgement" in rejected.json()["error"]["message"]
+
+    payload["acknowledge_network_scope"] = True
+    response = client.post("/operators/dashboard/access/operations/cometbft/reconnect", json=payload)
+    assert response.status_code == 202
+    assert response.json()["status"] == "reconnected"

@@ -10,16 +10,22 @@ ConsensusService configuration.
 
 from __future__ import annotations
 
+import hashlib
+import ipaddress
 import json
 import os
 import re
+import shutil
 import signal
 import tempfile
 import threading
+import urllib.error
+import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import urlsplit, urlunsplit
 
 DEFAULT_VERSION = "v0.38.19"
 DEFAULT_CHAIN_ID = "aidn-localnet-1"
@@ -31,6 +37,8 @@ _VALID_MODES = frozenset({"validator", "non_validator"})
 _MAX_OUTPUT = 64 * 1024
 _MAX_PEERS = 32
 _MAX_PEER_TEXT = 4096
+_MAX_REMOTE_GENESIS_BYTES = 4 * 1024 * 1024
+_REMOTE_RPC_TIMEOUT_SECONDS = 8
 _HOST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$")
 _IPV6 = re.compile(r"^[0-9A-Fa-f:]{2,45}$")
 
@@ -497,6 +505,158 @@ def install_cometbft_from_dashboard(service: Any, values: Mapping[str, object]) 
         "pending": pending,
         "installer": {"returncode": returncode, "stdout": stdout, "stderr": stderr},
         "next_action": "apply",
+    }
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        raise urllib.error.HTTPError(
+            request.full_url,
+            code,
+            "redirects are not allowed for a consensus source",
+            headers,
+            fp,
+        )
+
+
+def _validated_source_rpc(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError("A source RPC endpoint is required to join an existing network")
+    try:
+        parsed = urlsplit(raw)
+        host = parsed.hostname
+        port = parsed.port or 26657
+    except ValueError as error:
+        raise ValueError("Source RPC endpoint is invalid") from error
+    if parsed.scheme not in {"http", "https"} or not host or parsed.username or parsed.password:
+        raise ValueError("Source RPC must be an unauthenticated HTTP(S) endpoint")
+    if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
+        raise ValueError("Source RPC must not contain a path, query or fragment")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError as error:
+        raise ValueError("Source RPC must use a private or loopback IP address") from error
+    if not (address.is_private or address.is_loopback or address.is_link_local):
+        raise ValueError("Source RPC must use a private or loopback IP address")
+    if not 1 <= port <= 65535:
+        raise ValueError("Source RPC port must be an integer from 1 to 65535")
+    authority = f"[{host}]" if address.version == 6 else host
+    return urlunsplit((parsed.scheme, f"{authority}:{port}", "", "", ""))
+
+
+def _fetch_source_json(source_rpc: str, path: str) -> dict[str, Any]:
+    request = urllib.request.Request(
+        f"{source_rpc}{path}",
+        headers={"Accept": "application/json", "User-Agent": "AiDN-Hypervisor/1"},
+    )
+    opener = urllib.request.build_opener(_NoRedirectHandler())
+    try:
+        with opener.open(request, timeout=_REMOTE_RPC_TIMEOUT_SECONDS) as response:
+            payload = response.read(_MAX_REMOTE_GENESIS_BYTES + 1)
+    except (OSError, urllib.error.URLError) as error:
+        raise ValueError(f"Source RPC {source_rpc} could not be reached") from error
+    if len(payload) > _MAX_REMOTE_GENESIS_BYTES:
+        raise ValueError("Source genesis response exceeds the reviewed size limit")
+    try:
+        value = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("Source RPC returned invalid JSON") from error
+    if not isinstance(value, dict):
+        raise ValueError("Source RPC response must be a JSON object")
+    return value
+
+
+def _fetch_source_genesis(source_rpc: object, expected_chain_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    endpoint = _validated_source_rpc(source_rpc)
+    status_payload = _fetch_source_json(endpoint, "/status")
+    status_result = status_payload.get("result")
+    if not isinstance(status_result, Mapping):
+        raise ValueError("Source RPC status response is missing result")
+    node_info = status_result.get("node_info")
+    sync_info = status_result.get("sync_info")
+    if not isinstance(node_info, Mapping):
+        raise ValueError("Source RPC status response is missing node information")
+    source_chain_id = str(node_info.get("network") or "").strip()
+    if source_chain_id != expected_chain_id:
+        raise ValueError(
+            f"Source RPC belongs to chain {source_chain_id!r}, not {expected_chain_id!r}"
+        )
+    genesis_payload = _fetch_source_json(endpoint, "/genesis")
+    genesis_result = genesis_payload.get("result")
+    if not isinstance(genesis_result, Mapping):
+        raise ValueError("Source RPC genesis response is missing result")
+    genesis = genesis_result.get("genesis")
+    if not isinstance(genesis, dict):
+        raise ValueError("Source RPC did not return a CometBFT genesis object")
+    if str(genesis.get("chain_id") or "").strip() != expected_chain_id:
+        raise ValueError("Source genesis Chain ID does not match the requested network")
+    sync_info = sync_info if isinstance(sync_info, Mapping) else {}
+    canonical_genesis = json.dumps(genesis, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return genesis, {
+        "rpc": endpoint,
+        "node_id": str(node_info.get("id") or ""),
+        "moniker": str(node_info.get("moniker") or ""),
+        "chain_id": expected_chain_id,
+        "height": str(sync_info.get("latest_block_height") or ""),
+        "genesis_sha256": hashlib.sha256(canonical_genesis).hexdigest(),
+    }
+
+
+def _reset_cometbft_data(home: Path, genesis: Mapping[str, Any]) -> None:
+    home = home.expanduser().resolve()
+    config = home / "config"
+    data = home / "data"
+    genesis_path = config / "genesis.json"
+    if not config.is_dir() or not genesis_path.is_file():
+        raise ValueError("CometBFT home is not initialized; use the normal install flow first")
+    if data.is_symlink() or config.is_symlink():
+        raise ValueError("CometBFT home cannot contain symlinked state directories")
+    if data.exists():
+        shutil.rmtree(data)
+    data.mkdir(mode=0o700, parents=True, exist_ok=True)
+    addrbook = config / "addrbook.json"
+    if addrbook.exists() or addrbook.is_symlink():
+        addrbook.unlink()
+    _atomic_write(genesis_path, genesis)
+
+
+def reconnect_cometbft_from_dashboard(service: Any, values: Mapping[str, object]) -> dict[str, Any]:
+    """Join an existing private network by replacing only local CometBFT state.
+
+    The existing local genesis and blockstore are intentionally discarded after
+    the operator has acknowledged the reset. Hypervisor state, models and
+    provider data remain outside the reset boundary. Reconnect currently uses a
+    non-validator profile so a fresh host cannot accidentally claim validator
+    power that is not present in the source genesis.
+    """
+
+    if str(values.get("mode") or "").strip() != "non_validator":
+        raise ValueError("Reconnect to an existing network currently requires non_validator mode")
+    if values.get("acknowledge_reset") is not True:
+        raise ValueError("Reconnect requires explicit acknowledgement of the local consensus reset")
+    if _read_object(_pending_path(service)) is not None:
+        raise ValueError("Apply or finish the pending CometBFT configuration before reconnecting")
+    plan, _ = build_cometbft_install_argv(service, values)
+    genesis, source = _fetch_source_genesis(values.get("source_rpc"), plan.chain_id)
+    from aidn_hypervisor.operator_cometbft import control_managed_cometbft
+
+    control_managed_cometbft(service, "stop")
+    _reset_cometbft_data(Path(plan.home), genesis)
+    installed = install_cometbft_from_dashboard(service, values)
+    applied = apply_pending_cometbft_configuration(service)
+    return {
+        "status": "reconnected",
+        "source": source,
+        "reset": {
+            "scope": "cometbft_data_and_genesis",
+            "home": plan.home,
+            "hypervisor_state_preserved": True,
+            "models_preserved": True,
+        },
+        "installation": installed,
+        "applied": applied,
+        "next_action": "refresh",
     }
 
 
