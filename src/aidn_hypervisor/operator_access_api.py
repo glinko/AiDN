@@ -282,6 +282,13 @@ def build_operator_access_router(
         # reconnect, so never use it as evidence for this transaction.
         identity_read = hypervisor_service.wallet_identity_read_model(record.owner_wallet)
         identity_source = str(identity_read.get("source") or "")
+        canonical_identity_provider = getattr(
+            hypervisor_service, "canonical_wallet_identity_provider", None
+        )
+        canonical_identity_query = getattr(consensus, "query_wallet_identity", None)
+        canonical_identity_required = callable(canonical_identity_provider) or callable(
+            canonical_identity_query
+        )
         if identity_read.get("identity") is None:
             if identity_read.get("error"):
                 raise ValueError(
@@ -292,7 +299,10 @@ def build_operator_access_router(
                 "Owner Wallet identity is not registered on the current canonical chain; "
                 "open Wallet and click Register in network before publishing"
             )
-        if identity_source in {"local_projection", "local_projection_unverified"}:
+        if canonical_identity_required and identity_source in {
+            "local_projection",
+            "local_projection_unverified",
+        }:
             raise ValueError(
                 "Wallet identity is available only in a local projection; register the Wallet "
                 "in the current canonical network before publishing"
