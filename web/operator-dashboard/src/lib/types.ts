@@ -49,6 +49,7 @@ export const bundleSchema = z.object({
   runtime_health_status: z.string().optional(),
   runtime_last_error: z.string().nullable().optional(),
   publish_status: z.string().catch('unknown'),
+  bundle_readiness_status: z.string().optional(),
   inventory_status: z.string().optional(),
   registry_status: z.string().optional(),
   drain_mode: z.boolean().optional(),

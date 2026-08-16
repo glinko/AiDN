@@ -113,6 +113,8 @@ const statusClassNames: Record<string, string> = {
   ready: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300',
   healthy: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300',
   published: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300',
+  published_drifted: 'border-amber-300/30 bg-amber-300/10 text-amber-200',
+  draft: 'border-amber-300/25 bg-amber-300/10 text-amber-200',
   in_sync: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300',
   enabled: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300',
   closed: 'border-slate-300/25 bg-slate-300/10 text-slate-200',
@@ -1213,9 +1215,17 @@ function EndpointsScreen({ endpoints, isLoading, error, onNavigate, onRefresh, o
     setBusy(`${endpoint.endpoint_id}:${action}`)
     setMessage(null)
     try {
-      if (action === 'publish') await dashboardApi.publishEndpoint(endpoint.endpoint_id)
+      let result: DashboardRecord | undefined
+      if (action === 'publish') result = await dashboardApi.publishEndpoint(endpoint.endpoint_id)
       if (action === 'validate') await dashboardApi.requestEndpointValidation(endpoint.endpoint_id)
-      setMessage(`${endpoint.endpoint_id}: ${action} request completed.`)
+      if (action === 'publish') {
+        const consensusStatus = getText(result, 'status')
+        setMessage(consensusStatus === 'CONSENSUS_PENDING'
+          ? `${endpoint.endpoint_id}: publication submitted and is waiting for consensus finality.`
+          : `${endpoint.endpoint_id}: endpoint publication finalized.`)
+      } else {
+        setMessage(`${endpoint.endpoint_id}: validation request submitted.`)
+      }
       onRefresh()
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : 'Endpoint operation failed.')

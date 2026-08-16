@@ -5859,6 +5859,10 @@ def test_operator_dashboard_bundles_payload_marks_published_endpoint_relationshi
     first = next(item for item in payload["items"] if item["bundle_id"] == "whisper-a")
 
     assert first["endpoint_relationship"]["state"] == "published_endpoint"
+    assert first["publish_status"] == "published"
+    assert first["bundle_readiness_status"] == "ready_to_publish"
+    assert payload["summary"]["published"] == 1
+    assert payload["summary"]["ready_to_publish"] == 1
     assert first["endpoint_relationship"]["recommended_action"]["action"] == "open_endpoint"
     assert first["endpoint_relationship"]["recommended_action"]["endpoint_id"] == created.endpoint.endpoint_id
 
@@ -5905,6 +5909,7 @@ def test_operator_dashboard_bundles_payload_marks_published_endpoint_relationshi
     first = next(item for item in payload["items"] if item["bundle_id"] == "whisper-a")
 
     assert first["endpoint_relationship"]["state"] == "published_drifted"
+    assert first["publish_status"] == "published_drifted"
     assert first["endpoint_relationship"]["recommended_action"]["action"] == "open_endpoint"
     assert first["endpoint_relationship"]["recommended_action"]["label"] == "Republish In Endpoints"
 
@@ -5929,6 +5934,7 @@ def test_operator_dashboard_bundles_payload_marks_draft_endpoint_relationship() 
     first = next(item for item in payload["items"] if item["bundle_id"] == "whisper-a")
 
     assert first["endpoint_relationship"]["state"] == "draft_endpoint"
+    assert first["publish_status"] == "draft"
     assert first["endpoint_relationship"]["recommended_action"]["action"] == "open_endpoint"
     assert first["endpoint_relationship"]["recommended_action"]["endpoint_id"] == created.endpoint.endpoint_id
 

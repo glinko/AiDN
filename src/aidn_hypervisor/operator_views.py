@@ -499,6 +499,29 @@ def _bundle_endpoint_relationship(*, bundle: dict, relationship: dict | None) ->
     }
 
 
+def _bundle_publication_status(*, bundle: dict, relationship: dict | None) -> str:
+    """Return the endpoint publication state shown in the Bundle workspace.
+
+    ``operator_dashboard_fleet`` predates Endpoint publication and exposes a
+    ``publish_status`` value that only describes whether an enabled Bundle can
+    be offered (``ready_to_publish``).  Once Endpoint records were added, that
+    value became misleading: a published Endpoint could still render as
+    ``READY TO PUBLISH``.  Keep the original Bundle readiness in
+    ``bundle_readiness_status`` and use this field for the operator-facing
+    publication lifecycle.
+    """
+    if relationship is None:
+        return str(bundle.get("publish_status") or "unknown")
+    state = relationship.get("state")
+    if state == "published_endpoint":
+        return "published"
+    if state == "published_drifted":
+        return "published_drifted"
+    if state == "draft_endpoint":
+        return "draft"
+    return str(bundle.get("publish_status") or "unknown")
+
+
 def build_operator_home_payload(
     *,
     service,
@@ -638,10 +661,18 @@ def build_operator_bundles_payload(
             bundle=bundle,
             relationship=relationship,
         )
+        bundle_payload = {
+            **bundle,
+            "bundle_readiness_status": bundle.get("publish_status"),
+            "publish_status": _bundle_publication_status(
+                bundle=bundle,
+                relationship=endpoint_relationship,
+            ),
+        }
         relationship_action = endpoint_relationship["recommended_action"]
         items.append(
             {
-                **bundle,
+                **bundle_payload,
                 "is_first_endpoint_candidate": is_first_endpoint_candidate,
                 "endpoint_relationship": endpoint_relationship,
                 "endpoint_action": {
@@ -683,8 +714,15 @@ def build_operator_bundles_payload(
             "total": len(items),
             "enabled": sum(1 for item in items if item["enabled"]),
             "ready_to_publish": sum(
-                1 for item in items if item["publish_status"] == "ready_to_publish"
+                1
+                for item in items
+                if item["publish_status"] == "ready_to_publish"
             ),
+            "published": sum(1 for item in items if item["publish_status"] == "published"),
+            "published_drifted": sum(
+                1 for item in items if item["publish_status"] == "published_drifted"
+            ),
+            "draft": sum(1 for item in items if item["publish_status"] == "draft"),
             "first_endpoint_candidates": sum(
                 1 for item in items if item["is_first_endpoint_candidate"]
             ),
