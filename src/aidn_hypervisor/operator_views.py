@@ -706,7 +706,7 @@ def build_operator_bundles_payload(
             wallet_ready=fleet["owner_wallet"]["configured"],
             provider_count=len(service.plugins.list()),
             bundle_count=len(items),
-            endpoint_items=[],
+            endpoint_items=endpoint_items,
             first_endpoint_candidate=candidate,
             persisted=service.operator_onboarding_state(),
         ),

@@ -5863,6 +5863,8 @@ def test_operator_dashboard_bundles_payload_marks_published_endpoint_relationshi
     assert first["bundle_readiness_status"] == "ready_to_publish"
     assert payload["summary"]["published"] == 1
     assert payload["summary"]["ready_to_publish"] == 1
+    assert payload["onboarding"]["completed"] is True
+    assert payload["onboarding"]["current_step"] == "operate"
     assert first["endpoint_relationship"]["recommended_action"]["action"] == "open_endpoint"
     assert first["endpoint_relationship"]["recommended_action"]["endpoint_id"] == created.endpoint.endpoint_id
 
