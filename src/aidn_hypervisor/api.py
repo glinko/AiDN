@@ -2318,7 +2318,7 @@ def build_api_router(
             canonical_identity_required = callable(canonical_identity_provider) or callable(
                 canonical_identity_query
             )
-            if identity_read.get("identity") is None:
+            if canonical_identity_required and identity_read.get("identity") is None:
                 if identity_read.get("error"):
                     raise ValueError(
                         "canonical Wallet identity is unavailable; check the configured CometBFT RPC "

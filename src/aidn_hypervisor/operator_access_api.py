@@ -289,7 +289,7 @@ def build_operator_access_router(
         canonical_identity_required = callable(canonical_identity_provider) or callable(
             canonical_identity_query
         )
-        if identity_read.get("identity") is None:
+        if canonical_identity_required and identity_read.get("identity") is None:
             if identity_read.get("error"):
                 raise ValueError(
                     "canonical Wallet identity is unavailable; check the configured CometBFT RPC "
@@ -474,7 +474,12 @@ def build_operator_access_router(
                         "canonical Wallet sequence is unavailable; check the configured CometBFT RPC "
                         "and try again"
                     )
-                if hypervisor_service.ledger_operation_service.reconcile_wallet_sequence(
+                # A missing canonical identity means this Wallet has not
+                # existed on the currently selected chain.  The durable local
+                # projection may still contain sequences from a previous
+                # chain, so replace (rather than advance-only reconcile) the
+                # nonce before creating the first registration envelope.
+                if hypervisor_service.ledger_operation_service.synchronize_wallet_sequence(
                     wallet_id, canonical_sequence
                 ):
                     hypervisor_service._persist_state()
