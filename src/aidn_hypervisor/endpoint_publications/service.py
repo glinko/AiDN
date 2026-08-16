@@ -86,10 +86,25 @@ class EndpointPublicationService:
             profile=manifest.profile.model_dump(mode="json"),
         )
         configuration_hash = configuration_hash_for_publication(payload)
+        compatible_hash = (
+            legacy_configuration_hash_for_publication(
+                bundle_hash=manifest.bundle_hash,
+                model_class=manifest.model_class,
+                capabilities=manifest.capabilities,
+                runtime=manifest.runtime.model_dump(mode="json"),
+                publication=manifest.publication.model_dump(mode="json"),
+                pricing=manifest.pricing.model_dump(mode="json"),
+                session=manifest.session.model_dump(mode="json"),
+                execution=execution_payload,
+            )
+            if manifest.profile.marketplace_description is not None
+            else None
+        )
         sequence = 1 if previous is None else previous.sequence + 1
         if (
             previous is not None
-            and previous.configuration_hash == configuration_hash
+            and previous.configuration_hash
+            in {configuration_hash, compatible_hash}
             and owner_public_key is not None
         ):
             return previous

@@ -2,6 +2,7 @@ from aidn_hypervisor.dashboard import build_market_payload
 from aidn_hypervisor.endpoint_publications.models import (
     canonical_configuration_payload,
     configuration_hash_for_publication,
+    legacy_configuration_hash_for_publication,
 )
 from aidn_hypervisor.operator_onboarding import (
     ONBOARDING_STEPS,
@@ -47,6 +48,21 @@ def _local_publication_configuration_hash(manifest) -> str:
     return configuration_hash_for_publication(payload)
 
 
+def _legacy_local_publication_configuration_hash(manifest) -> str | None:
+    if manifest.profile.marketplace_description is None:
+        return None
+    return legacy_configuration_hash_for_publication(
+        bundle_hash=manifest.bundle_hash,
+        model_class=manifest.model_class,
+        capabilities=manifest.capabilities,
+        runtime=manifest.runtime.model_dump(mode="json"),
+        publication=manifest.publication.model_dump(mode="json"),
+        pricing=manifest.pricing.model_dump(mode="json"),
+        session=manifest.session.model_dump(mode="json"),
+        execution=_execution_payload_for_manifest(manifest),
+    )
+
+
 def _mvp_paid_smoke_action_for_manifest(manifest) -> dict:
     task_type = "audio.transcribe" if manifest.model_class == "speech.stt" else "llm_text.generate"
     payload = (
@@ -78,10 +94,14 @@ def _publication_sync_status(
     *,
     local_configuration_hash: str | None,
     published_configuration_hash: str | None,
+    compatible_local_configuration_hash: str | None = None,
 ) -> str:
     if published_configuration_hash is None:
         return "never_published"
-    if local_configuration_hash == published_configuration_hash:
+    if published_configuration_hash in {
+        local_configuration_hash,
+        compatible_local_configuration_hash,
+    }:
         return "in_sync"
     return "local_changes_not_published"
 
@@ -962,6 +982,9 @@ def build_operator_endpoints_payload(
     owner_wallet = service.owner_wallet_state().get("wallet_id")
     for manifest in manifests:
         local_configuration_hash = _local_publication_configuration_hash(manifest)
+        compatible_local_configuration_hash = _legacy_local_publication_configuration_hash(
+            manifest
+        )
         current_publication = (
             endpoint_publication_service.current_publication(manifest.endpoint_id)
             if endpoint_publication_service is not None
@@ -1038,6 +1061,7 @@ def build_operator_endpoints_payload(
                 ),
                 "publication_sync_status": _publication_sync_status(
                     local_configuration_hash=local_configuration_hash,
+                    compatible_local_configuration_hash=compatible_local_configuration_hash,
                     published_configuration_hash=(
                         current_publication.configuration_hash
                         if current_publication is not None

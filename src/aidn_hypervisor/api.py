@@ -29,6 +29,7 @@ from aidn_hypervisor.endpoint_publications.models import (
     PublishedEndpointConfiguration,
     canonical_configuration_payload,
     configuration_hash_for_publication,
+    legacy_configuration_hash_for_publication,
 )
 from aidn_hypervisor.endpoint_publications.service import (
     EndpointPublicationReadinessError,
@@ -347,14 +348,33 @@ def _local_publication_configuration_hash(manifest) -> str:
     return configuration_hash_for_publication(payload)
 
 
+def _legacy_local_publication_configuration_hash(manifest) -> str | None:
+    if manifest is None or manifest.profile.marketplace_description is None:
+        return None
+    return legacy_configuration_hash_for_publication(
+        bundle_hash=manifest.bundle_hash,
+        model_class=manifest.model_class,
+        capabilities=manifest.capabilities,
+        runtime=manifest.runtime.model_dump(mode="json"),
+        publication=manifest.publication.model_dump(mode="json"),
+        pricing=manifest.pricing.model_dump(mode="json"),
+        session=manifest.session.model_dump(mode="json"),
+        execution=_execution_payload_for_manifest(manifest),
+    )
+
+
 def _publication_sync_status(
     *,
     local_configuration_hash: str | None,
     published_configuration_hash: str | None,
+    compatible_local_configuration_hash: str | None = None,
 ) -> str:
     if published_configuration_hash is None:
         return "never_published"
-    if local_configuration_hash == published_configuration_hash:
+    if published_configuration_hash in {
+        local_configuration_hash,
+        compatible_local_configuration_hash,
+    }:
         return "in_sync"
     return "local_changes_not_published"
 
@@ -421,11 +441,15 @@ def _registry_published_endpoint_summaries(
             if manifest is not None
             else None
         )
+        compatible_local_configuration_hash = _legacy_local_publication_configuration_hash(
+            manifest
+        )
         live_configuration_hash = (
             manifest.configuration_hash if manifest is not None else None
         )
         item["publication_sync_status"] = item.get("publication_sync_status") or _publication_sync_status(
             local_configuration_hash=local_configuration_hash,
+            compatible_local_configuration_hash=compatible_local_configuration_hash,
             published_configuration_hash=item.get("current_configuration_hash"),
         )
         published_endpoint_configuration_hash = _configuration_hash_for_publication_record(
@@ -2568,6 +2592,9 @@ def build_api_router(
         local_publication_configuration_hash = _local_publication_configuration_hash(
             endpoint
         )
+        compatible_local_publication_configuration_hash = (
+            _legacy_local_publication_configuration_hash(endpoint)
+        )
         published_endpoint_configuration_hash = _configuration_hash_for_publication_record(
             endpoint_service=endpoint_service,
             manifest=endpoint,
@@ -2598,6 +2625,9 @@ def build_api_router(
                 local_publication_configuration_hash=local_publication_configuration_hash,
                 publication_sync_status=_publication_sync_status(
                     local_configuration_hash=local_publication_configuration_hash,
+                    compatible_local_configuration_hash=(
+                        compatible_local_publication_configuration_hash
+                    ),
                     published_configuration_hash=(
                         current_publication.configuration_hash
                         if current_publication is not None

@@ -15,7 +15,11 @@ from pydantic import BaseModel, Field
 
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.dashboard_network_access import DashboardNetworkAccessService
-from aidn_hypervisor.endpoint_publications.signing import sign_consensus_bytes
+from aidn_hypervisor.endpoint_publications.models import PublishedEndpointConfiguration
+from aidn_hypervisor.endpoint_publications.signing import (
+    sign_consensus_bytes,
+    verify_publication_signature,
+)
 from aidn_hypervisor.endpoints.endpoint_application_service import EndpointApplicationService
 from aidn_hypervisor.endpoints.models import (
     EndpointMarketplaceDescription,
@@ -244,6 +248,40 @@ def build_operator_access_router(
         else None
     )
 
+    def _reconcile_remote_endpoint_publication(endpoint_id: str) -> bool:
+        """Materialize a finalized publication before a dashboard retry."""
+        if endpoint_service is None or endpoint_publication_service is None:
+            return False
+        consensus = getattr(hypervisor_service, "consensus_service", None)
+        query_publication = getattr(consensus, "query_endpoint_publication", None)
+        if consensus is None or not getattr(consensus, "is_enabled", False) or not callable(
+            query_publication
+        ):
+            return False
+        payload = query_publication(endpoint_id)
+        if payload is None:
+            return False
+        try:
+            record = PublishedEndpointConfiguration.model_validate(payload)
+            endpoint = endpoint_service.get_endpoint(endpoint_id).endpoint
+            if record.endpoint_id != endpoint_id or record.owner_wallet != endpoint.owner_wallet:
+                return False
+            verify_publication_signature(
+                public_key=record.owner_public_key,
+                signature=record.wallet_signature,
+                payload=record.signed_payload(),
+            )
+            current = endpoint_publication_service.current_publication(endpoint_id)
+            if current is not None and current.publication_id == record.publication_id:
+                return False
+            endpoint_publication_service.commit_prepared_configuration(
+                record,
+                record_operations=False,
+            )
+            return True
+        except (KeyError, TypeError, ValueError):
+            return False
+
     def _publish_endpoint(endpoint_id: str) -> dict:
         if (
             hypervisor_service is None
@@ -251,6 +289,7 @@ def build_operator_access_router(
             or endpoint_publication_service is None
         ):
             raise ValueError("Endpoint publication service is not configured")
+        _reconcile_remote_endpoint_publication(endpoint_id)
         wallet = hypervisor_service.owner_wallet_state()
         if not wallet.get("configured"):
             raise ValueError("Owner wallet must be configured before publishing endpoint configuration")
