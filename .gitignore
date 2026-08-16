@@ -5,3 +5,9 @@ __pycache__/
 build/
 .coverage
 src/aidn_hypervisor.egg-info/
+web/website/node_modules/
+web/website/dist/
+web/website/*.tsbuildinfo
+web/website/vite.config.js
+web/website/vite.config.d.ts
+design-artifacts/website-qa/

@@ -46,6 +46,7 @@ four-validator CometBFT drill is Docker-backed and intentionally opt-in.
 - [WEB-0001 Public Website and Web Application Specification](docs/product/WEB-0001-public-website-and-web-application-specification.md)
 - [WEB-0001 Website Implementation Plan](docs/development/web-0001-implementation-plan.md)
 - [WEB-0001 Website API OpenAPI](docs/product/WEB-0001-website-api.openapi.yaml)
+- [WEB-0001 public website implementation](web/website/README.md)
 - [Local agent MCP runbook for node 127](docs/development/local-agent-node127-mcp-runbook.md)
 - [Four-validator CometBFT acceptance drill](docs/development/cometbft-multivalidator-acceptance-drill.md)
 - [Executable implementation and operator specification pack](docs/development/executable-spec-pack/README.md)
