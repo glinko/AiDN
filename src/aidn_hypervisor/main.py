@@ -42,6 +42,7 @@ from aidn_hypervisor.faucet_treasury import (
     FaucetTreasuryManifest,
     validate_faucet_treasury_manifest,
 )
+from aidn_hypervisor.inference_gateway import build_inference_router
 from aidn_hypervisor.mcp import (
     McpPersistentStateStore,
     McpRemoteGateway,
@@ -321,8 +322,17 @@ def build_app(
     app.state.dashboard_access_service = dashboard_access_service
     app.state.dashboard_network_access_service = dashboard_network_access_service
     app.state.mcp_enrollment_service = mcp_enrollment_service
+    app.state.inference_gateway_enabled = mcp_credential_store is not None
     if mcp_remote_gateway.enabled:
         app.include_router(build_mcp_remote_router(mcp_remote_gateway))
+    app.include_router(
+        build_inference_router(
+            hypervisor_service=resolved_service,
+            endpoint_service=resolved_endpoint_service,
+            session_service=resolved_session_service,
+            credential_store=mcp_credential_store,
+        )
+    )
     app.include_router(
         build_operator_access_router(
             access_service=dashboard_access_service,
@@ -337,6 +347,7 @@ def build_app(
             remote_endpoint_service=resolved_remote_endpoint_service,
             validation_service=resolved_validation_service,
             network_access_service=dashboard_network_access_service,
+            session_service=resolved_session_service,
         )
     )
 
@@ -461,6 +472,13 @@ def _is_validator_consensus_write_path(path: str, method: str | None = None) -> 
         return True
     if parts == ["operators", "dashboard", "access", "operations", "resources", "probe"]:
         return True
+    if (
+        parts == ["v1", "chat", "completions"]
+        and (method is None or method == "POST")
+    ):
+        # OpenAI-compatible inference is a separately bearer-authenticated,
+        # endpoint-scoped data-plane request. It never mutates consensus state.
+        return True
     if parts == ["operators", "dashboard", "access", "operations", "network"]:
         # The Dashboard listener is constrained to the two reviewed host
         # boundaries and is persisted for the bootstrap service wrapper.
@@ -559,6 +577,26 @@ def _is_validator_consensus_write_path(path: str, method: str | None = None) -> 
     ):
         # Credential lifecycle records are encrypted local operator secrets;
         # they cannot create a Ledger effect or alter network ownership.
+        return True
+    if (
+        parts == ["operators", "dashboard", "access", "inference-credentials"]
+        and (method is None or method == "POST")
+    ):
+        # Personal inference tokens are encrypted local credentials; issuing
+        # one does not create a consensus or payment obligation.
+        return True
+    if (
+        len(parts) == 6
+        and parts[:4] == ["operators", "dashboard", "access", "inference-credentials"]
+        and parts[5] == "rotate"
+        and (method is None or method == "POST")
+    ):
+        return True
+    if (
+        len(parts) == 5
+        and parts[:4] == ["operators", "dashboard", "access", "inference-credentials"]
+        and (method is None or method == "DELETE")
+    ):
         return True
     if (
         len(parts) == 6

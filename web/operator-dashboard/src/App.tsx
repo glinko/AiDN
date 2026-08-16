@@ -70,7 +70,7 @@ import {
   shortId,
 } from '@/lib/format'
 import { useDashboardData } from '@/hooks/use-dashboard'
-import { DashboardApiError, dashboardApi, type AccessCredential, type AgentPermissionCatalog, type DashboardAccessStatus, type DashboardRecord, type EnrollmentRequest, type ProviderArtifactInventory, type ProviderWorkspace } from '@/lib/api'
+import { DashboardApiError, dashboardApi, type AccessCredential, type AgentPermissionCatalog, type DashboardAccessStatus, type DashboardRecord, type EnrollmentRequest, type InferenceCredential, type ProviderArtifactInventory, type ProviderWorkspace } from '@/lib/api'
 import { dashboardScreens, useOperatorDashboardStore, type DashboardScreen } from '@/stores/operator-dashboard'
 import type { Bundle, CometBftDashboard, CometBftInstall, Endpoint, Fleet, Readiness, ReadinessStep, WalletDashboard } from '@/lib/types'
 import { createSavedHypervisor, loadSavedHypervisors, saveSavedHypervisors, type SavedHypervisorConnection } from '@/lib/hypervisor-connections'
@@ -234,7 +234,11 @@ function App() {
 
     syncScreenFromHash()
     window.addEventListener('hashchange', syncScreenFromHash)
-    return () => window.removeEventListener('hashchange', syncScreenFromHash)
+    window.addEventListener('popstate', syncScreenFromHash)
+    return () => {
+      window.removeEventListener('hashchange', syncScreenFromHash)
+      window.removeEventListener('popstate', syncScreenFromHash)
+    }
   }, [setActiveScreen])
 
   function refreshAll() {
@@ -266,9 +270,9 @@ function App() {
   function navigate(screen: DashboardScreen) {
     setActiveScreen(screen)
     if (window.location.hash !== `#${screen}`) {
-      // Assigning the hash keeps browser history and the hashchange listener
-      // in sync on Safari/iOS as well as desktop browsers.
-      window.location.hash = screen
+      // Keep navigation inside the React workspace while preserving browser
+      // back/forward semantics on Safari/iOS as well as desktop browsers.
+      window.history.pushState({ screen }, '', `#${screen}`)
     }
     setMobileOpen(false)
   }
@@ -318,7 +322,7 @@ function App() {
           {activeScreen === 'models' ? (
             <ModelsWorkspace installs={data.installs.data?.items ?? []} workspace={data.providers.data} isLoading={data.installs.isLoading || data.providers.isLoading} error={data.installs.error ?? data.providers.error} onRefresh={refreshAll} onNavigate={navigate} />
           ) : null}
-          {activeScreen === 'settings' ? <SettingsWorkspace fleet={data.fleet.data} onRefresh={refreshAll} /> : null}
+          {activeScreen === 'settings' ? <SettingsWorkspace fleet={data.fleet.data} endpoints={data.endpoints.data?.items ?? []} onRefresh={refreshAll} /> : null}
           {activeScreen === 'wallet' ? <WalletWorkspace wallet={data.wallet.data} isLoading={data.wallet.isLoading} error={data.wallet.error} onRefresh={refreshAll} /> : null}
           {activeScreen === 'providers' || activeScreen === 'catalog' ? (
             <ProviderWorkspaceScreen screen={activeScreen} workspace={data.providers.data} isLoading={data.providers.isLoading} error={data.providers.error} onRefresh={refreshAll} />
@@ -1601,12 +1605,16 @@ function ModelsWorkspace({ installs, workspace, isLoading, error, onRefresh, onN
   </div>
 }
 
-function SettingsAccessWorkspace() {
+function SettingsAccessWorkspace({ endpoints }: { endpoints: DashboardRecord[] }) {
   const [status, setStatus] = useState<DashboardAccessStatus | null>(null)
   const [pairingCode, setPairingCode] = useState('')
   const [sessionDuration, setSessionDuration] = useState('one_day')
   const [label, setLabel] = useState('Local agent')
   const [revealedToken, setRevealedToken] = useState<string | null>(null)
+  const [inferenceLabel, setInferenceLabel] = useState('Personal agent')
+  const [inferenceEndpointId, setInferenceEndpointId] = useState('')
+  const [inferenceModelAlias, setInferenceModelAlias] = useState('')
+  const [revealedInference, setRevealedInference] = useState<(InferenceCredential & { base_url?: string }) | null>(null)
   const [enrollments, setEnrollments] = useState<EnrollmentRequest[]>([])
   const [permissionCatalog, setPermissionCatalog] = useState<AgentPermissionCatalog | null>(null)
   const [selectedCredentialId, setSelectedCredentialId] = useState<string | null>(null)
@@ -1638,6 +1646,13 @@ function SettingsAccessWorkspace() {
   }
 
   useEffect(() => { void refreshAccess() }, [])
+
+  useEffect(() => {
+    if (!inferenceEndpointId && endpoints.length > 0) {
+      const first = endpoints.find((endpoint) => getText(endpoint, 'status') !== 'deleted' && getText(endpoint, 'model_class') === 'llm_text')
+      if (first) setInferenceEndpointId(getText(first, 'endpoint_id'))
+    }
+  }, [endpoints, inferenceEndpointId])
 
   async function pair() {
     if (!pairingCode.trim()) return
@@ -1726,6 +1741,49 @@ function SettingsAccessWorkspace() {
     } finally { setBusy(null) }
   }
 
+  async function issueInferenceCredential() {
+    if (!inferenceLabel.trim() || !inferenceEndpointId) return
+    setBusy('inference-create')
+    try {
+      setError(null)
+      const issued = await dashboardApi.createInferenceCredential({
+        label: inferenceLabel.trim(),
+        endpoint_id: inferenceEndpointId,
+        ...(inferenceModelAlias.trim() ? { model_alias: inferenceModelAlias.trim() } : {}),
+      })
+      setRevealedInference(issued ?? null)
+      setInferenceModelAlias('')
+      await refreshAccess()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Personal inference access creation failed.')
+    } finally { setBusy(null) }
+  }
+
+  async function rotateInferenceCredential(credential: InferenceCredential) {
+    setBusy(`inference:${credential.credential_id}`)
+    try {
+      setError(null)
+      const issued = await dashboardApi.rotateInferenceCredential(credential.credential_id)
+      setRevealedInference(issued ?? null)
+      await refreshAccess()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Personal inference access rotation failed.')
+    } finally { setBusy(null) }
+  }
+
+  async function revokeInferenceCredential(credential: InferenceCredential) {
+    if (!window.confirm(`Revoke ${credential.label}? Personal agent inference will stop immediately.`)) return
+    setBusy(`inference:${credential.credential_id}`)
+    try {
+      setError(null)
+      await dashboardApi.revokeInferenceCredential(credential.credential_id)
+      if (revealedInference?.credential_id === credential.credential_id) setRevealedInference(null)
+      await refreshAccess()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Personal inference access revocation failed.')
+    } finally { setBusy(null) }
+  }
+
   function openPermissions(credential: AccessCredential) {
     setSelectedCredentialId(credential.credential_id)
     setDraftScopes(credential.scopes)
@@ -1800,6 +1858,8 @@ function SettingsAccessWorkspace() {
   }
 
   const selectedCredential = status?.credentials.find((credential) => credential.credential_id === selectedCredentialId) ?? null
+  const inferenceCredentials = status?.inference_credentials ?? []
+  const inferenceEndpointOptions = endpoints.filter((endpoint) => getText(endpoint, 'status') !== 'deleted' && getText(endpoint, 'model_class') === 'llm_text')
   if (selectedCredential) {
     const permissions = permissionCatalog?.items ?? []
     const isFullControl = permissionCatalog !== null
@@ -1844,6 +1904,7 @@ function SettingsAccessWorkspace() {
         {status.enabled && !status.session.active ? <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Terminal-to-browser pairing</p><CardTitle className="mt-1 text-lg font-semibold">Trust this browser</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">On the Hypervisor host, run <code className="rounded bg-black/20 px-1.5 py-0.5 font-mono text-xs text-cyan-100">aidn-operator pair</code>. The one-time code creates a browser-bound session. The node stores only hashes of the browser key and session cookie; use Forget this browser to revoke it.</p></CardHeader><CardContent className="flex flex-col gap-3 p-5"><label className="grid gap-2"><span className="eyebrow">Pairing code</span><input value={pairingCode} onChange={(event) => setPairingCode(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void pair() }} autoComplete="one-time-code" placeholder="Paste code from the node terminal" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none transition focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Trust duration</span><select value={sessionDuration} onChange={(event) => setSessionDuration(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none transition focus:border-cyan-300"><option value="ten_minutes">10 minutes</option><option value="one_day">1 day</option><option value="thirty_days">30 days</option><option value="forever">Indefinitely</option></select></label><div className="flex justify-end"><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={!pairingCode.trim() || busy === 'pair'} onClick={() => void pair()}>{busy === 'pair' ? 'Pairing...' : 'Trust browser'}<ChevronRight /></Button></div></CardContent></Card> : null}
         {status.enabled && status.session.active ? <>
           <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/70 px-5 py-4"><div><CardTitle className="text-lg font-semibold">Agent enrollment requests</CardTitle><p className="mt-1 text-sm text-muted-foreground">Agents generate an ephemeral encryption key and wait here. Approving sends the credential only in an encrypted envelope.</p></div><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={() => void refreshAccess()}><RefreshCw />Refresh</Button></CardHeader><CardContent className="p-0">{enrollments.filter((request) => request.state === 'pending').length === 0 ? <EmptyState title="No pending agent requests" detail="An agent can request access without receiving an operator token or using the host shell." actionLabel="Refresh requests" onAction={() => void refreshAccess()} /> : <div className="divide-y divide-border/70">{enrollments.filter((request) => request.state === 'pending').map((request) => <div key={request.request_id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-white">{request.label}</p><StatusBadge value={request.state} /></div><p className="mt-1 truncate font-mono text-[11px] text-slate-400">{request.key_fingerprint} · expires {new Date(request.expires_at).toLocaleTimeString()}</p></div><div className="flex gap-2"><Button size="sm" className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy === request.request_id} onClick={() => void decideEnrollment(request, 'approve')}>Approve</Button><Button variant="outline" size="sm" className="border-rose-300/25 bg-[#091725] text-rose-50 hover:border-rose-300/60" disabled={busy === request.request_id} onClick={() => void decideEnrollment(request, 'reject')}>Reject</Button></div></div>)}</div>}</CardContent></Card>
+          <Card className="border-cyan-300/25 bg-cyan-300/[0.035] py-0 shadow-none"><CardHeader className="border-b border-cyan-300/15 px-5 py-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow text-cyan-100">Inference data plane</p><CardTitle className="mt-1 text-lg font-semibold">Personal agent access</CardTitle><p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">Issue a dedicated OpenAI-compatible token for one local, zero-priced Endpoint. It can run inference only; MCP permissions and operator authority stay separate.</p></div><StatusBadge value={inferenceCredentials.filter((credential) => credential.state === 'active').length ? 'active' : 'not configured'} /></div></CardHeader><CardContent className="space-y-4 p-5"><div className="grid gap-3 lg:grid-cols-[1fr_1.2fr_1fr_auto]"><label className="grid gap-2"><span className="eyebrow">Agent label</span><input value={inferenceLabel} onChange={(event) => setInferenceLabel(event.target.value)} maxLength={96} placeholder="OpenClaw on this node" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Local Endpoint</span><select value={inferenceEndpointId} onChange={(event) => setInferenceEndpointId(event.target.value)} disabled={inferenceEndpointOptions.length === 0} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-xs text-white outline-none focus:border-cyan-300"><option value="">{inferenceEndpointOptions.length ? 'Select Endpoint' : 'No local Endpoint available'}</option>{inferenceEndpointOptions.map((endpoint) => <option key={getText(endpoint, 'endpoint_id')} value={getText(endpoint, 'endpoint_id')}>{getText(endpoint, 'display_name') || getText(endpoint, 'endpoint_id')} · {getText(endpoint, 'endpoint_id')}</option>)}</select></label><label className="grid gap-2"><span className="eyebrow">Model alias (optional)</span><input value={inferenceModelAlias} onChange={(event) => setInferenceModelAlias(event.target.value)} maxLength={128} placeholder="aidn/qwen-local" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><div className="flex items-end"><Button className="w-full bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={!inferenceLabel.trim() || !inferenceEndpointId || busy === 'inference-create'} onClick={() => void issueInferenceCredential()}><KeyRound />{busy === 'inference-create' ? 'Issuing...' : 'Issue inference token'}</Button></div></div>{revealedInference ? <div className="rounded-lg border border-cyan-300/30 bg-[#07111d] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow text-cyan-100">Copy into your agent now</p><p className="mt-1 text-sm font-semibold text-cyan-50">Token is visible once</p></div><Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725]" onClick={() => void navigator.clipboard.writeText(`Base URL: ${revealedInference.base_url || ''}\nModel: ${revealedInference.model_alias}\nBearer token: ${revealedInference.token || ''}`)}><Copy />Copy config</Button></div><pre className="mt-3 overflow-x-auto rounded-md bg-black/25 p-3 font-mono text-xs leading-5 text-cyan-50">{`Base URL: ${revealedInference.base_url || ''}\nModel: ${revealedInference.model_alias}\nBearer token: ${revealedInference.token || ''}`}</pre><p className="mt-2 text-xs leading-5 text-cyan-100/75">Use this Base URL with an OpenAI-compatible agent. Streaming is intentionally disabled in this first gateway slice.</p><Button variant="outline" size="sm" className="mt-3 border-border bg-[#091725]" onClick={() => setRevealedInference(null)}>I stored it</Button></div> : null}<div className="divide-y divide-cyan-300/10 rounded-lg border border-cyan-300/15 bg-[#07111d]">{inferenceCredentials.length === 0 ? <p className="px-4 py-4 text-sm text-muted-foreground">No personal inference credentials have been issued.</p> : inferenceCredentials.map((credential) => <div key={credential.credential_id} className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-slate-100">{credential.label}</p><StatusBadge value={credential.state} /></div><p className="mt-1 truncate font-mono text-[11px] text-slate-400">{credential.model_alias} · {credential.endpoint_id} · {credential.fingerprint}</p><p className="mt-1 text-xs text-muted-foreground">{credential.expires_at ? `expires ${new Date(credential.expires_at).toLocaleString()}` : 'no expiry'}{credential.session_id ? ` · session ${shortId(credential.session_id, 18)}` : ''}</p></div>{credential.state === 'active' ? <div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={busy === `inference:${credential.credential_id}`} onClick={() => void rotateInferenceCredential(credential)}><RotateCcw />Rotate</Button><Button variant="outline" size="sm" className="border-rose-300/25 bg-transparent text-rose-100" disabled={busy === `inference:${credential.credential_id}`} onClick={() => void revokeInferenceCredential(credential)}><Trash2 />Revoke</Button></div> : null}</div>)}</div></CardContent></Card>
           <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-start justify-between gap-4 border-b border-border/70 px-5 py-4"><div><p className="eyebrow">MCP agent credentials</p><CardTitle className="mt-1 text-lg font-semibold">Issue a new agent token</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">The token is shown once. An agent authenticates to this node with it; existing values cannot be displayed again.</p></div><Button variant="outline" size="sm" className="shrink-0 border-border bg-[#091725]" disabled={busy === 'logout'} onClick={() => void logout()}><LogOut />Sign out</Button></CardHeader><CardContent className="space-y-4 p-5"><p className="rounded-md border border-border/70 bg-[#07111d] px-3 py-2 font-mono text-[11px] text-slate-400">Operator authority: {status.operator_authority.configured ? status.operator_authority.fingerprint : 'not configured'} · never shared with agents</p><div className="flex flex-col gap-3 sm:flex-row sm:items-end"><label className="grid flex-1 gap-2"><span className="eyebrow">Agent label</span><input value={label} onChange={(event) => setLabel(event.target.value)} maxLength={96} placeholder="For example: coding-agent-node127" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none transition focus:border-cyan-300" /></label><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={!label.trim() || busy === 'create'} onClick={() => void issueCredential()}><KeyRound />{busy === 'create' ? 'Issuing...' : 'Issue token'}</Button></div>{revealedToken ? <div className="rounded-lg border border-cyan-300/30 bg-cyan-300/[0.06] p-4"><div className="flex items-start justify-between gap-4"><div><p className="eyebrow text-cyan-100">Copy now</p><p className="mt-1 text-sm font-semibold text-cyan-50">New token is visible once</p></div><Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725]" onClick={() => void navigator.clipboard.writeText(revealedToken)}><Copy />Copy</Button></div><code className="mt-3 block break-all rounded-md bg-black/25 p-3 font-mono text-xs leading-5 text-cyan-50">{revealedToken}</code><p className="mt-2 text-xs leading-5 text-cyan-100/75">Close this notice after transferring the value through an approved secret channel. Rotation immediately revokes the prior token.</p><Button variant="outline" size="sm" className="mt-3 border-border bg-[#091725]" onClick={() => setRevealedToken(null)}>I stored it</Button></div> : null}</CardContent></Card>
           <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/70 px-5 py-4"><div><p className="eyebrow">Active inventory</p><CardTitle className="mt-1 text-lg font-semibold">Agent credentials</CardTitle></div><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={() => void refreshAccess()}><RefreshCw />Refresh</Button></CardHeader><CardContent className="p-0">{status.credentials.length === 0 ? <EmptyState title="No agent credentials" detail="Issue a dedicated token for each agent or remote Hypervisor connection." actionLabel="Issue token" onAction={() => void issueCredential()} /> : <div className="divide-y divide-border/70">{status.credentials.map((credential) => <div key={credential.credential_id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-slate-100">{credential.label}</p><StatusBadge value={credential.state} /></div><p className="mt-1 truncate font-mono text-[11px] text-slate-500">{credential.fingerprint} · {credential.scopes.length} permissions · last used {credential.last_used_at ? new Date(credential.last_used_at).toLocaleString() : 'never'}</p></div>{credential.state === 'active' ? <div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" className="border-cyan-300/30 bg-[#091725] text-cyan-100 hover:bg-cyan-300/10" disabled={busy === credential.credential_id} onClick={() => openPermissions(credential)}><ShieldCheck />Permissions</Button><Button variant="outline" size="sm" className="border-border bg-[#091725]" disabled={busy === credential.credential_id} onClick={() => void rotate(credential)}><RotateCcw />Rotate</Button><Button variant="outline" size="sm" className="border-rose-300/25 bg-transparent text-rose-100 hover:bg-rose-300/10" disabled={busy === credential.credential_id} onClick={() => void revoke(credential)}><Trash2 />Revoke</Button></div> : null}</div>)}</div>}</CardContent></Card>
         </> : null}
@@ -2093,11 +2154,11 @@ function WalletWorkspace({ wallet, isLoading, error, onRefresh }: { wallet: Wall
   </div>
 }
 
-function SettingsWorkspace({ fleet, onRefresh }: { fleet: DashboardData['fleet']['data']; onRefresh: () => void }) {
+function SettingsWorkspace({ fleet, endpoints, onRefresh }: { fleet: DashboardData['fleet']['data']; endpoints: DashboardRecord[]; onRefresh: () => void }) {
   return (
     <div className="space-y-4">
       <ResourceProbeControl fleet={fleet} onRefresh={onRefresh} />
-      <SettingsAccessWorkspace />
+      <SettingsAccessWorkspace endpoints={endpoints} />
     </div>
   )
 }
@@ -2144,6 +2205,7 @@ function providerFieldDefault(field: DashboardRecord): unknown {
     const firstOption = getRecord(field.options[0])
     return firstOption?.value ?? ''
   }
+
   if (field.type === 'boolean') return false
   return ''
 }

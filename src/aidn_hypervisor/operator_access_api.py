@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -26,7 +27,11 @@ from aidn_hypervisor.endpoints.models import (
     UpdateEndpointCommand,
 )
 from aidn_hypervisor.ledger.service import STANDARD_NETWORK_FEE_Q_ATOMS
-from aidn_hypervisor.mcp.credentials import McpCredential, McpCredentialStore
+from aidn_hypervisor.mcp.credentials import (
+    InferenceCredential,
+    McpCredential,
+    McpCredentialStore,
+)
 from aidn_hypervisor.mcp.enrollment import McpEnrollmentService
 from aidn_hypervisor.mcp.permissions import (
     AGENT_MUTATION_SCOPES,
@@ -72,6 +77,15 @@ class CredentialCreateRequest(BaseModel):
 class CredentialScopeUpdateRequest(BaseModel):
     scopes: list[str] = Field(min_length=1, max_length=64)
     auto_approved_scopes: list[str] = Field(default_factory=list, max_length=64)
+
+
+class InferenceCredentialCreateRequest(BaseModel):
+    """Create an OpenAI-compatible token for one local owner endpoint."""
+
+    label: str = Field(min_length=1, max_length=96)
+    endpoint_id: str = Field(min_length=1, max_length=256)
+    model_alias: str | None = Field(default=None, min_length=1, max_length=128)
+    ttl_seconds: int | None = Field(default=None, ge=3600, le=31_536_000)
 
 
 class EnrollmentCreateRequest(BaseModel):
@@ -191,6 +205,13 @@ def _credential_payload(credential: McpCredential, *, reveal: bool = False) -> d
     return payload
 
 
+def _inference_credential_payload(credential: InferenceCredential, *, reveal: bool = False) -> dict:
+    payload = asdict(credential)
+    if not reveal:
+        payload.pop("token", None)
+    return payload
+
+
 def build_operator_access_router(
     *,
     access_service: DashboardAccessService | None,
@@ -205,6 +226,7 @@ def build_operator_access_router(
     remote_endpoint_service: Any | None = None,
     validation_service: Any | None = None,
     network_access_service: DashboardNetworkAccessService | None = None,
+    session_service: Any | None = None,
 ) -> APIRouter:
     """Build a browser-only credential management boundary."""
     router = APIRouter(prefix="/operators/dashboard/access")
@@ -324,6 +346,7 @@ def build_operator_access_router(
         canonical_identity_provider = getattr(
             hypervisor_service, "canonical_wallet_identity_provider", None
         )
+
         canonical_identity_query = getattr(consensus, "query_wallet_identity", None)
         canonical_identity_required = callable(canonical_identity_provider) or callable(
             canonical_identity_query
@@ -474,6 +497,44 @@ def build_operator_access_router(
             "publication": record.model_dump(mode="json"),
             "finality": finality,
         }
+
+    def validate_personal_inference_endpoint(endpoint_id: str):
+        if credential_store is None:
+            raise RuntimeError("Inference credential store is unavailable")
+        if endpoint_service is None or hypervisor_service is None:
+            raise RuntimeError("Inference gateway is unavailable")
+        try:
+            endpoint = endpoint_service.get_endpoint(endpoint_id).endpoint
+        except (KeyError, ValueError) as error:
+            raise ValueError(f"Inference endpoint was not found: {endpoint_id}") from error
+        if endpoint.status == "deleted":
+            raise ValueError("Inference endpoint is deleted")
+        if endpoint.execution_strategy != "local":
+            raise ValueError("Personal agent inference requires a local endpoint")
+        if endpoint.model_class != "llm_text":
+            raise ValueError("Personal agent inference requires an llm_text endpoint")
+        if not endpoint.runtime_binding_id:
+            raise ValueError("Inference endpoint has no runtime binding")
+        owner = hypervisor_service.owner_wallet_state()
+        if not owner.get("configured") or not owner.get("wallet_id"):
+            raise ValueError("Configure the owner wallet before issuing an inference token")
+        if endpoint.owner_wallet != owner["wallet_id"]:
+            raise ValueError("Inference endpoint is not owned by this Hypervisor wallet")
+        pricing = endpoint.pricing.model_dump(mode="json")
+        for key in ("input_price", "output_price", "audio_input_second_price", "fixed_price"):
+            if float(pricing.get(key) or 0.0) != 0.0:
+                raise ValueError("Personal agent inference currently supports zero-priced endpoints only")
+        session_policy = endpoint.session.model_dump(mode="json")
+        for key in ("minimum_deposit", "minimum_session_fee", "idle_fee_per_minute"):
+            if float(session_policy.get(key) or 0.0) != 0.0:
+                raise ValueError("Personal agent inference requires a zero-fee session policy")
+        return endpoint
+
+    def inference_base_url(request: Request) -> str:
+        configured = os.getenv("AIDN_INFERENCE_PUBLIC_BASE_URL", "").strip().rstrip("/")
+        if configured:
+            return configured if configured.endswith("/v1") else configured + "/v1"
+        return str(request.base_url).rstrip("/") + "/v1"
 
     def _register_owner_wallet_identity() -> dict:
         if hypervisor_service is None:
@@ -830,6 +891,14 @@ def build_operator_access_router(
                 if credential_store is None or not active
                 else [_credential_payload(item) for item in credential_store.list_credentials()]
             ),
+            "inference_credentials": (
+                []
+                if credential_store is None or not active
+                else [
+                    _inference_credential_payload(item)
+                    for item in credential_store.list_inference_credentials()
+                ]
+            ),
         }
 
     @router.post("/operations/network")
@@ -977,6 +1046,107 @@ def build_operator_access_router(
             auto_approved_scopes=auto_approved_scopes,
         )
         return JSONResponse(status_code=201, content=_credential_payload(issued, reveal=True))
+
+    @router.get("/inference-credentials")
+    async def list_inference_credentials(request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if credential_store is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "INFERENCE_ACCESS_UNAVAILABLE"}})
+        return JSONResponse(
+            status_code=200,
+            content={
+                "items": [
+                    _inference_credential_payload(item)
+                    for item in credential_store.list_inference_credentials()
+                ],
+                "base_url": inference_base_url(request),
+            },
+        )
+
+    @router.post("/inference-credentials", status_code=201)
+    async def create_inference_credential(
+        payload: InferenceCredentialCreateRequest,
+        request: Request,
+    ) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if credential_store is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "INFERENCE_ACCESS_UNAVAILABLE"}})
+        try:
+            endpoint = validate_personal_inference_endpoint(payload.endpoint_id)
+            owner = hypervisor_service.owner_wallet_state()
+            issued = credential_store.create_inference_credential(
+                label=payload.label,
+                endpoint_id=endpoint.endpoint_id,
+                owner_wallet=owner["wallet_id"],
+                model_alias=payload.model_alias,
+                ttl_seconds=payload.ttl_seconds,
+            )
+        except (RuntimeError, ValueError) as error:
+            return JSONResponse(
+                status_code=409,
+                content={"error": {"code": "INFERENCE_CREDENTIAL_REJECTED", "message": str(error)}},
+            )
+        result = _inference_credential_payload(issued, reveal=True)
+        result["base_url"] = inference_base_url(request)
+        result["endpoint_display_name"] = endpoint.display_name
+        return JSONResponse(status_code=201, content=result)
+
+    @router.post("/inference-credentials/{credential_id}/rotate", status_code=201)
+    async def rotate_inference_credential(credential_id: str, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if credential_store is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "INFERENCE_ACCESS_UNAVAILABLE"}})
+        try:
+            current = next(
+                (
+                    item
+                    for item in credential_store.list_inference_credentials()
+                    if item.credential_id == credential_id and item.state == "active"
+                ),
+                None,
+            )
+            if current is None:
+                raise ValueError("Inference credential is not active")
+            validate_personal_inference_endpoint(current.endpoint_id)
+            issued = credential_store.rotate_inference_credential(credential_id)
+        except (RuntimeError, ValueError):
+            return JSONResponse(status_code=404, content={"error": {"code": "INFERENCE_CREDENTIAL_NOT_ACTIVE"}})
+        result = _inference_credential_payload(issued, reveal=True)
+        result["base_url"] = inference_base_url(request)
+        return JSONResponse(status_code=201, content=result)
+
+    @router.delete("/inference-credentials/{credential_id}", status_code=204)
+    async def revoke_inference_credential(credential_id: str, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if credential_store is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "INFERENCE_ACCESS_UNAVAILABLE"}})
+        current = next(
+            (
+                item
+                for item in credential_store.list_inference_credentials()
+                if item.credential_id == credential_id and item.state == "active"
+            ),
+            None,
+        )
+        if not credential_store.revoke_inference_credential(credential_id):
+            return JSONResponse(status_code=404, content={"error": {"code": "INFERENCE_CREDENTIAL_NOT_ACTIVE"}})
+        if current is not None and current.session_id and session_service is not None:
+            try:
+                session_service.close_session(current.session_id)
+            except (KeyError, RuntimeError, ValueError):
+                # Revocation is authoritative even if a stale/expired session
+                # cannot be closed during the same request.  The normal
+                # session expiry path will reclaim the slot.
+                pass
+        return Response(status_code=204)
 
     @router.get("/permission-catalog")
     async def permission_catalog(request: Request) -> Response:

@@ -52,7 +52,7 @@ class LlamaCppOpenAIAdapter:
             dimensions = self._usage_dimensions(response.get("usage", {}))
             terminal_state = "COMPLETED"
             result_payload = {
-                "text": str(response["choices"][0].get("text", "")),
+                "text": self._choice_text(response["choices"][0]),
                 "model": str(response.get("model", self.model)),
                 "finish_reason": response["choices"][0].get("finish_reason"),
             }
@@ -148,7 +148,7 @@ class LlamaCppOpenAIAdapter:
                     continue
                 choice = choices[0]
                 finish_reason = choice.get("finish_reason") or finish_reason
-                text = choice.get("text")
+                text = self._choice_text(choice)
                 if not isinstance(text, str) or not text:
                     continue
                 encoded = text.encode("utf-8")
@@ -365,15 +365,10 @@ class LlamaCppOpenAIAdapter:
         return result
 
     def _completion(self, execution_request: RuntimeExecuteRequest) -> dict:
-        prompt = (execution_request.request_payload or {}).get("prompt")
-        if not isinstance(prompt, str) or not prompt:
-            raise ValueError("llama.cpp adapter requires a non-empty prompt")
-        payload = json.dumps(
-            {"model": self.model, "prompt": prompt, "max_tokens": 64, "temperature": 0},
-            separators=(",", ":"),
-        ).encode("utf-8")
+        path, body = self._upstream_payload(execution_request, stream=False)
+        payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
         request = urllib_request.Request(
-            f"{self.endpoint}/v1/completions",
+            f"{self.endpoint}{path}",
             method="POST",
             data=payload,
             headers={"Content-Type": "application/json"},
@@ -382,21 +377,10 @@ class LlamaCppOpenAIAdapter:
             return json.loads(response.read().decode("utf-8"))
 
     def _stream_completion(self, execution_request: RuntimeExecuteRequest):
-        prompt = (execution_request.request_payload or {}).get("prompt")
-        if not isinstance(prompt, str) or not prompt:
-            raise ValueError("llama.cpp adapter requires a non-empty prompt")
-        payload = json.dumps(
-            {
-                "model": self.model,
-                "prompt": prompt,
-                "max_tokens": 64,
-                "temperature": 0,
-                "stream": True,
-            },
-            separators=(",", ":"),
-        ).encode("utf-8")
+        path, body = self._upstream_payload(execution_request, stream=True)
+        payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
         request = urllib_request.Request(
-            f"{self.endpoint}/v1/completions",
+            f"{self.endpoint}{path}",
             method="POST",
             data=payload,
             headers={"Content-Type": "application/json"},
@@ -410,6 +394,57 @@ class LlamaCppOpenAIAdapter:
                 if data == "[DONE]":
                     return
                 yield json.loads(data)
+
+    def _upstream_payload(self, execution_request: RuntimeExecuteRequest, *, stream: bool) -> tuple[str, dict]:
+        request_payload = execution_request.request_payload or {}
+        parameters = self._generation_parameters(request_payload)
+        messages = request_payload.get("messages")
+        if isinstance(messages, list) and messages:
+            return "/v1/chat/completions", {
+                "model": self.model,
+                "messages": messages,
+                **parameters,
+                **({"stream": True} if stream else {}),
+            }
+        prompt = request_payload.get("prompt")
+        if not isinstance(prompt, str) or not prompt:
+            raise ValueError("llama.cpp adapter requires messages or a non-empty prompt")
+        return "/v1/completions", {
+            "model": self.model,
+            "prompt": prompt,
+            **parameters,
+            **({"stream": True} if stream else {}),
+        }
+
+    @staticmethod
+    def _generation_parameters(request_payload: dict) -> dict:
+        """Map canonical policy values while ignoring locked launch settings."""
+        return {
+            "max_tokens": request_payload.get("max_tokens", 64),
+            "temperature": request_payload.get("temperature", 0),
+            **(
+                {"top_p": request_payload["top_p"]}
+                if request_payload.get("top_p") is not None
+                else {}
+            ),
+        }
+
+    @staticmethod
+    def _choice_text(choice: dict) -> str:
+        text = choice.get("text")
+        if isinstance(text, str):
+            return text
+        message = choice.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, str):
+                return content
+        delta = choice.get("delta")
+        if isinstance(delta, dict):
+            content = delta.get("content")
+            if isinstance(content, str):
+                return content
+        return ""
 
     def _admit(
         self,

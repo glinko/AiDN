@@ -23,12 +23,17 @@ class OllamaGenerateAdapter(LlamaCppOpenAIAdapter):
 
     def _stream_completion(self, execution_request):
         prompt = self._prompt(execution_request)
+        options = self._generation_parameters(execution_request.request_payload or {})
         payload = json.dumps(
             {
                 "model": self.model,
                 "prompt": prompt,
                 "stream": True,
-                "options": {"num_predict": 64, "temperature": 0},
+                "options": {
+                    "num_predict": options["max_tokens"],
+                    "temperature": options["temperature"],
+                    **({"top_p": options["top_p"]} if "top_p" in options else {}),
+                },
             },
             separators=(",", ":"),
         ).encode("utf-8")
@@ -66,12 +71,17 @@ class OllamaGenerateAdapter(LlamaCppOpenAIAdapter):
 
     def _generate(self, execution_request, *, stream: bool) -> dict:
         prompt = self._prompt(execution_request)
+        options = self._generation_parameters(execution_request.request_payload or {})
         payload = json.dumps(
             {
                 "model": self.model,
                 "prompt": prompt,
                 "stream": stream,
-                "options": {"num_predict": 64, "temperature": 0},
+                "options": {
+                    "num_predict": options["max_tokens"],
+                    "temperature": options["temperature"],
+                    **({"top_p": options["top_p"]} if "top_p" in options else {}),
+                },
             },
             separators=(",", ":"),
         ).encode("utf-8")
@@ -85,9 +95,26 @@ class OllamaGenerateAdapter(LlamaCppOpenAIAdapter):
             return json.loads(response.read().decode("utf-8"))
 
     def _prompt(self, execution_request) -> str:
-        prompt = (execution_request.request_payload or {}).get("prompt")
+        request_payload = execution_request.request_payload or {}
+        prompt = request_payload.get("prompt")
         if not isinstance(prompt, str) or not prompt:
-            raise ValueError("Ollama adapter requires a non-empty prompt")
+            messages = request_payload.get("messages")
+            if isinstance(messages, list) and messages:
+                rendered: list[str] = []
+                for message in messages:
+                    if not isinstance(message, dict):
+                        continue
+                    content = message.get("content")
+                    if isinstance(content, list):
+                        content = " ".join(
+                            str(item.get("text", "")) if isinstance(item, dict) else str(item)
+                            for item in content
+                        )
+                    if content is not None and str(content).strip():
+                        rendered.append(f"{message.get('role', 'user')}: {content}")
+                prompt = "\n".join(rendered)
+        if not isinstance(prompt, str) or not prompt:
+            raise ValueError("Ollama adapter requires messages or a non-empty prompt")
         return prompt
 
     def _normalize_response(self, response: dict) -> dict:

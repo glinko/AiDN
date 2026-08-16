@@ -38,6 +38,22 @@ export type AccessCredential = {
   token?: string
 }
 
+export type InferenceCredential = {
+  credential_id: string
+  label: string
+  endpoint_id: string
+  model_alias: string
+  owner_wallet: string
+  fingerprint: string
+  state: 'active' | 'revoked' | 'expired' | string
+  created_at: string
+  expires_at: string | null
+  last_used_at: string | null
+  session_id: string | null
+  token?: string
+  base_url?: string
+}
+
 export type DashboardNetworkAccess = {
   mode: 'loopback' | 'lan'
   configured_mode: 'loopback' | 'lan'
@@ -57,6 +73,7 @@ export type DashboardAccessStatus = {
   operator_authority: { configured: boolean; fingerprint: string | null }
   network_access: DashboardNetworkAccess
   credentials: AccessCredential[]
+  inference_credentials: InferenceCredential[]
 }
 
 export type EnrollmentRequest = {
@@ -222,6 +239,9 @@ export const dashboardApi = {
   updateAgentCredentialScopes: (credentialId: string, scopes: string[], autoApprovedScopes: string[]) => writeDashboard<AccessCredential>(`/operators/dashboard/access/credentials/${credentialId}/scopes`, { method: 'PUT', body: JSON.stringify({ scopes, auto_approved_scopes: autoApprovedScopes }) }),
   rotateAgentCredential: (credentialId: string) => writeDashboard<AccessCredential>(`/operators/dashboard/access/credentials/${credentialId}/rotate`, { method: 'POST' }),
   revokeAgentCredential: (credentialId: string) => writeDashboard(`/operators/dashboard/access/credentials/${credentialId}`, { method: 'DELETE' }),
+  createInferenceCredential: (payload: { label: string; endpoint_id: string; model_alias?: string; ttl_seconds?: number }) => writeDashboard<InferenceCredential & { base_url: string }>('/operators/dashboard/access/inference-credentials', { method: 'POST', body: JSON.stringify(payload) }),
+  rotateInferenceCredential: (credentialId: string) => writeDashboard<InferenceCredential & { base_url: string }>(`/operators/dashboard/access/inference-credentials/${encodeURIComponent(credentialId)}/rotate`, { method: 'POST' }),
+  revokeInferenceCredential: (credentialId: string) => writeDashboard(`/operators/dashboard/access/inference-credentials/${encodeURIComponent(credentialId)}`, { method: 'DELETE' }),
   logoutDashboardAccess: () => writeDashboard('/operators/dashboard/access/logout', { method: 'POST' }),
   enrollmentRequests: () => writeDashboard<{ items: EnrollmentRequest[] }>('/operators/dashboard/access/enrollment-requests', { method: 'GET' }),
   approveEnrollment: (requestId: string) => writeDashboard<EnrollmentRequest>(`/operators/dashboard/access/enrollment-requests/${requestId}/approve`, { method: 'POST' }),

@@ -32,6 +32,28 @@ class McpCredential:
 
 
 @dataclass(frozen=True)
+class InferenceCredential:
+    """A single-endpoint OpenAI-compatible agent credential.
+
+    The raw bearer token is returned only by create/rotate.  The encrypted
+    state keeps only its digest, so a dashboard read can never recover it.
+    """
+
+    credential_id: str
+    label: str
+    endpoint_id: str
+    model_alias: str
+    owner_wallet: str
+    fingerprint: str
+    state: str
+    created_at: str
+    expires_at: str | None
+    last_used_at: str | None
+    session_id: str | None = None
+    token: str | None = None
+
+
+@dataclass(frozen=True)
 class McpPairingCode:
     """A newly created pairing code; the value is never persisted."""
 
@@ -62,6 +84,7 @@ class McpCredentialStore:
         token = secrets.token_urlsafe(32)
         created_at = self._timestamp()
         record = {
+            "kind": "mcp",
             "credential_id": "mcpcred-" + secrets.token_urlsafe(12),
             "label": normalized_label,
             "scopes": list(normalized_scopes),
@@ -99,6 +122,7 @@ class McpCredentialStore:
         if state["legacy_imported"]:
             return None
         record = {
+            "kind": "mcp",
             "credential_id": "mcpcred-" + secrets.token_urlsafe(12),
             "label": normalized_label,
             "scopes": list(normalized_scopes),
@@ -117,7 +141,11 @@ class McpCredentialStore:
     def list_credentials(self) -> list[McpCredential]:
         state = self._load_state()
         self._migrate_legacy_control_session_scope(state)
-        return [self._credential(record) for record in state["credentials"]]
+        return [
+            self._credential(record)
+            for record in state["credentials"]
+            if record.get("kind", "mcp") == "mcp"
+        ]
 
     def resolve(self, token: str | None) -> McpCredential | None:
         if not isinstance(token, str) or not token.strip():
@@ -126,11 +154,130 @@ class McpCredentialStore:
         state = self._load_state()
         self._migrate_legacy_control_session_scope(state)
         for record in state["credentials"]:
+            if record.get("kind", "mcp") != "mcp":
+                continue
             if record["state"] != "active":
                 continue
             if hmac.compare_digest(record["token_digest"], token_digest):
                 return self._credential(record)
         return None
+
+    def create_inference_credential(
+        self,
+        *,
+        label: str,
+        endpoint_id: str,
+        owner_wallet: str,
+        model_alias: str | None = None,
+        ttl_seconds: int | None = None,
+    ) -> InferenceCredential:
+        """Issue a token scoped to one local endpoint for a personal agent."""
+        normalized_label = self._normalize_label(label)
+        normalized_endpoint = self._normalize_identifier(endpoint_id, "endpoint id")
+        normalized_owner = self._normalize_identifier(owner_wallet, "owner wallet")
+        normalized_alias = self._normalize_model_alias(model_alias or f"aidn/{normalized_endpoint}")
+        token = secrets.token_urlsafe(32)
+        created_at = self._current_time()
+        expires_at = (
+            self._format_timestamp(created_at + timedelta(seconds=ttl_seconds))
+            if ttl_seconds is not None
+            else None
+        )
+        record = {
+            "kind": "inference",
+            "credential_id": "infcred-" + secrets.token_urlsafe(12),
+            "label": normalized_label,
+            "endpoint_id": normalized_endpoint,
+            "model_alias": normalized_alias,
+            "owner_wallet": normalized_owner,
+            "token_digest": self._digest(token),
+            "fingerprint": self._fingerprint(token),
+            "state": "active",
+            "created_at": self._format_timestamp(created_at),
+            "expires_at": expires_at,
+            "last_used_at": None,
+            "session_id": None,
+        }
+        state = self._load_state()
+        state["credentials"].append(record)
+        self._save_state(state)
+        return self._inference_credential(record, token=token)
+
+    def list_inference_credentials(self) -> list[InferenceCredential]:
+        state = self._load_state()
+        changed = self._revoke_expired_inference_records(state)
+        if changed:
+            self._save_state(state)
+        return [
+            self._inference_credential(record)
+            for record in state["credentials"]
+            if record.get("kind") == "inference"
+        ]
+
+    def resolve_inference(self, token: str | None) -> InferenceCredential | None:
+        if not isinstance(token, str) or not token.strip():
+            return None
+        token_digest = self._digest(token.strip())
+        state = self._load_state()
+        changed = self._revoke_expired_inference_records(state)
+        for record in state["credentials"]:
+            if record.get("kind") != "inference" or record["state"] != "active":
+                continue
+            if hmac.compare_digest(record["token_digest"], token_digest):
+                if changed:
+                    self._save_state(state)
+                return self._inference_credential(record)
+        if changed:
+            self._save_state(state)
+        return None
+
+    def rotate_inference_credential(self, credential_id: str) -> InferenceCredential:
+        state = self._load_state()
+        predecessor = self._find_active_inference_record(state, credential_id)
+        token = secrets.token_urlsafe(32)
+        created_at = self._current_time()
+        replacement = {
+            "kind": "inference",
+            "credential_id": "infcred-" + secrets.token_urlsafe(12),
+            "label": predecessor["label"],
+            "endpoint_id": predecessor["endpoint_id"],
+            "model_alias": predecessor["model_alias"],
+            "owner_wallet": predecessor["owner_wallet"],
+            "token_digest": self._digest(token),
+            "fingerprint": self._fingerprint(token),
+            "state": "active",
+            "created_at": self._format_timestamp(created_at),
+            "expires_at": predecessor.get("expires_at"),
+            "last_used_at": None,
+            # Rotation must not strand the active zero-fee session.  The
+            # replacement credential has the same owner and endpoint, so the
+            # gateway can continue using that session without opening a
+            # second slot.
+            "session_id": predecessor.get("session_id"),
+        }
+        predecessor["state"] = "revoked"
+        state["credentials"].append(replacement)
+        self._save_state(state)
+        return self._inference_credential(replacement, token=token)
+
+    def bind_inference_session(self, credential_id: str, session_id: str) -> None:
+        state = self._load_state()
+        record = self._find_active_inference_record(state, credential_id)
+        record["session_id"] = self._normalize_identifier(session_id, "session id")
+        self._save_state(state)
+
+    def revoke_inference_credential(self, credential_id: str) -> bool:
+        state = self._load_state()
+        for record in state["credentials"]:
+            if (
+                record.get("kind") == "inference"
+                and record["credential_id"] == credential_id
+                and record["state"] == "active"
+            ):
+                record["state"] = "revoked"
+                self._save_state(state)
+                return True
+        return False
 
     def record_use(self, credential_id: str) -> None:
         state = self._load_state()
@@ -146,6 +293,7 @@ class McpCredentialStore:
         token = secrets.token_urlsafe(32)
         created_at = self._timestamp()
         replacement = {
+            "kind": "mcp",
             "credential_id": "mcpcred-" + secrets.token_urlsafe(12),
             "label": predecessor["label"],
             "scopes": predecessor["scopes"],
@@ -183,7 +331,11 @@ class McpCredentialStore:
     def revoke_credential(self, credential_id: str) -> bool:
         state = self._load_state()
         for record in state["credentials"]:
-            if record["credential_id"] != credential_id or record["state"] != "active":
+            if (
+                record.get("kind", "mcp") != "mcp"
+                or record["credential_id"] != credential_id
+                or record["state"] != "active"
+            ):
                 continue
             record["state"] = "revoked"
             self._save_state(state)
@@ -332,6 +484,7 @@ class McpCredentialStore:
         if "dashboard_sessions" not in state:
             state["dashboard_sessions"] = []
         for record in credentials:
+            record.setdefault("kind", "mcp")
             if "auto_approved_scopes" not in record:
                 record["auto_approved_scopes"] = []
         if state["pairing"] is not None and not isinstance(state["pairing"], dict):
@@ -379,15 +532,42 @@ class McpCredentialStore:
     @staticmethod
     def _find_active_record(state: dict, credential_id: str) -> dict:
         for record in state["credentials"]:
-            if record["credential_id"] == credential_id and record["state"] == "active":
+            if (
+                record.get("kind", "mcp") == "mcp"
+                and record["credential_id"] == credential_id
+                and record["state"] == "active"
+            ):
                 return record
         raise ValueError("MCP credential is not active")
+
+    @staticmethod
+    def _find_active_inference_record(state: dict, credential_id: str) -> dict:
+        for record in state["credentials"]:
+            if (
+                record.get("kind") == "inference"
+                and record["credential_id"] == credential_id
+                and record["state"] == "active"
+            ):
+                return record
+        raise ValueError("Inference credential is not active")
 
     @staticmethod
     def _normalize_label(label: str) -> str:
         if not isinstance(label, str) or not (1 <= len(label.strip()) <= 96):
             raise ValueError("MCP credential label must contain 1..96 characters")
         return label.strip()
+
+    @staticmethod
+    def _normalize_identifier(value: str, name: str) -> str:
+        if not isinstance(value, str) or not (1 <= len(value.strip()) <= 256):
+            raise ValueError(f"Inference credential {name} must contain 1..256 characters")
+        return value.strip()
+
+    @staticmethod
+    def _normalize_model_alias(value: str) -> str:
+        if not isinstance(value, str) or not (1 <= len(value.strip()) <= 128):
+            raise ValueError("Inference model alias must contain 1..128 characters")
+        return value.strip()
 
     @staticmethod
     def _normalize_scopes(scopes: tuple[str, ...], *, allow_empty: bool = False) -> tuple[str, ...]:
@@ -430,6 +610,18 @@ class McpCredentialStore:
     def _valid_browser_key(value: object) -> bool:
         return isinstance(value, str) and 32 <= len(value) <= 128
 
+    def _revoke_expired_inference_records(self, state: dict) -> bool:
+        now = self._current_time()
+        changed = False
+        for record in state["credentials"]:
+            if record.get("kind") != "inference" or record.get("state") != "active":
+                continue
+            expires_at = self._parse_timestamp(record.get("expires_at"))
+            if expires_at is not None and expires_at <= now:
+                record["state"] = "expired"
+                changed = True
+        return changed
+
     @staticmethod
     def _credential(record: dict, *, token: str | None = None) -> McpCredential:
         return McpCredential(
@@ -441,5 +633,22 @@ class McpCredentialStore:
             state=record["state"],
             created_at=record["created_at"],
             last_used_at=record["last_used_at"],
+            token=token,
+        )
+
+    @staticmethod
+    def _inference_credential(record: dict, *, token: str | None = None) -> InferenceCredential:
+        return InferenceCredential(
+            credential_id=record["credential_id"],
+            label=record["label"],
+            endpoint_id=record["endpoint_id"],
+            model_alias=record["model_alias"],
+            owner_wallet=record["owner_wallet"],
+            fingerprint=record["fingerprint"],
+            state=record["state"],
+            created_at=record["created_at"],
+            expires_at=record.get("expires_at"),
+            last_used_at=record.get("last_used_at"),
+            session_id=record.get("session_id"),
             token=token,
         )
