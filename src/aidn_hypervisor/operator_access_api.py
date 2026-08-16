@@ -470,7 +470,10 @@ def build_operator_access_router(
             if callable(query_sequence):
                 canonical_sequence = query_sequence(wallet_id)
                 if canonical_sequence is None:
-                    raise ValueError("canonical wallet sequence is unavailable")
+                    raise ValueError(
+                        "canonical Wallet sequence is unavailable; check the configured CometBFT RPC "
+                        "and try again"
+                    )
                 if hypervisor_service.ledger_operation_service.reconcile_wallet_sequence(
                     wallet_id, canonical_sequence
                 ):
@@ -597,7 +600,10 @@ def build_operator_access_router(
                 query_sequence = getattr(consensus, "query_wallet_next_sequence", None)
                 canonical_sequence = query_sequence(sender_wallet) if callable(query_sequence) else None
             if canonical_sequence is None:
-                raise ValueError("canonical wallet sequence is unavailable")
+                raise ValueError(
+                    "canonical Wallet sequence is unavailable; check the configured CometBFT RPC "
+                    "and try again"
+                )
             local_sequence = int(canonical_sequence)
             if not preview_only and hypervisor_service.ledger_operation_service.reconcile_wallet_sequence(
                 sender_wallet, local_sequence
