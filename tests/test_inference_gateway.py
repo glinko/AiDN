@@ -240,6 +240,25 @@ def test_chat_completion_replaces_legacy_owner_agent_session(tmp_path) -> None:
     assert sessions.closed == ["sess-legacy"]
 
 
+def test_chat_completion_replaces_session_after_endpoint_revision(tmp_path) -> None:
+    client, issued, _, sessions = _client(tmp_path)
+    sessions.session.endpoint_configuration_hash = "sha256:previous-config"
+    client._aidn_credential_store.bind_inference_session(
+        issued.credential_id,
+        sessions.session.session_id,
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {issued.token}"},
+        json={"model": "qwen-local", "messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert response.status_code == 200
+    assert sessions.closed == ["sess-agent-test"]
+    assert len(sessions.opened) == 1
+
+
 def test_invalid_bearer_token_cannot_reach_task_lifecycle(tmp_path) -> None:
     client, _, service, _ = _client(tmp_path)
 

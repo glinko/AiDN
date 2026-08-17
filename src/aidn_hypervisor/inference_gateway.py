@@ -183,31 +183,47 @@ def build_inference_router(
             if session is not None:
                 if session.client_wallet != credential.owner_wallet:
                     raise ValueError("Inference session owner does not match the credential")
-                # Prior gateway versions persisted a minimal, non-canonical
-                # accounting payload. It cannot be sent to an approved
-                # runtime, so retire only that legacy owner-agent session and
-                # replace it below with the Endpoint's immutable contract.
-                try:
-                    AccountingContract.model_validate(
-                        getattr(session, "accounting_contract_snapshot", {})
-                    )
-                    if (
-                        getattr(session, "economic_profile", None) == "OWNER_AGENT"
-                        and getattr(session, "request_charge_ceiling_q_atoms", None)
-                        != 0
-                    ):
-                        raise ValueError("legacy owner-agent request ceiling")
-                except (ValidationError, ValueError):
-                    if getattr(session, "economic_profile", None) != "OWNER_AGENT":
-                        raise ValueError("Inference session has an invalid accounting contract")
+                # Endpoint configuration changes (for example a context
+                # window revision) invalidate the immutable session snapshot.
+                # Retire the stale owner-agent session before dispatch so the
+                # next request is opened against the current configuration
+                # instead of failing later in the Runtime boundary.
+                session_configuration_hash = getattr(
+                    session, "endpoint_configuration_hash", None
+                )
+                if (
+                    session_configuration_hash is not None
+                    and session_configuration_hash != endpoint.configuration_hash
+                ):
                     session_service.close_session(credential.session_id)
                     session = None
                 if session is not None:
-                    session_service.require_request_budget(
-                        endpoint_id=endpoint.endpoint_id,
-                        session_id=credential.session_id,
-                    )
-                    return credential.session_id
+                    # Prior gateway versions persisted a minimal,
+                    # non-canonical accounting payload. It cannot be sent to
+                    # an approved runtime, so retire only that legacy
+                    # owner-agent session and replace it below with the
+                    # Endpoint's immutable contract.
+                    try:
+                        AccountingContract.model_validate(
+                            getattr(session, "accounting_contract_snapshot", {})
+                        )
+                        if (
+                            getattr(session, "economic_profile", None) == "OWNER_AGENT"
+                            and getattr(session, "request_charge_ceiling_q_atoms", None)
+                            != 0
+                        ):
+                            raise ValueError("legacy owner-agent request ceiling")
+                    except (ValidationError, ValueError):
+                        if getattr(session, "economic_profile", None) != "OWNER_AGENT":
+                            raise ValueError("Inference session has an invalid accounting contract")
+                        session_service.close_session(credential.session_id)
+                        session = None
+                    if session is not None:
+                        session_service.require_request_budget(
+                            endpoint_id=endpoint.endpoint_id,
+                            session_id=credential.session_id,
+                        )
+                        return credential.session_id
         result = session_service.open_session(
             endpoint_id=endpoint.endpoint_id,
             client_wallet=credential.owner_wallet,
