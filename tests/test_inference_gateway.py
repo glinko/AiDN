@@ -203,7 +203,7 @@ def test_chat_completion_opens_owner_session_and_preserves_editable_parameters(t
     assert sessions.opened[0]["request_charge_ceiling_q_atoms"] == 0
 
 
-def test_streaming_is_rejected_explicitly_in_mvp(tmp_path) -> None:
+def test_streaming_returns_a_buffered_openai_compatible_sse_response(tmp_path) -> None:
     client, issued, _, _ = _client(tmp_path)
 
     response = client.post(
@@ -216,8 +216,10 @@ def test_streaming_is_rejected_explicitly_in_mvp(tmp_path) -> None:
         },
     )
 
-    assert response.status_code == 400
-    assert response.json()["error"]["code"] == "streaming_not_supported"
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert '"content":"hello from llama"' in response.text
+    assert "data: [DONE]" in response.text
 
 
 def test_chat_completion_replaces_legacy_owner_agent_session(tmp_path) -> None:

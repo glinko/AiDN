@@ -8,12 +8,13 @@ the provider result in the OpenAI response shape.
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from aidn_hypervisor.accounting.models import AccountingContract
@@ -71,6 +72,12 @@ def _message_size(messages: list[ChatMessage]) -> int:
         elif isinstance(content, list):
             total += sum(len(str(item)) for item in content)
     return total
+
+
+def _stream_event(payload: dict[str, Any]) -> str:
+    """Encode one OpenAI-compatible server-sent event."""
+
+    return f"data: {json.dumps(payload, separators=(',', ':'))}\n\n"
 
 
 def build_inference_router(
@@ -282,12 +289,6 @@ def build_inference_router(
         if isinstance(authenticated, JSONResponse):
             return authenticated
         credential = authenticated
-        if payload.stream:
-            return _error(
-                400,
-                "Streaming is not enabled for this personal endpoint yet",
-                code="streaming_not_supported",
-            )
         if _message_size(payload.messages) > 262_144:
             return _error(413, "The request messages exceed the 256 KiB limit", code="request_too_large")
         try:
@@ -347,12 +348,55 @@ def build_inference_router(
         text = result.get("output_text")
         if not isinstance(text, str):
             text = str(text or "")
+        completion_id = "chatcmpl-" + task.task_id
+        created = int(time.time())
+        if payload.stream:
+            # Runtime execution is currently request/response based. Emit a
+            # standards-compatible buffered stream after the approved task
+            # completes so OpenAI clients (including Hermes) can use their
+            # normal streaming path without exposing an unbounded provider
+            # connection or pretending that tokens arrived incrementally.
+            events = [
+                _stream_event(
+                    {
+                        "id": completion_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": credential.model_alias,
+                        "choices": [
+                            {
+                                "index": 0,
+                                "delta": {"role": "assistant", "content": text},
+                                "finish_reason": None,
+                            }
+                        ],
+                    }
+                ),
+                _stream_event(
+                    {
+                        "id": completion_id,
+                        "object": "chat.completion.chunk",
+                        "created": created,
+                        "model": credential.model_alias,
+                        "choices": [
+                            {"index": 0, "delta": {}, "finish_reason": "stop"}
+                        ],
+                    }
+                ),
+                "data: [DONE]\n\n",
+            ]
+            return StreamingResponse(
+                iter(events),
+                status_code=200,
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache"},
+            )
         return JSONResponse(
             status_code=200,
             content={
-                "id": "chatcmpl-" + task.task_id,
+                "id": completion_id,
                 "object": "chat.completion",
-                "created": int(time.time()),
+                "created": created,
                 "model": credential.model_alias,
                 "choices": [
                     {
