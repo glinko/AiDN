@@ -338,12 +338,6 @@ class HypervisorService:
     def task_result(self, task_id: str) -> dict | None:
         return self._task_lifecycle_facade().task_result(task_id)
 
-    def accounting_contract_for_endpoint(self, endpoint) -> dict:
-        """Return the canonical accounting contract committed by an Endpoint."""
-        return self._task_usage_accounting_facade().accounting_contract_for_endpoint(
-            endpoint
-        )
-
     def task_recovery_reason(self, task_id: str) -> str | None:
         return self._task_lifecycle_facade().task_recovery_reason(task_id)
 
