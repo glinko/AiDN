@@ -54,6 +54,7 @@ def test_approved_llamacpp_binding_executes_through_runtime_protocol(monkeypatch
             model_class="llm.chat",
             capabilities=["llm.chat"],
             pricing={"billing_unit": "request", "fixed_price": 1.0},
+            runtime={"timeout": 300},
         )
     ).endpoint
     contract = AccountingContract(
@@ -87,6 +88,14 @@ def test_approved_llamacpp_binding_executes_through_runtime_protocol(monkeypatch
     session = session.model_copy(update={"request_charge_ceiling_q_atoms": 1_000_000})
     sessions.store.save_session(session)
 
+    captured_timeout: dict[str, float] = {}
+    original_init = LlamaCppOpenAIAdapter.__init__
+
+    def capture_timeout(self, **kwargs):
+        original_init(self, **kwargs)
+        captured_timeout["seconds"] = self.timeout_seconds
+
+    monkeypatch.setattr(LlamaCppOpenAIAdapter, "__init__", capture_timeout)
     monkeypatch.setattr(
         LlamaCppOpenAIAdapter,
         "_completion",
@@ -110,6 +119,7 @@ def test_approved_llamacpp_binding_executes_through_runtime_protocol(monkeypatch
 
     assert result.terminal_state == "COMPLETED"
     assert result.result_payload["text"] == "ok"
+    assert captured_timeout["seconds"] == 300.0
     record = store.requests["request-1"]
     assert record.request.runtime_id == binding.runtime_id
     assert record.request.endpoint_configuration_hash == endpoint.configuration_hash

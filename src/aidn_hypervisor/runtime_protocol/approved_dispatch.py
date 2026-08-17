@@ -1,6 +1,7 @@
 """Direct RFC-0054 execution for an Endpoint-approved Runtime Binding."""
 
 from datetime import UTC, datetime, timedelta
+from math import isfinite
 from uuid import uuid4
 
 from aidn_hypervisor.accounting.llamacpp import build_llamacpp_usage_profile
@@ -26,6 +27,37 @@ from aidn_hypervisor.runtime_protocol.service import RuntimeProtocolService
 
 class ApprovedRuntimeDispatchError(ValueError):
     """The approved Endpoint binding cannot safely execute this Request."""
+
+
+_DEFAULT_RUNTIME_TIMEOUT_SECONDS = 90.0
+_MIN_REQUEST_DEADLINE_SECONDS = 120.0
+_REQUEST_DEADLINE_GRACE_SECONDS = 5.0
+
+
+def _runtime_timeout_seconds(endpoint) -> float:
+    """Resolve the operator-approved request timeout for one Endpoint.
+
+    The adapter timeout is part of the immutable Endpoint runtime contract.
+    Falling back to the historical 90-second value keeps legacy Endpoints
+    safe while allowing long-running local models to use their configured
+    budget instead of being cancelled by an unrelated adapter default.
+    """
+
+    runtime = getattr(endpoint, "runtime", None)
+    configured = getattr(runtime, "timeout", None)
+    if configured is None:
+        return _DEFAULT_RUNTIME_TIMEOUT_SECONDS
+    try:
+        timeout_seconds = float(configured)
+    except (TypeError, ValueError) as error:
+        raise ApprovedRuntimeDispatchError(
+            "Endpoint runtime timeout must be a positive number"
+        ) from error
+    if not isfinite(timeout_seconds) or timeout_seconds <= 0:
+        raise ApprovedRuntimeDispatchError(
+            "Endpoint runtime timeout must be a positive number"
+        )
+    return timeout_seconds
 
 
 class ApprovedRuntimeDispatcher:
@@ -145,6 +177,7 @@ class ApprovedRuntimeDispatcher:
             runtime_signature=runtime_signature,
         )
         payload_hash = canonical_hash(request_payload)
+        runtime_timeout_seconds = _runtime_timeout_seconds(endpoint)
         request = RuntimeExecuteRequest(
             runtime_id=binding.runtime_id,
             runtime_generation=binding.runtime_generation,
@@ -167,7 +200,15 @@ class ApprovedRuntimeDispatcher:
             accounting_contract_hash=session.accounting_contract_hash,
             idempotency_key=request_id,
             request_deadline=request_deadline
-            or (datetime.now(UTC) + timedelta(minutes=2)).isoformat(),
+            or (
+                datetime.now(UTC)
+                + timedelta(
+                    seconds=max(
+                        _MIN_REQUEST_DEADLINE_SECONDS,
+                        runtime_timeout_seconds + _REQUEST_DEADLINE_GRACE_SECONDS,
+                    )
+                )
+            ).isoformat(),
         )
         adapter_class = {
             "llamacpp-openai": LlamaCppOpenAIAdapter,
@@ -180,6 +221,7 @@ class ApprovedRuntimeDispatcher:
             "endpoint": endpoint_url,
             "model": deployment.provider_model_reference,
             "runtime_signature": runtime_signature,
+            "timeout_seconds": runtime_timeout_seconds,
         }
         if binding.adapter_id == "whisper-http":
             adapter_kwargs["api_format"] = str(
