@@ -1,0 +1,14 @@
+[Unit]
+Description=AiDN local llama.cpp server for Qwen3.8 on GPU
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=CUDA_VISIBLE_DEVICES=0
+ExecStart=/home/user/.local/share/aidn/providers/llama.cpp/build-cuda/bin/llama-server --model /home/user/.local/share/aidn/gpu-3090/models/llama.cpp/Qwen3.8 --host 127.0.0.1 --port 8080 --n-gpu-layers 99 --ctx-size 4096
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

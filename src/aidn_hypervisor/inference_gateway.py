@@ -20,6 +20,14 @@ from aidn_hypervisor.domain.models import TaskRequest
 from aidn_hypervisor.mcp.credentials import InferenceCredential, McpCredentialStore
 
 
+# Provider plugins expose the OpenAI-compatible text generation surface as
+# ``llm.chat``, while the model-install flow historically stored its workload
+# as ``llm_text``.  Both are local text-generation routes; treating only the
+# latter as eligible made a valid Runtime Binding impossible to use from the
+# personal-agent gateway.
+_PERSONAL_AGENT_MODEL_CLASSES = frozenset({"llm_text", "llm.chat"})
+
+
 class ChatMessage(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -129,8 +137,8 @@ def build_inference_router(
             raise ValueError("Local Agent Use is not enabled for this endpoint")
         if endpoint.execution_strategy != "local":
             raise ValueError("Personal agent inference requires a local endpoint")
-        if endpoint.model_class != "llm_text":
-            raise ValueError("Personal agent inference requires an llm_text endpoint")
+        if endpoint.model_class not in _PERSONAL_AGENT_MODEL_CLASSES:
+            raise ValueError("Personal agent inference requires a local text-generation endpoint")
         if endpoint.runtime_binding_id is None:
             raise ValueError("The endpoint has no active runtime binding")
         if endpoint.owner_wallet != credential.owner_wallet:

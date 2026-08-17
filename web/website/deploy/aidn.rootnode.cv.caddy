@@ -1,0 +1,17 @@
+# Public AiDN website. Import this block into the host Caddyfile.
+# The public Website API is intentionally not a Hypervisor control-plane proxy.
+https://aidn.rootnode.cv {
+	encode zstd gzip
+
+	@website_api path /api/site/v1/*
+	handle @website_api {
+		header Content-Type application/json
+		respond `{"error":"website_api_unavailable","detail":"The AiDN Website API is not enabled yet."}` 503
+	}
+
+	handle {
+		root * /srv/aidn/website/current
+		try_files {path} /index.html
+		file_server
+	}
+}

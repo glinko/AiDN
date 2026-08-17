@@ -70,7 +70,7 @@ def _store(tmp_path):
     )
 
 
-def _client(tmp_path, *, local_agent_use: bool = True):
+def _client(tmp_path, *, local_agent_use: bool = True, model_class: str = "llm_text"):
     endpoint = EndpointManifest(
         endpoint_id="ep-local",
         owner_wallet="wallet-test",
@@ -80,7 +80,7 @@ def _client(tmp_path, *, local_agent_use: bool = True):
         runtime_binding_id="rtb-local",
         configuration_hash="sha256:config",
         display_name="Qwen local",
-        model_class="llm_text",
+        model_class=model_class,
         local_agent_use=local_agent_use,
     )
     store = _store(tmp_path)
@@ -115,6 +115,17 @@ def test_models_is_limited_to_the_credential_endpoint(tmp_path) -> None:
     assert response.status_code == 200
     assert response.json()["data"][0]["id"] == "qwen-local"
     assert response.json()["data"][0]["aidn_endpoint_id"] == "ep-local"
+
+
+def test_models_accepts_openai_chat_runtime_binding_for_personal_agent(tmp_path) -> None:
+    client, issued, _, _ = _client(tmp_path, model_class="llm.chat")
+
+    response = client.get(
+        "/v1/models",
+        headers={"Authorization": f"Bearer {issued.token}"},
+    )
+
+    assert response.status_code == 200
 
 
 def test_models_reject_endpoint_without_local_agent_opt_in(tmp_path) -> None:
