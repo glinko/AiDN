@@ -519,8 +519,12 @@ def build_operator_access_router(
             raise ValueError("Local Agent Use is not enabled for this endpoint")
         if endpoint.execution_strategy != "local":
             raise ValueError("Personal agent inference requires a local endpoint")
-        if endpoint.model_class != "llm_text":
-            raise ValueError("Personal agent inference requires an llm_text endpoint")
+        # ``llm.chat`` is the canonical Provider capability for an
+        # OpenAI-compatible text runtime, whereas legacy model onboarding
+        # records use ``llm_text`` as their workload class.  Both are eligible
+        # local text-generation endpoints for a personal inference token.
+        if endpoint.model_class not in {"llm_text", "llm.chat"}:
+            raise ValueError("Personal agent inference requires a local text-generation endpoint")
         if not endpoint.runtime_binding_id:
             raise ValueError("Inference endpoint has no runtime binding")
         owner = hypervisor_service.owner_wallet_state()

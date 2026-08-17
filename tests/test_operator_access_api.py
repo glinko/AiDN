@@ -245,6 +245,57 @@ def test_inference_token_requires_local_agent_opt_in(tmp_path) -> None:
     assert "Local Agent Use" in rejected.json()["error"]["message"]
 
 
+def test_inference_token_accepts_openai_chat_runtime_binding(tmp_path) -> None:
+    manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
+    credentials = McpCredentialStore(secret_manager=manager)
+    access = DashboardAccessService(store=credentials)
+    endpoint = EndpointManifest(
+        endpoint_id="ep-private-chat-agent",
+        owner_wallet="wallet-test",
+        created_at="2026-08-16T00:00:00Z",
+        bundle_id="bundle-qwen",
+        bundle_hash="sha256:bundle",
+        runtime_binding_id="rtb-qwen",
+        configuration_hash="sha256:config",
+        display_name="Private Qwen chat",
+        model_class="llm.chat",
+        local_agent_use=True,
+    )
+
+    class EndpointStub:
+        def get_endpoint(self, endpoint_id: str):
+            if endpoint_id != endpoint.endpoint_id:
+                raise KeyError(endpoint_id)
+            return SimpleNamespace(endpoint=endpoint)
+
+    class HypervisorStub:
+        def owner_wallet_state(self):
+            return {"configured": True, "wallet_id": endpoint.owner_wallet}
+
+    app = FastAPI()
+    app.include_router(
+        build_operator_access_router(
+            access_service=access,
+            credential_store=credentials,
+            allow_insecure_lan=True,
+            hypervisor_service=HypervisorStub(),
+            endpoint_service=EndpointStub(),
+        )
+    )
+    client = TestClient(app)
+    client.headers.update(_BROWSER_HEADERS)
+    pairing = access.create_pairing(ttl_seconds=600)
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+
+    issued = client.post(
+        "/operators/dashboard/access/inference-credentials",
+        json={"label": "Hermes", "endpoint_id": endpoint.endpoint_id},
+    )
+
+    assert issued.status_code == 201
+    assert issued.json()["token"]
+
+
 def test_disabling_local_agent_use_revokes_endpoint_tokens_without_rotating_config(tmp_path) -> None:
     manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
     credentials = McpCredentialStore(secret_manager=manager)
