@@ -5,6 +5,10 @@ from aidn_hypervisor.endpoints.models import (
     CreateEndpointCommand,
     UpdateEndpointCommand,
 )
+from aidn_hypervisor.runtime_parameter_policy import (
+    normalize_runtime_parameter_policy,
+    policy_json,
+)
 
 
 class RemoteEndpointServiceUnavailableError(RuntimeError):
@@ -65,6 +69,19 @@ class EndpointApplicationService:
             if bundle is not None:
                 command_data["bundle_hash"] = bundle.bundle_hash or bundle_config_hash(bundle)
 
+        # Endpoint publication owns the consumer-facing copy of the runtime
+        # contract.  Default it from the selected Bundle, while still allowing
+        # the operator to submit an explicit value/toggle table before the
+        # draft is created.
+        bundle = self._bundle_for_command(command_data)
+        if bundle is not None:
+            selected_policy = command_data.get("runtime_parameter_policy")
+            if not selected_policy:
+                selected_policy = policy_json(bundle.runtime_parameter_policy)
+            command_data["runtime_parameter_policy"] = policy_json(
+                normalize_runtime_parameter_policy(bundle.provider_type, selected_policy)
+            )
+
         command = CreateEndpointCommand(**command_data)
         created = self._endpoint_service.create_endpoint(command)
         onboarding = None
@@ -93,6 +110,19 @@ class EndpointApplicationService:
         if command.endpoint_id != endpoint_id:
             command = command.model_copy(update={"endpoint_id": endpoint_id})
         current = self._endpoint_service.get_endpoint(endpoint_id).endpoint
+        if command.runtime_parameter_policy is not None:
+            bundle = self._bundle_for_command(
+                {"bundle_id": current.bundle_id, "runtime_binding_id": current.runtime_binding_id}
+            )
+            if bundle is not None:
+                command = command.model_copy(
+                    update={
+                        "runtime_parameter_policy": normalize_runtime_parameter_policy(
+                            bundle.provider_type,
+                            policy_json(command.runtime_parameter_policy),
+                        )
+                    }
+                )
         consensus = getattr(self._hypervisor_service, "consensus_service", None)
         if (
             consensus is not None
@@ -121,6 +151,27 @@ class EndpointApplicationService:
                 ),
             },
         }
+
+    def _bundle_for_command(self, command_data: dict):
+        if self._hypervisor_service is None:
+            return None
+        runtime_binding_id = command_data.get("runtime_binding_id")
+        if runtime_binding_id:
+            try:
+                return self._hypervisor_service.bundle_for_runtime_binding(
+                    str(runtime_binding_id)
+                )
+            except (KeyError, ValueError):
+                return None
+        bundle_id = str(command_data.get("bundle_id") or "")
+        return next(
+            (
+                bundle
+                for bundle in self._hypervisor_service.bundle_config()
+                if bundle.bundle_id == bundle_id
+            ),
+            None,
+        )
 
     def delete_endpoint(self, endpoint_id: str) -> dict:
         """Soft-delete an Endpoint and schedule its report custody grace."""

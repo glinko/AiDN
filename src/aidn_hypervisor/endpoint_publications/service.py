@@ -84,6 +84,10 @@ class EndpointPublicationService:
             session=manifest.session.model_dump(mode="json"),
             execution=execution_payload,
             profile=manifest.profile.model_dump(mode="json"),
+            runtime_parameter_policy={
+                key: value.model_dump(mode="json", by_alias=True)
+                for key, value in manifest.runtime_parameter_policy.items()
+            },
         )
         configuration_hash = configuration_hash_for_publication(payload)
         compatible_hash = (
@@ -129,6 +133,10 @@ class EndpointPublicationService:
             session=manifest.session.model_dump(mode="json"),
             execution=execution_payload,
             validation_requirement=manifest.validation.model_dump(mode="json"),
+            runtime_parameter_policy={
+                key: value.model_dump(mode="json", by_alias=True)
+                for key, value in manifest.runtime_parameter_policy.items()
+            },
             published_at=datetime.now(UTC).isoformat(),
             sequence=sequence,
             status="published",

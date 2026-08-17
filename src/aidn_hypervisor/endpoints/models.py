@@ -3,6 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from aidn_hypervisor.endpoints.html import SANITIZER_VERSION, sanitize_marketplace_html
+from aidn_hypervisor.runtime_parameter_policy import RuntimeParameterPolicy
 from aidn_hypervisor.validation.models import (
     CertificationStatus,
     ValidationReportRecommendation,
@@ -178,6 +179,12 @@ class EndpointManifest(BaseModel):
     # Local runtime permission for the owner-agent inference data plane. This
     # is deliberately outside immutable configuration and publication state.
     local_agent_use: bool = False
+    # Signed endpoint-level request contract.  Bundle policy remains the
+    # provider/runtime source of truth; this copy is what publication and the
+    # Marketplace expose to consumers.
+    runtime_parameter_policy: dict[str, RuntimeParameterPolicy] = Field(
+        default_factory=dict
+    )
     profile: EndpointProfile = Field(default_factory=EndpointProfile)
     runtime: EndpointRuntimeConfig = Field(default_factory=EndpointRuntimeConfig)
     publication: EndpointPublicationPolicy = Field(default_factory=EndpointPublicationPolicy)
@@ -196,6 +203,9 @@ class EndpointConfigurationSnapshot(BaseModel):
     runtime_binding_id: str | None = None
     created_at: str
     profile: EndpointProfile = Field(default_factory=EndpointProfile)
+    runtime_parameter_policy: dict[str, RuntimeParameterPolicy] = Field(
+        default_factory=dict
+    )
     runtime: EndpointRuntimeConfig
     publication: EndpointPublicationPolicy
     pricing: EndpointPricing = Field(default_factory=EndpointPricing)
@@ -212,6 +222,9 @@ class CreateEndpointCommand(BaseModel):
     display_name: str
     model_class: str
     capabilities: list[str] = Field(default_factory=list)
+    runtime_parameter_policy: dict[str, RuntimeParameterPolicy] = Field(
+        default_factory=dict
+    )
     profile: EndpointProfile = Field(default_factory=EndpointProfile)
     runtime: EndpointRuntimeConfig = Field(default_factory=EndpointRuntimeConfig)
     publication: EndpointPublicationPolicy = Field(default_factory=EndpointPublicationPolicy)
@@ -224,6 +237,7 @@ class UpdateEndpointCommand(BaseModel):
     endpoint_id: str | None = None
     display_name: str | None = None
     profile: EndpointProfile | None = None
+    runtime_parameter_policy: dict[str, RuntimeParameterPolicy] | None = None
     runtime: EndpointRuntimeConfig | None = None
     publication: EndpointPublicationPolicy | None = None
     pricing: EndpointPricing | None = None

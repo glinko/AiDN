@@ -3376,6 +3376,7 @@ class RegistryService:
             "resource_type": advertisement["resource_type"],
             "visibility": advertisement["visibility"],
             "owner_wallet": advertisement.get("owner_wallet"),
+            "parameter_policy": advertisement.get("parameter_policy", {}),
             "pricing": node["pricing"],
             "rating": node["rating"],
             "can_host_custom_model": node["can_host_custom_model"],

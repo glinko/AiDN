@@ -46,6 +46,38 @@ def test_configuration_hash_changes_when_execution_relevant_fields_change() -> N
     )
 
 
+def test_configuration_hash_binds_endpoint_parameter_policy() -> None:
+    base_kwargs = {
+        "bundle_hash": "bundle-hash-a",
+        "model_class": "llm.chat",
+        "capabilities": ["llm.chat"],
+        "runtime": {"streaming": True},
+        "publication": {"visibility": "public"},
+        "pricing": {"billing_unit": "request"},
+    }
+    unlocked = {
+        "temperature": {
+            "value": 0.7,
+            "consumer_editable": True,
+            "min": 0.0,
+            "max": 2.0,
+        }
+    }
+    locked = {"temperature": {**unlocked["temperature"], "consumer_editable": False}}
+
+    assert configuration_hash_for_publication(
+        canonical_configuration_payload(
+            **base_kwargs,
+            runtime_parameter_policy=unlocked,
+        )
+    ) != configuration_hash_for_publication(
+        canonical_configuration_payload(
+            **base_kwargs,
+            runtime_parameter_policy=locked,
+        )
+    )
+
+
 def test_configuration_hash_has_no_local_agent_permission_field() -> None:
     base = canonical_configuration_payload(
         bundle_hash="bundle-hash-a",

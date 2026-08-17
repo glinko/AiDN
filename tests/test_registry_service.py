@@ -586,6 +586,12 @@ def test_registry_service_discovery_returns_canonical_candidates(monkeypatch) ->
                     "implementation_profile_hash": "sha256:implementation",
                     "visibility": "public",
                     "signature_scope": "configuration_publication",
+                    "parameter_policy": {
+                        "version": "runtime-parameters.v1",
+                        "parameters": [
+                            {"name": "temperature", "default": 0.7, "mutable": True, "locked": False}
+                        ],
+                    },
                 }
             ],
         )
@@ -604,6 +610,7 @@ def test_registry_service_discovery_returns_canonical_candidates(monkeypatch) ->
         result["canonical_candidates"][0]["implementation_profile_hash"]
         == "sha256:implementation"
     )
+    assert result["canonical_candidates"][0]["parameter_policy"]["parameters"][0]["mutable"] is True
 
 
 def test_registry_service_combined_legacy_and_canonical_filters_require_both(

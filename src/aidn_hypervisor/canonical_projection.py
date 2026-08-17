@@ -14,6 +14,7 @@ from aidn_hypervisor.canonical_models import (
     CanonicalRegistryObjectRecord,
     CanonicalWalletIdentityRecord,
 )
+from aidn_hypervisor.runtime_parameter_policy import marketplace_parameter_policy
 
 _CAPABILITY_BY_WORKLOAD = {
     "llm_text": "llm.chat",
@@ -705,6 +706,9 @@ def project_canonical_advertisements(
                 ),
                 visibility=publication.publication.get("visibility", "private"),
                 signature_scope="configuration_publication",
+                parameter_policy=marketplace_parameter_policy(
+                    publication.runtime_parameter_policy
+                ),
             )
         )
     return records

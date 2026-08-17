@@ -63,6 +63,7 @@ class RegistryPublishedEndpointSummary(BaseModel):
     status: str
     visibility: str
     model_class: str
+    parameter_policy: dict = Field(default_factory=dict)
     signed_publication: dict | None = None
     publication_sync_status: str | None = None
     published_validation_summary: dict | None = None

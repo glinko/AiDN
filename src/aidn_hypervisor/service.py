@@ -2301,12 +2301,14 @@ class HypervisorService:
         bundle: BundleConfig,
         task: TaskRequest,
         runtime: RuntimeHandle,
+        endpoint_manifest=None,
     ) -> dict:
         return self._task_execution_facade().invoke_with_retry(
             plugin,
             bundle,
             task,
             runtime,
+            endpoint_manifest=endpoint_manifest,
         )
 
     def _record_mvp_runtime_evidence_for_completed_task(

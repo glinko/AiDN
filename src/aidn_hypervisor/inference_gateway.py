@@ -20,6 +20,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from aidn_hypervisor.accounting.models import AccountingContract
 from aidn_hypervisor.domain.models import TaskRequest
 from aidn_hypervisor.mcp.credentials import InferenceCredential, McpCredentialStore
+from aidn_hypervisor.runtime_parameter_policy import (
+    apply_runtime_parameter_policy_payload,
+)
 
 
 # Provider plugins expose the OpenAI-compatible text generation surface as
@@ -45,7 +48,13 @@ class ChatCompletionRequest(BaseModel):
     messages: list[ChatMessage] = Field(min_length=1, max_length=128)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     top_p: float | None = Field(default=None, ge=0.0, le=1.0)
+    top_k: int | None = Field(default=None, ge=1, le=100000)
+    frequency_penalty: float | None = Field(default=None, ge=-2.0, le=2.0)
+    presence_penalty: float | None = Field(default=None, ge=-2.0, le=2.0)
     max_tokens: int | None = Field(default=None, ge=1, le=32768)
+    context_length: int | None = Field(default=None, ge=1, le=131072)
+    repeat_penalty: float | None = Field(default=None, ge=0.0, le=10.0)
+    extra_body: dict[str, Any] = Field(default_factory=dict, max_length=32)
     stream: bool = False
     user: str | None = Field(default=None, max_length=256)
 
@@ -255,6 +264,18 @@ def build_inference_router(
         credential_store.bind_inference_session(credential.credential_id, result.session.session_id)
         return result.session.session_id
 
+    def endpoint_runtime_policy(endpoint) -> dict:
+        policy = getattr(endpoint, "runtime_parameter_policy", None)
+        if policy:
+            return policy
+        # Legacy endpoints predate the endpoint-level copy.  Keep them safe by
+        # enforcing the Bundle policy until the operator republishes them.
+        try:
+            bundle = hypervisor_service._get_bundle(endpoint.bundle_id)
+        except (AttributeError, KeyError, ValueError):
+            return {}
+        return getattr(bundle, "runtime_parameter_policy", {}) or {}
+
     @router.get("/models")
     async def list_models(request: Request) -> Response:
         authenticated = authenticate(request)
@@ -298,8 +319,6 @@ def build_inference_router(
         except ValueError as error:
             return _error(409, str(error), code="endpoint_unavailable")
         try:
-            session_id = ensure_session(credential, endpoint)
-            request_id = "agent-" + uuid4().hex
             request_payload: dict[str, Any] = {
                 "messages": [message.model_dump(exclude_none=True, mode="json") for message in payload.messages],
             }
@@ -309,6 +328,36 @@ def build_inference_router(
                 request_payload["top_p"] = payload.top_p
             if payload.max_tokens is not None:
                 request_payload["max_tokens"] = payload.max_tokens
+            if payload.top_k is not None:
+                request_payload["top_k"] = payload.top_k
+            if payload.frequency_penalty is not None:
+                request_payload["frequency_penalty"] = payload.frequency_penalty
+            if payload.presence_penalty is not None:
+                request_payload["presence_penalty"] = payload.presence_penalty
+            if payload.context_length is not None:
+                request_payload["context_length"] = payload.context_length
+            if payload.repeat_penalty is not None:
+                request_payload["repeat_penalty"] = payload.repeat_penalty
+            request_payload.update(
+                {
+                    key: value
+                    for key, value in payload.extra_body.items()
+                    if key not in {"messages", "prompt", "model"}
+                }
+            )
+            try:
+                request_payload = apply_runtime_parameter_policy_payload(
+                    request_payload,
+                    endpoint_runtime_policy(endpoint),
+                )
+            except ValueError as error:
+                return _error(
+                    422,
+                    str(error),
+                    code="parameter_policy_violation",
+                )
+            session_id = ensure_session(credential, endpoint)
+            request_id = "agent-" + uuid4().hex
             task = hypervisor_service.submit(
                 TaskRequest(
                     task_type="llm_text.generate",

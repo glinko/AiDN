@@ -49,13 +49,15 @@ class RuntimeParameterPolicy(BaseModel):
         return self
 
 
-# Canonical names are intentionally small and stable.  Provider plugins map
+# Canonical names are intentionally small and stable. Provider plugins map
 # these to their native options (Ollama num_ctx/num_predict, llama.cpp
-# --ctx-size/n_predict, and OpenAI-compatible max_tokens/etc.).
+# --ctx-size/n_predict, and OpenAI-compatible max_tokens/top_k/penalties).
 _DEFAULTS: dict[str, dict[str, dict[str, Any]]] = {
     "ollama": {
         "temperature": {"value": 0.7, "consumer_editable": True, "min": 0.0, "max": 2.0},
         "top_p": {"value": 0.9, "consumer_editable": True, "min": 0.0, "max": 1.0},
+        "top_k": {"value": 40, "consumer_editable": True, "min": 1, "max": 100000},
+        "repeat_penalty": {"value": 1.1, "consumer_editable": True, "min": 0.0, "max": 10.0},
         "max_tokens": {"value": 512, "consumer_editable": True, "min": 1, "max": 32768},
         "context_length": {"value": 4096, "consumer_editable": False, "min": 512, "max": 131072},
         "gpu_memory_utilization": {"value": 0.9, "consumer_editable": False, "min": 0.1, "max": 0.99},
@@ -63,6 +65,8 @@ _DEFAULTS: dict[str, dict[str, dict[str, Any]]] = {
     "llama.cpp": {
         "temperature": {"value": 0.7, "consumer_editable": True, "min": 0.0, "max": 2.0},
         "top_p": {"value": 0.9, "consumer_editable": True, "min": 0.0, "max": 1.0},
+        "top_k": {"value": 40, "consumer_editable": True, "min": 1, "max": 100000},
+        "repeat_penalty": {"value": 1.1, "consumer_editable": True, "min": 0.0, "max": 10.0},
         "max_tokens": {"value": 512, "consumer_editable": True, "min": 1, "max": 32768},
         "context_length": {"value": 4096, "consumer_editable": False, "min": 512, "max": 131072},
         "gpu_layers": {"value": 99, "consumer_editable": False, "min": 0, "max": 999},
@@ -70,6 +74,9 @@ _DEFAULTS: dict[str, dict[str, dict[str, Any]]] = {
     "vllm": {
         "temperature": {"value": 0.7, "consumer_editable": True, "min": 0.0, "max": 2.0},
         "top_p": {"value": 0.9, "consumer_editable": True, "min": 0.0, "max": 1.0},
+        "top_k": {"value": 40, "consumer_editable": True, "min": 1, "max": 100000},
+        "frequency_penalty": {"value": 0.0, "consumer_editable": True, "min": -2.0, "max": 2.0},
+        "presence_penalty": {"value": 0.0, "consumer_editable": True, "min": -2.0, "max": 2.0},
         "max_tokens": {"value": 512, "consumer_editable": True, "min": 1, "max": 32768},
         "context_length": {"value": 8192, "consumer_editable": False, "min": 512, "max": 131072},
         "gpu_memory_utilization": {"value": 0.9, "consumer_editable": False, "min": 0.1, "max": 0.99},
@@ -129,15 +136,60 @@ def policy_json(policy: dict[str, RuntimeParameterPolicy]) -> dict[str, dict[str
     }
 
 
-def apply_runtime_parameter_policy(task: TaskRequest, bundle: BundleConfig) -> TaskRequest:
-    """Return a request with policy defaults applied and locked overrides rejected."""
+def marketplace_parameter_policy(
+    policy: dict[str, RuntimeParameterPolicy] | dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Return the public, machine-readable parameter contract for an Endpoint.
 
-    if not bundle.runtime_parameter_policy:
-        return task
-    payload = dict(task.payload)
-    for name, setting in bundle.runtime_parameter_policy.items():
-        if name in payload:
-            requested = payload[name]
+    ``runtime_parameter_policy`` is the signed/internal representation.  The
+    Marketplace gets an intentionally explicit projection so a consumer does
+    not need to infer checkbox semantics from ``consumer_editable``.
+    """
+
+    parameters: list[dict[str, Any]] = []
+    for name, raw in (policy or {}).items():
+        setting = (
+            raw
+            if isinstance(raw, RuntimeParameterPolicy)
+            else RuntimeParameterPolicy.model_validate(raw)
+        )
+        parameters.append(
+            {
+                "name": name,
+                "default": setting.value,
+                "mutable": setting.consumer_editable,
+                "locked": not setting.consumer_editable,
+                "minimum": setting.minimum,
+                "maximum": setting.maximum,
+            }
+        )
+    parameters.sort(key=lambda item: item["name"])
+    return {
+        "version": "runtime-parameters.v1",
+        "parameters": parameters,
+    }
+
+
+def apply_runtime_parameter_policy_payload(
+    payload: dict[str, Any],
+    policy: dict[str, RuntimeParameterPolicy] | dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Apply defaults and enforce the operator's consumer override boundary."""
+
+    if not policy:
+        return dict(payload)
+    normalized = {
+        name: (
+            setting
+            if isinstance(setting, RuntimeParameterPolicy)
+            else RuntimeParameterPolicy.model_validate(setting)
+        )
+        for name, setting in policy.items()
+    }
+    result = dict(payload)
+    for name, setting in normalized.items():
+        if name in result:
+            requested = result[name]
             if not setting.consumer_editable and requested != setting.value:
                 raise ValueError(
                     f"runtime parameter '{name}' is locked by the operator"
@@ -150,9 +202,28 @@ def apply_runtime_parameter_policy(task: TaskRequest, bundle: BundleConfig) -> T
                 if not isinstance(requested, (int, float)) or isinstance(requested, bool):
                     raise ValueError(f"runtime parameter '{name}' must be numeric")
                 if setting.minimum is not None and requested < setting.minimum:
-                    raise ValueError(f"runtime parameter '{name}' is below the operator minimum")
+                    raise ValueError(
+                        f"runtime parameter '{name}' is below the operator minimum"
+                    )
                 if setting.maximum is not None and requested > setting.maximum:
-                    raise ValueError(f"runtime parameter '{name}' is above the operator maximum")
+                    raise ValueError(
+                        f"runtime parameter '{name}' is above the operator maximum"
+                    )
         else:
-            payload[name] = setting.value
-    return task.model_copy(update={"payload": payload})
+            result[name] = setting.value
+    return result
+
+
+def apply_runtime_parameter_policy(
+    task: TaskRequest,
+    bundle: BundleConfig,
+    endpoint_policy: dict[str, RuntimeParameterPolicy] | dict[str, Any] | None = None,
+) -> TaskRequest:
+    """Return a request with policy defaults applied and locked overrides rejected."""
+
+    policy = endpoint_policy or bundle.runtime_parameter_policy
+    if not policy:
+        return task
+    return task.model_copy(
+        update={"payload": apply_runtime_parameter_policy_payload(task.payload, policy)}
+    )

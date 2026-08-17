@@ -20,6 +20,7 @@ def canonical_configuration_payload(
     session: dict | None = None,
     execution: dict | None = None,
     profile: dict | None = None,
+    runtime_parameter_policy: dict | None = None,
 ) -> dict:
     payload = {
         "bundle_hash": bundle_hash,
@@ -34,6 +35,8 @@ def canonical_configuration_payload(
     marketplace_description = (profile or {}).get("marketplace_description")
     if marketplace_description is not None:
         payload["marketplace_description"] = marketplace_description
+    if runtime_parameter_policy:
+        payload["runtime_parameter_policy"] = runtime_parameter_policy
     return payload
 
 
@@ -63,6 +66,7 @@ def legacy_canonical_configuration_payload(
     pricing: dict,
     session: dict | None = None,
     execution: dict | None = None,
+    runtime_parameter_policy: dict | None = None,
 ) -> dict:
     """Build the pre-marketplace-description publication payload.
 
@@ -80,6 +84,7 @@ def legacy_canonical_configuration_payload(
         pricing=pricing,
         session=session,
         execution=execution,
+        runtime_parameter_policy=runtime_parameter_policy,
     )
 
 
@@ -93,6 +98,7 @@ def legacy_configuration_hash_for_publication(
     pricing: dict,
     session: dict | None = None,
     execution: dict | None = None,
+    runtime_parameter_policy: dict | None = None,
 ) -> str:
     """Return the compatibility hash accepted by pre-marketplace nodes."""
     return configuration_hash_for_publication(
@@ -105,6 +111,7 @@ def legacy_configuration_hash_for_publication(
             pricing=pricing,
             session=session,
             execution=execution,
+            runtime_parameter_policy=runtime_parameter_policy,
         )
     )
 
@@ -132,6 +139,7 @@ class PublishedEndpointConfiguration(BaseModel):
     pricing: dict = Field(default_factory=dict)
     session: dict = Field(default_factory=dict)
     execution: dict = Field(default_factory=dict)
+    runtime_parameter_policy: dict = Field(default_factory=dict)
     validation_requirement: dict = Field(default_factory=dict)
     published_at: str
     sequence: int = Field(ge=1)
@@ -170,6 +178,7 @@ class PublishedEndpointConfiguration(BaseModel):
             session=self.session,
             execution=self.execution,
             profile=self.profile,
+            runtime_parameter_policy=self.runtime_parameter_policy,
         )
         expected_hashes = {configuration_hash_for_publication(canonical_payload)}
         if self.local_agent_use:

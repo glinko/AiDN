@@ -344,6 +344,10 @@ def _local_publication_configuration_hash(manifest) -> str:
         session=manifest.session.model_dump(mode="json"),
         execution=_execution_payload_for_manifest(manifest),
         profile=manifest.profile.model_dump(mode="json"),
+        runtime_parameter_policy={
+            key: value.model_dump(mode="json", by_alias=True)
+            for key, value in manifest.runtime_parameter_policy.items()
+        },
     )
     return configuration_hash_for_publication(payload)
 
@@ -391,6 +395,7 @@ def _snapshot_publication_configuration_hash(manifest, snapshot) -> str:
                 manifest.execution_strategy,
             ),
             "proxy_target": snapshot.proxy_target,
+            "runtime_parameter_policy": snapshot.runtime_parameter_policy,
         }
     )
     return _local_publication_configuration_hash(snapshot_manifest)

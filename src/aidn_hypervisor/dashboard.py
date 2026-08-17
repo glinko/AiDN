@@ -374,6 +374,7 @@ def _canonical_candidate_row(
         "resource_type": candidate_advertisement["resource_type"],
         "visibility": candidate_advertisement["visibility"],
         "owner_wallet": candidate_advertisement.get("owner_wallet"),
+        "parameter_policy": candidate_advertisement.get("parameter_policy", {}),
         "pricing": advertisement["pricing"],
         "rating": advertisement["rating"],
         "reputation": _reputation_block(advertisement),

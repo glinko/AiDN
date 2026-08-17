@@ -126,3 +126,4 @@ class CanonicalAdvertisementRecord(BaseModel):
     implementation_profile_hash: str | None = None
     visibility: str
     signature_scope: str
+    parameter_policy: dict = Field(default_factory=dict)

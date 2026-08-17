@@ -5,7 +5,9 @@ from aidn_hypervisor.model_install_service import ModelInstallService
 from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
 from aidn_hypervisor.runtime_parameter_policy import (
     apply_runtime_parameter_policy,
+    apply_runtime_parameter_policy_payload,
     default_runtime_parameter_policy,
+    marketplace_parameter_policy,
 )
 
 
@@ -52,6 +54,34 @@ def test_editable_temperature_is_range_checked() -> None:
                 payload={"prompt": "hello", "temperature": 3.0},
             ),
             _bundle(),
+        )
+
+
+def test_marketplace_projection_makes_mutability_explicit() -> None:
+    projection = marketplace_parameter_policy(default_runtime_parameter_policy("llama.cpp"))
+
+    assert projection["version"] == "runtime-parameters.v1"
+    parameters = {item["name"]: item for item in projection["parameters"]}
+    assert parameters["temperature"]["default"] == 0.7
+    assert parameters["temperature"]["mutable"] is True
+    assert parameters["temperature"]["locked"] is False
+    assert parameters["context_length"]["mutable"] is False
+    assert parameters["context_length"]["locked"] is True
+
+
+def test_payload_policy_applies_defaults_and_rejects_locked_remote_override() -> None:
+    policy = default_runtime_parameter_policy("llama.cpp")
+    effective = apply_runtime_parameter_policy_payload(
+        {"messages": [], "temperature": 0.25},
+        policy,
+    )
+
+    assert effective["temperature"] == 0.25
+    assert effective["context_length"] == 4096
+    with pytest.raises(ValueError, match="context_length.*locked"):
+        apply_runtime_parameter_policy_payload(
+            {"context_length": 8192},
+            policy,
         )
 
 

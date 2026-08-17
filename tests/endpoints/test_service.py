@@ -8,6 +8,7 @@ from aidn_hypervisor.endpoints.models import (
 )
 from aidn_hypervisor.endpoints.service import EndpointService, EndpointStateError
 from aidn_hypervisor.endpoints.store import EndpointStore
+from aidn_hypervisor.runtime_parameter_policy import default_runtime_parameter_policy
 
 
 def test_create_endpoint_generates_initial_configuration_snapshot() -> None:
@@ -192,6 +193,39 @@ def test_update_endpoint_runtime_creates_new_configuration_hash() -> None:
     )
 
     assert updated.endpoint.configuration_hash != created.endpoint.configuration_hash
+    assert len(service.list_configuration_snapshots(created.endpoint.endpoint_id)) == 2
+
+
+def test_endpoint_parameter_policy_is_committed_and_revisioned() -> None:
+    service = EndpointService(EndpointStore())
+    policy = default_runtime_parameter_policy("llama.cpp")
+    created = service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="bundle-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Operator LLM",
+            model_class="llm.chat",
+            capabilities=["llm.chat"],
+            runtime_parameter_policy=policy,
+        )
+    )
+
+    assert created.endpoint.runtime_parameter_policy["context_length"].value == 4096
+    assert created.snapshot.runtime_parameter_policy["temperature"].consumer_editable is True
+
+    updated = service.update_endpoint(
+        UpdateEndpointCommand(
+            endpoint_id=created.endpoint.endpoint_id,
+            runtime_parameter_policy={
+                **policy,
+                "temperature": policy["temperature"].model_copy(update={"value": 0.2}),
+            },
+        )
+    )
+
+    assert updated.endpoint.configuration_hash != created.endpoint.configuration_hash
+    assert updated.endpoint.runtime_parameter_policy["temperature"].value == 0.2
     assert len(service.list_configuration_snapshots(created.endpoint.endpoint_id)) == 2
 
 

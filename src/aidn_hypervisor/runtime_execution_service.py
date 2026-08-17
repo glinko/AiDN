@@ -255,7 +255,11 @@ class RuntimeExecutionService:
             raise RuntimeError("Session service is not configured")
         self._host.queue.transition_status(task_id, "admitted")
         try:
-            effective_request = apply_runtime_parameter_policy(task.request, bundle)
+            effective_request = apply_runtime_parameter_policy(
+                task.request,
+                bundle,
+                getattr(endpoint_manifest, "runtime_parameter_policy", None),
+            )
             self._host.queue.transition_status(task_id, "running")
             self.touch_task_session(task.request)
             session = session_service.store.get_session(str(session_id))
@@ -536,11 +540,16 @@ class RuntimeExecutionService:
             },
         )
         try:
+            effective_request = apply_runtime_parameter_policy(
+                task.request,
+                bundle,
+                getattr(endpoint_manifest, "runtime_parameter_policy", None),
+            )
             self._host.queue.transition_status(task_id, "running")
             self.touch_task_session(task.request)
             self._host._task_results[task_id] = self.invoke_proxy_endpoint(
                 endpoint_manifest,
-                task.request,
+                effective_request,
             )
             self._host.queue.transition_status(task_id, "completed")
             self._host.record_event(

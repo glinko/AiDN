@@ -65,6 +65,7 @@ class EndpointService:
             proxy_target=None,
             execution_config=execution_config,
             profile=cmd.profile,
+            runtime_parameter_policy=cmd.runtime_parameter_policy,
         )
         manifest = EndpointManifest(
             endpoint_id=endpoint_id,
@@ -77,6 +78,7 @@ class EndpointService:
             display_name=cmd.display_name,
             model_class=cmd.model_class,
             capabilities=cmd.capabilities,
+            runtime_parameter_policy=cmd.runtime_parameter_policy,
             profile=cmd.profile,
             runtime=cmd.runtime,
             publication=cmd.publication,
@@ -94,6 +96,7 @@ class EndpointService:
             runtime_binding_id=cmd.runtime_binding_id,
             created_at=created_at,
             profile=cmd.profile,
+            runtime_parameter_policy=cmd.runtime_parameter_policy,
             runtime=cmd.runtime,
             publication=cmd.publication,
             pricing=cmd.pricing,
@@ -114,13 +117,18 @@ class EndpointService:
         next_pricing = cmd.pricing or current.pricing
         next_session = cmd.session or current.session
         next_profile = cmd.profile or current.profile
+        next_runtime_parameter_policy = (
+            cmd.runtime_parameter_policy
+            if cmd.runtime_parameter_policy is not None
+            else current.runtime_parameter_policy
+        )
         next_validation = cmd.validation or current.validation
         next_execution_strategy = cmd.execution_strategy or current.execution_strategy
         next_proxy_target = cmd.proxy_target if cmd.proxy_target is not None else current.proxy_target
         should_rotate_config = (
             cmd.profile is not None
-            or
-            cmd.runtime is not None
+            or cmd.runtime_parameter_policy is not None
+            or cmd.runtime is not None
             or cmd.publication is not None
             or cmd.pricing is not None
             or cmd.session is not None
@@ -148,6 +156,7 @@ class EndpointService:
                 proxy_target=next_proxy_target,
                 execution_config=execution_config,
                 profile=next_profile,
+                runtime_parameter_policy=next_runtime_parameter_policy,
             )
             snapshot = EndpointConfigurationSnapshot(
                 configuration_hash=configuration_hash,
@@ -156,6 +165,7 @@ class EndpointService:
                 runtime_binding_id=current.runtime_binding_id,
                 created_at=datetime.now(UTC).isoformat(),
                 profile=next_profile,
+                runtime_parameter_policy=next_runtime_parameter_policy,
                 runtime=next_runtime,
                 publication=next_publication,
                 pricing=next_pricing,
@@ -168,6 +178,7 @@ class EndpointService:
             update={
                 "display_name": cmd.display_name or current.display_name,
                 "profile": next_profile,
+                "runtime_parameter_policy": next_runtime_parameter_policy,
                 "runtime": next_runtime,
                 "publication": next_publication,
                 "pricing": next_pricing,
@@ -236,6 +247,7 @@ class EndpointService:
             proxy_target=proxy_target,
             execution_config=execution_config,
             profile=current.profile,
+            runtime_parameter_policy=current.runtime_parameter_policy,
         )
         snapshot = EndpointConfigurationSnapshot(
             configuration_hash=configuration_hash,
@@ -244,6 +256,7 @@ class EndpointService:
             runtime_binding_id=current.runtime_binding_id,
             created_at=attached_at,
             profile=current.profile,
+            runtime_parameter_policy=current.runtime_parameter_policy,
             runtime=current.runtime,
             publication=current.publication,
             pricing=current.pricing,
@@ -288,6 +301,7 @@ class EndpointService:
             proxy_target=None,
             execution_config=execution_config,
             profile=current.profile,
+            runtime_parameter_policy=current.runtime_parameter_policy,
         )
         snapshot = EndpointConfigurationSnapshot(
             configuration_hash=configuration_hash,
@@ -296,6 +310,7 @@ class EndpointService:
             runtime_binding_id=current.runtime_binding_id,
             created_at=detached_at,
             profile=current.profile,
+            runtime_parameter_policy=current.runtime_parameter_policy,
             runtime=current.runtime,
             publication=current.publication,
             pricing=current.pricing,
@@ -433,6 +448,7 @@ class EndpointService:
         proxy_target,
         execution_config,
         profile,
+        runtime_parameter_policy,
     ) -> str:
         payload = {
             "bundle_hash": bundle_hash,
@@ -448,6 +464,11 @@ class EndpointService:
             ),
             "execution_config": execution_config,
         }
+        if runtime_parameter_policy:
+            payload["runtime_parameter_policy"] = {
+                key: value.model_dump(mode="json", by_alias=True)
+                for key, value in runtime_parameter_policy.items()
+            }
         marketplace_description = profile.model_dump(mode="json").get(
             "marketplace_description"
         )

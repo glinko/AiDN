@@ -162,6 +162,10 @@ def test_project_canonical_advertisements_maps_published_records() -> None:
             "implementation_profile_hash": records[0].implementation_profile_hash,
             "visibility": "public",
             "signature_scope": "configuration_publication",
+            "parameter_policy": {
+                "version": "runtime-parameters.v1",
+                "parameters": [],
+            },
         }
     ]
 

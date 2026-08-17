@@ -22,6 +22,7 @@ from aidn_hypervisor.registry_models import (
 )
 from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.reputation import build_reputation_profile
+from aidn_hypervisor.runtime_parameter_policy import marketplace_parameter_policy
 
 
 def _empty_resource_summary() -> dict[str, dict[str, float | int]]:
@@ -59,6 +60,9 @@ class NetworkProjectionService:
                 status=record.status,
                 visibility=record.publication.get("visibility", "private"),
                 model_class=record.model_class,
+                parameter_policy=marketplace_parameter_policy(
+                    record.runtime_parameter_policy
+                ),
                 signed_publication=(
                     record.model_dump(mode="json")
                     if (

@@ -187,6 +187,7 @@ class TaskExecutionService:
                 bundle,
                 task.request,
                 runtime,
+                endpoint_manifest=endpoint_manifest,
             )
             self._host._register_bundle_success(bundle.bundle_id, runtime)
             runtime.health_status = "healthy"
@@ -259,6 +260,7 @@ class TaskExecutionService:
         bundle: BundleConfig,
         task: TaskRequest,
         runtime: RuntimeHandle,
+        endpoint_manifest=None,
     ) -> dict:
         policy = self.retry_policy_for(plugin, "invoke")
         retry_exceptions = policy["retry_exceptions"]
@@ -266,7 +268,11 @@ class TaskExecutionService:
 
         for attempt in range(1, policy["max_attempts"] + 1):
             try:
-                effective_task = apply_runtime_parameter_policy(task, bundle)
+                effective_task = apply_runtime_parameter_policy(
+                    task,
+                    bundle,
+                    getattr(endpoint_manifest, "runtime_parameter_policy", None),
+                )
                 return plugin.invoke(effective_task, runtime)
             except Exception as error:
                 last_error = error

@@ -1270,6 +1270,70 @@ function EndpointsScreen({ endpoints, isLoading, error, onNavigate, onRefresh, o
   )
 }
 
+type EndpointParameterDraft = {
+  name: string
+  value: string
+  consumerEditable: boolean
+  minimum?: number
+  maximum?: number
+}
+
+const endpointParameterDefaults: Record<string, EndpointParameterDraft[]> = {
+  llama: [
+    { name: 'temperature', value: '0.7', consumerEditable: true, minimum: 0, maximum: 2 },
+    { name: 'top_p', value: '0.9', consumerEditable: true, minimum: 0, maximum: 1 },
+    { name: 'top_k', value: '40', consumerEditable: true, minimum: 1, maximum: 100000 },
+    { name: 'repeat_penalty', value: '1.1', consumerEditable: true, minimum: 0, maximum: 10 },
+    { name: 'max_tokens', value: '512', consumerEditable: true, minimum: 1, maximum: 32768 },
+    { name: 'context_length', value: '4096', consumerEditable: false, minimum: 512, maximum: 131072 },
+    { name: 'gpu_layers', value: '99', consumerEditable: false, minimum: 0, maximum: 999 },
+  ],
+  ollama: [
+    { name: 'temperature', value: '0.7', consumerEditable: true, minimum: 0, maximum: 2 },
+    { name: 'top_p', value: '0.9', consumerEditable: true, minimum: 0, maximum: 1 },
+    { name: 'top_k', value: '40', consumerEditable: true, minimum: 1, maximum: 100000 },
+    { name: 'repeat_penalty', value: '1.1', consumerEditable: true, minimum: 0, maximum: 10 },
+    { name: 'max_tokens', value: '512', consumerEditable: true, minimum: 1, maximum: 32768 },
+    { name: 'context_length', value: '4096', consumerEditable: false, minimum: 512, maximum: 131072 },
+    { name: 'gpu_memory_utilization', value: '0.9', consumerEditable: false, minimum: 0.1, maximum: 0.99 },
+  ],
+  vllm: [
+    { name: 'temperature', value: '0.7', consumerEditable: true, minimum: 0, maximum: 2 },
+    { name: 'top_p', value: '0.9', consumerEditable: true, minimum: 0, maximum: 1 },
+    { name: 'top_k', value: '40', consumerEditable: true, minimum: 1, maximum: 100000 },
+    { name: 'frequency_penalty', value: '0', consumerEditable: true, minimum: -2, maximum: 2 },
+    { name: 'presence_penalty', value: '0', consumerEditable: true, minimum: -2, maximum: 2 },
+    { name: 'max_tokens', value: '512', consumerEditable: true, minimum: 1, maximum: 32768 },
+    { name: 'context_length', value: '8192', consumerEditable: false, minimum: 512, maximum: 131072 },
+    { name: 'gpu_memory_utilization', value: '0.9', consumerEditable: false, minimum: 0.1, maximum: 0.99 },
+  ],
+}
+
+function endpointProviderKey(providerType: string): string {
+  const normalized = providerType.toLowerCase()
+  if (normalized.includes('ollama')) return 'ollama'
+  if (normalized.includes('vllm')) return 'vllm'
+  if (normalized.includes('llama')) return 'llama'
+  return ''
+}
+
+function endpointParameterDrafts(bundle: Bundle | undefined): EndpointParameterDraft[] {
+  const source = getRecord(bundle)
+  const rawPolicy = getRecord(source?.runtime_parameter_policy)
+  const provider = endpointProviderKey(getText(source, 'provider_type'))
+  const base = endpointParameterDefaults[provider] ?? []
+  return base.map((fallback) => {
+    const persisted = getRecord(rawPolicy?.[fallback.name])
+    return {
+      ...fallback,
+      value: persisted?.value === undefined ? fallback.value : String(persisted.value),
+      consumerEditable: typeof persisted?.consumer_editable === 'boolean' ? persisted.consumer_editable : fallback.consumerEditable,
+      minimum: typeof persisted?.min === 'number' ? persisted.min : fallback.minimum,
+      maximum: typeof persisted?.max === 'number' ? persisted.max : fallback.maximum,
+    }
+  })
+}
+
 function EndpointDraftControl({ ownerWallet, bundles, bindings, onRefresh }: { ownerWallet: string; bundles: Bundle[]; bindings: DashboardRecord[]; onRefresh: () => void }) {
   const [displayName, setDisplayName] = useState('New Endpoint')
   const [bindingId, setBindingId] = useState('')
@@ -1280,6 +1344,7 @@ function EndpointDraftControl({ ownerWallet, bundles, bindings, onRefresh }: { o
   const [sharedWalletIds, setSharedWalletIds] = useState('')
   const [acceptsExternal, setAcceptsExternal] = useState(false)
   const [validationEnabled, setValidationEnabled] = useState(false)
+  const [parameterDrafts, setParameterDrafts] = useState<EndpointParameterDraft[]>([])
   const [fixedPrice, setFixedPrice] = useState('0')
   const [minimumDeposit, setMinimumDeposit] = useState('0')
   const [marketplaceHtml, setMarketplaceHtml] = useState('')
@@ -1308,6 +1373,13 @@ function EndpointDraftControl({ ownerWallet, bundles, bindings, onRefresh }: { o
     if (!sharedWalletIds && ownerWallet) setSharedWalletIds(ownerWallet)
   }, [ownerWallet, sharedWalletIds])
 
+  useEffect(() => {
+    const binding = bindings.find((candidate) => getText(candidate, 'runtime_binding_id') === bindingId)
+    const selectedBundleId = getText(binding, 'compatibility_bundle_id') || bundleId
+    const selectedBundle = bundles.find((candidate) => candidate.bundle_id === selectedBundleId)
+    setParameterDrafts(endpointParameterDrafts(selectedBundle))
+  }, [bindingId, bundleId, bindings, bundles])
+
   async function createDraft() {
     if (!ownerWallet) {
       setMessage('Configure the owner Wallet before creating an Endpoint draft.')
@@ -1329,8 +1401,14 @@ function EndpointDraftControl({ ownerWallet, bundles, bindings, onRefresh }: { o
         bundle_id: bundleId,
         bundle_hash: bundleHash,
         display_name: displayName.trim(),
-        model_class: modelClass.trim() || 'llm.chat',
-        capabilities: [modelClass.trim() || 'llm.chat'],
+         model_class: modelClass.trim() || 'llm.chat',
+         capabilities: [modelClass.trim() || 'llm.chat'],
+         runtime_parameter_policy: Object.fromEntries(parameterDrafts.map((parameter) => [parameter.name, {
+           value: Number(parameter.value),
+           consumer_editable: parameter.consumerEditable,
+           min: parameter.minimum,
+           max: parameter.maximum,
+         }])),
         profile: marketplaceHtml.trim()
           ? { marketplace_description: { html: marketplaceHtml } }
           : {},
@@ -1399,6 +1477,13 @@ function EndpointDraftControl({ ownerWallet, bundles, bindings, onRefresh }: { o
           </div>
           {marketplacePreview?.html ? <div className="rounded-lg border border-emerald-300/20 bg-emerald-300/[0.04] p-4" aria-live="polite"><p className="eyebrow text-emerald-200">Server preview</p><div className="prose prose-invert mt-2 max-w-none text-sm" dangerouslySetInnerHTML={{ __html: marketplacePreview.html }} /></div> : null}
         </div>
+        <div className="grid gap-3 lg:col-span-4">
+          <div><p className="eyebrow text-cyan-100">Request parameter policy</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Set the operator default for each supported parameter. Check <strong className="text-slate-200">Lock for consumers</strong> when a remote request must not override it; locked launch/resource values are normally required for VRAM safety.</p></div>
+          <div className="overflow-x-auto rounded-lg border border-border/70 bg-[#07111d]">
+            <div className="grid min-w-[42rem] grid-cols-[1.1fr_1fr_1fr_8rem] gap-3 border-b border-border/70 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.12em] text-slate-500"><span>Parameter</span><span>Default value</span><span>Consumer access</span><span>Bounds</span></div>
+            {parameterDrafts.map((parameter) => <div key={parameter.name} className="grid min-w-[42rem] grid-cols-[1.1fr_1fr_1fr_8rem] items-center gap-3 border-b border-border/50 px-3 py-2 last:border-b-0"><span className="font-mono text-xs text-slate-200">{parameter.name}</span><input inputMode="decimal" value={parameter.value} onChange={(event) => setParameterDrafts((current) => current.map((item) => item.name === parameter.name ? { ...item, value: event.target.value } : item))} className="h-9 rounded-md border border-input bg-[#091725] px-2 font-mono text-xs text-white outline-none focus:border-cyan-300" /><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={!parameter.consumerEditable} onChange={(event) => setParameterDrafts((current) => current.map((item) => item.name === parameter.name ? { ...item, consumerEditable: !event.target.checked } : item))} />Lock for consumers</label><span className="font-mono text-[10px] text-slate-500">{parameter.minimum ?? '—'} … {parameter.maximum ?? '—'}</span></div>)}
+          </div>
+        </div>
         <div className="flex flex-col gap-2 lg:col-span-3"><div className="flex flex-wrap items-center gap-3"><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={acceptsExternal} onChange={(event) => setAcceptsExternal(event.target.checked)} />Accept external requests</label><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={validationEnabled} onChange={(event) => setValidationEnabled(event.target.checked)} />Require validation</label></div><p className="text-xs leading-5 text-muted-foreground">Local agent access is managed separately after the draft is created, so it never becomes part of the published configuration.</p></div>
         <div className="flex items-end justify-end"><Button className="w-full bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy} onClick={() => void createDraft()}><RadioTower />{busy ? 'Creating...' : 'Create draft'}</Button></div>
         {message ? <div className="lg:col-span-4"><OperationNotice message={message} onDismiss={() => setMessage(null)} /></div> : null}
@@ -1436,6 +1521,14 @@ function ModelsWorkspace({ installs, workspace, isLoading, error, onRefresh, onN
   const [temperatureEditable, setTemperatureEditable] = useState(true)
   const [topP, setTopP] = useState('0.9')
   const [topPEditable, setTopPEditable] = useState(true)
+  const [topK, setTopK] = useState('40')
+  const [topKEditable, setTopKEditable] = useState(true)
+  const [repeatPenalty, setRepeatPenalty] = useState('1.1')
+  const [repeatPenaltyEditable, setRepeatPenaltyEditable] = useState(true)
+  const [frequencyPenalty, setFrequencyPenalty] = useState('0')
+  const [frequencyPenaltyEditable, setFrequencyPenaltyEditable] = useState(true)
+  const [presencePenalty, setPresencePenalty] = useState('0')
+  const [presencePenaltyEditable, setPresencePenaltyEditable] = useState(true)
   const [maxTokens, setMaxTokens] = useState('512')
   const [maxTokensEditable, setMaxTokensEditable] = useState(true)
   const [contextLength, setContextLength] = useState('4096')
@@ -1489,13 +1582,23 @@ function ModelsWorkspace({ installs, workspace, isLoading, error, onRefresh, onN
       if (!Number.isFinite(value)) throw new Error(`${label} must be a number.`)
       return value
     }
+    const provider = endpointProviderKey(providerType)
+    if (!provider) return {}
     const policy: DashboardRecord = {
       temperature: { value: number(temperature, 'Temperature'), consumer_editable: temperatureEditable, min: 0, max: 2 },
       top_p: { value: number(topP, 'Top P'), consumer_editable: topPEditable, min: 0, max: 1 },
+      top_k: { value: Math.round(number(topK, 'Top K')), consumer_editable: topKEditable, min: 1, max: 100000 },
       max_tokens: { value: Math.round(number(maxTokens, 'Max tokens')), consumer_editable: maxTokensEditable, min: 1, max: 32768 },
       context_length: { value: Math.round(number(contextLength, 'Context length')), consumer_editable: contextLengthEditable, min: 512, max: 131072 },
     }
-    if (providerType === 'ollama' || providerType === 'vllm') {
+    if (provider === 'llama' || provider === 'ollama') {
+      policy.repeat_penalty = { value: number(repeatPenalty, 'Repeat penalty'), consumer_editable: repeatPenaltyEditable, min: 0, max: 10 }
+    }
+    if (provider === 'vllm') {
+      policy.frequency_penalty = { value: number(frequencyPenalty, 'Frequency penalty'), consumer_editable: frequencyPenaltyEditable, min: -2, max: 2 }
+      policy.presence_penalty = { value: number(presencePenalty, 'Presence penalty'), consumer_editable: presencePenaltyEditable, min: -2, max: 2 }
+    }
+    if (provider === 'ollama' || provider === 'vllm') {
       policy.gpu_memory_utilization = { value: number(gpuMemoryUtilization, 'GPU memory utilization'), consumer_editable: gpuMemoryEditable, min: 0.1, max: 0.99 }
     }
     return policy
@@ -1606,7 +1709,7 @@ function ModelsWorkspace({ installs, workspace, isLoading, error, onRefresh, onN
     {error && !workspace ? <PanelError title="Model workspace is unavailable" error={error} onRetry={onRefresh} /> : null}
     {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
     {registeredInstalls.length > 0 ? <Card className="border-emerald-300/25 bg-emerald-300/[0.035] py-0 shadow-none"><CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><CheckCircle2 className="size-4 text-emerald-300" /><p className="eyebrow text-emerald-200">Model ready</p><StatusBadge value="registered" /></div><CardTitle className="mt-2 text-lg font-semibold text-white">Create an Endpoint for this Bundle</CardTitle><p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">The model is materialized and its Bundle is registered. An Endpoint is the operator-facing offer: set visibility, pricing and an optional marketplace description, then publish it.</p><div className="mt-3 flex flex-wrap gap-2 font-mono text-[10px] uppercase tracking-[0.08em] text-emerald-100/75"><span className="rounded-md border border-emerald-300/20 bg-emerald-300/[0.06] px-2 py-1 text-emerald-200">Model materialized</span><span className="rounded-md border border-emerald-300/20 bg-emerald-300/[0.06] px-2 py-1 text-emerald-200">Bundle registered</span><span className="rounded-md border border-cyan-300/25 bg-cyan-300/[0.06] px-2 py-1 text-cyan-100">Endpoint is next</span></div><p className="mt-3 truncate font-mono text-[11px] text-emerald-100/70">{registeredInstalls.length === 1 ? `Bundle ${getText(registeredInstalls[0], 'bundle_id')}` : `${registeredInstalls.length} registered Bundles ready for Endpoint setup`}</p></div><Button className="shrink-0 bg-cyan-300 text-[#06121d] hover:bg-cyan-200" onClick={() => onNavigate('endpoints')}><RadioTower />Create Endpoint<ChevronRight /></Button></CardContent></Card> : null}
-    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Runtime policy</p><CardTitle className="mt-1 text-lg font-semibold">Operator defaults and customer controls</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">The value is applied when a request omits the parameter. The checkbox is enforced on the node. Keep context length and GPU allocation locked when VRAM is fixed.</p></CardHeader><CardContent className="grid gap-3 p-5 md:grid-cols-2 xl:grid-cols-5"><label className="grid gap-2"><span className="eyebrow">Temperature</span><input type="number" min="0" max="2" step="0.1" value={temperature} onChange={(event) => setTemperature(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /><span className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={temperatureEditable} onChange={(event) => setTemperatureEditable(event.target.checked)} />Customer may change</span></label><label className="grid gap-2"><span className="eyebrow">Top P</span><input type="number" min="0" max="1" step="0.05" value={topP} onChange={(event) => setTopP(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /><span className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={topPEditable} onChange={(event) => setTopPEditable(event.target.checked)} />Customer may change</span></label><label className="grid gap-2"><span className="eyebrow">Max tokens</span><input type="number" min="1" max="32768" step="1" value={maxTokens} onChange={(event) => setMaxTokens(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /><span className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={maxTokensEditable} onChange={(event) => setMaxTokensEditable(event.target.checked)} />Customer may change</span></label><label className="grid gap-2"><span className="eyebrow">Context length</span><input type="number" min="512" max="131072" step="512" value={contextLength} onChange={(event) => setContextLength(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /><span className="flex items-center gap-2 text-xs text-amber-200"><input type="checkbox" checked={contextLengthEditable} onChange={(event) => setContextLengthEditable(event.target.checked)} />Allow VRAM-affecting change</span></label><label className="grid gap-2"><span className="eyebrow">GPU memory utilization</span><input type="number" min="0.1" max="0.99" step="0.05" value={gpuMemoryUtilization} onChange={(event) => setGpuMemoryUtilization(event.target.value)} disabled={providerType === 'llama.cpp'} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300 disabled:opacity-40" /><span className="flex items-center gap-2 text-xs text-amber-200"><input type="checkbox" checked={gpuMemoryEditable} onChange={(event) => setGpuMemoryEditable(event.target.checked)} disabled={providerType === 'llama.cpp'} />Allow change</span></label></CardContent></Card>
+    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Runtime policy</p><CardTitle className="mt-1 text-lg font-semibold">Operator defaults and customer controls</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">The value is applied when a request omits the parameter. The checkbox is enforced on the node. Keep context length and GPU allocation locked when VRAM is fixed.</p></CardHeader><CardContent className="grid gap-3 p-5 md:grid-cols-2 xl:grid-cols-4"><label className="grid gap-2"><span className="eyebrow">Temperature</span><input type="number" min="0" max="2" step="0.1" value={temperature} onChange={(event) => setTemperature(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /><span className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={temperatureEditable} onChange={(event) => setTemperatureEditable(event.target.checked)} />Customer may change</span></label><label className="grid gap-2"><span className="eyebrow">Top P</span><input type="number" min="0" max="1" step="0.05" value={topP} onChange={(event) => setTopP(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /><span className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={topPEditable} onChange={(event) => setTopPEditable(event.target.checked)} />Customer may change</span></label><label className="grid gap-2"><span className="eyebrow">Top K</span><input type="number" min="1" max="100000" step="1" value={topK} onChange={(event) => setTopK(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /><span className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={topKEditable} onChange={(event) => setTopKEditable(event.target.checked)} />Customer may change</span></label><label className="grid gap-2"><span className="eyebrow">Repeat penalty</span><input type="number" min="0" max="10" step="0.05" value={repeatPenalty} onChange={(event) => setRepeatPenalty(event.target.value)} disabled={endpointProviderKey(providerType) === 'vllm'} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300 disabled:opacity-40" /><span className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={repeatPenaltyEditable} onChange={(event) => setRepeatPenaltyEditable(event.target.checked)} disabled={endpointProviderKey(providerType) === 'vllm'} />Customer may change</span></label><label className="grid gap-2"><span className="eyebrow">Frequency penalty</span><input type="number" min="-2" max="2" step="0.05" value={frequencyPenalty} onChange={(event) => setFrequencyPenalty(event.target.value)} disabled={endpointProviderKey(providerType) !== 'vllm'} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300 disabled:opacity-40" /><span className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={frequencyPenaltyEditable} onChange={(event) => setFrequencyPenaltyEditable(event.target.checked)} disabled={endpointProviderKey(providerType) !== 'vllm'} />Customer may change</span></label><label className="grid gap-2"><span className="eyebrow">Presence penalty</span><input type="number" min="-2" max="2" step="0.05" value={presencePenalty} onChange={(event) => setPresencePenalty(event.target.value)} disabled={endpointProviderKey(providerType) !== 'vllm'} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300 disabled:opacity-40" /><span className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={presencePenaltyEditable} onChange={(event) => setPresencePenaltyEditable(event.target.checked)} disabled={endpointProviderKey(providerType) !== 'vllm'} />Customer may change</span></label><label className="grid gap-2"><span className="eyebrow">Max tokens</span><input type="number" min="1" max="32768" step="1" value={maxTokens} onChange={(event) => setMaxTokens(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /><span className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={maxTokensEditable} onChange={(event) => setMaxTokensEditable(event.target.checked)} />Customer may change</span></label><label className="grid gap-2"><span className="eyebrow">Context length</span><input type="number" min="512" max="131072" step="512" value={contextLength} onChange={(event) => setContextLength(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /><span className="flex items-center gap-2 text-xs text-amber-200"><input type="checkbox" checked={contextLengthEditable} onChange={(event) => setContextLengthEditable(event.target.checked)} />Allow VRAM-affecting change</span></label><label className="grid gap-2"><span className="eyebrow">GPU memory utilization</span><input type="number" min="0.1" max="0.99" step="0.05" value={gpuMemoryUtilization} onChange={(event) => setGpuMemoryUtilization(event.target.value)} disabled={endpointProviderKey(providerType) === 'llama'} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300 disabled:opacity-40" /><span className="flex items-center gap-2 text-xs text-amber-200"><input type="checkbox" checked={gpuMemoryEditable} onChange={(event) => setGpuMemoryEditable(event.target.checked)} disabled={endpointProviderKey(providerType) === 'llama'} />Allow change</span></label></CardContent></Card>
     <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Operator inputs</p><CardTitle className="mt-1 text-lg font-semibold">Name the next immutable objects</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">These values stay in the dashboard flow; no terminal prompt is required for Bundle registration, provider materialization, or Runtime Binding.</p></CardHeader><CardContent className="grid gap-3 p-5 lg:grid-cols-4"><label className="grid gap-2"><span className="eyebrow">Bundle ID</span><input value={bundleId} onChange={(event) => setBundleId(event.target.value)} placeholder="bundle-whisper-small" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Capability version</span><input value={capabilityVersion} onChange={(event) => setCapabilityVersion(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2 lg:col-span-2"><span className="eyebrow">Capability definition hash</span><input value={capabilityDefinitionHash} onChange={(event) => setCapabilityDefinitionHash(event.target.value)} placeholder="sha256:..." className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label></CardContent></Card>
     <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Step 1</p><CardTitle className="mt-1 text-lg font-semibold">Install and materialize model</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">Paste a concrete Hugging Face file URL (GGUF for llama.cpp/Ollama) or a repository URL for vLLM. The node resolves and downloads it; the browser never supplies a target path or shell command.</p></CardHeader><CardContent className="grid gap-3 p-5 lg:grid-cols-4"><label className="grid gap-2"><span className="eyebrow">Provider type</span><select value={providerType} onChange={(event) => setProviderType(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300"><option value="">Select Provider</option>{llmPlugins.map((plugin) => <option key={getText(plugin, 'plugin_id')} value={getText(plugin, 'plugin_id')}>{getText(plugin, 'display_name') || getText(plugin, 'plugin_id')}</option>)}</select></label><label className="grid gap-2"><span className="eyebrow">Model ID</span><input value={modelId} onChange={(event) => setModelId(event.target.value)} placeholder="qwen2.5-7b-instruct" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2 lg:col-span-2"><span className="eyebrow">Model page / file URL</span><input value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://huggingface.co/.../resolve/main/model.gguf" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-xs text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Bundle workload</span><input value={workloadType} onChange={(event) => setWorkloadType(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2 lg:col-span-2"><span className="eyebrow">Bundle endpoint</span><input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><div className="flex items-end gap-2"><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy === 'install'} onClick={() => void installModel()}><Database />{busy === 'install' ? 'Queueing...' : 'Queue install'}</Button><Button variant="outline" className="border-border bg-[#091725]" disabled={busy === 'process'} onClick={() => void processInstalls()}><RefreshCw />{busy === 'process' ? 'Running...' : 'Materialize'}</Button></div></CardContent></Card>
     <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Install queue</p><CardTitle className="mt-1 text-lg font-semibold">Model install jobs</CardTitle></CardHeader><CardContent className="divide-y divide-border/70 p-0">{installs.length === 0 ? <p className="px-5 py-6 text-sm text-muted-foreground">No model installs queued.</p> : installs.map((install) => { const id = getText(install, 'install_id'); const status = getText(install, 'install_status') || getText(install, 'status') || 'unknown'; const registered = status === 'registered' && Boolean(getText(install, 'bundle_id')); const canRegister = Boolean(getRecord(install)?.can_register_bundle) || status === 'completed'; return <div key={id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-slate-100">{getText(install, 'model_id')}</p><StatusBadge value={status} /></div><p className="mt-1 break-all font-mono text-[11px] text-slate-500">{getText(install, 'provider_type')} · {id} · {getText(install, 'target_path') || 'target reserved by node'}</p>{registered ? <p className="mt-1 text-xs text-emerald-200">Bundle {getText(install, 'bundle_id')} is ready for Endpoint setup.</p> : null}{getText(install, 'last_error') ? <p className="mt-1 text-xs text-rose-200">{getText(install, 'last_error')}</p> : null}</div>{registered ? <Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" onClick={() => onNavigate('endpoints')}><RadioTower />Create Endpoint</Button> : canRegister ? <Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={busy === `register:${id}`} onClick={() => void registerBundle(install)}><Boxes />Register Bundle</Button> : null}</div> })}</CardContent></Card>
@@ -2794,8 +2897,34 @@ function MarketWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData;
     <div className="flex flex-wrap gap-2"><Button variant="outline" className="border-border bg-[#091725]" onClick={onRefresh}><RefreshCw className={cn(data.market.isFetching && 'animate-spin')} />Refresh catalogue</Button><Button variant="outline" className="border-border bg-[#091725]" onClick={() => onNavigate('endpoints')}><RadioTower />Manage local Endpoints</Button><Button variant="ghost" onClick={() => onNavigate('network')}><Network />Network status</Button></div>
     {(data.market.isLoading || data.remoteEndpoints.isLoading) && !market ? <PanelSkeleton rows={6} /> : null}
     {data.market.error && !market ? <PanelError title="Market catalogue is unavailable" error={data.market.error} onRetry={onRefresh} /> : null}
-    {market ? <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><div className="flex flex-wrap items-end justify-between gap-3"><div><CardTitle className="text-lg font-semibold">Canonical offers</CardTitle><p className="mt-1 text-sm text-muted-foreground">{offers.length} offer(s) across {market.nodes.length} visible node(s)</p></div><StatusBadge value={offers.length > 0 ? 'ready' : 'unavailable'} /></div></CardHeader><CardContent className="divide-y divide-border/70 p-0">{offers.length === 0 ? <EmptyState title="No market offers discovered" detail="Publish a local Endpoint or restore Registry replication to populate the canonical catalogue." actionLabel="Create Endpoint" onAction={() => onNavigate('endpoints')} /> : offers.map((offer, index) => { const nodeId = getText(offer, 'node_id'); const endpointId = getText(offer, 'endpoint_id'); const origin = getText(offer, 'origin') || 'external'; const remote = remotes?.discovered.find((item) => getText(item, 'node_id') === nodeId && getText(item, 'endpoint_id') === endpointId); const attachSource = remote ?? offer; const attached = Boolean(getRecord(attachSource)?.already_attached); const key = `${nodeId}:${endpointId}`; return <div key={`${key}:${index}`} className="grid gap-3 px-5 py-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(9rem,0.7fr)_minmax(8rem,0.6fr)_auto] lg:items-center"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-slate-100">{getText(offer, 'display_name') || endpointId || getText(offer, 'bundle_id')}</p><StatusBadge value={origin === 'own' ? 'published' : getText(offer, 'status') || 'ready'} /></div><p className="mt-1 truncate font-mono text-[11px] text-slate-500">{nodeId} · {getText(offer, 'model_class') || getText(offer, 'model_id') || 'model class not disclosed'}</p></div><SessionValue label="Origin" value={origin} /><SessionValue label="Price" value={marketPrice(offer)} /><div>{origin === 'own' ? <Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" onClick={() => onNavigate('endpoints')}>Open Endpoint<ChevronRight /></Button> : <Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" size="sm" disabled={!endpointId || attached || busy === key} onClick={() => void attach(attachSource)}>{attached ? 'Attached' : busy === key ? 'Attaching...' : 'Attach'}</Button>}</div></div> })}</CardContent></Card> : null}
+    {market ? <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><div className="flex flex-wrap items-end justify-between gap-3"><div><CardTitle className="text-lg font-semibold">Canonical offers</CardTitle><p className="mt-1 text-sm text-muted-foreground">{offers.length} offer(s) across {market.nodes.length} visible node(s)</p></div><StatusBadge value={offers.length > 0 ? 'ready' : 'unavailable'} /></div></CardHeader><CardContent className="divide-y divide-border/70 p-0">{offers.length === 0 ? <EmptyState title="No market offers discovered" detail="Publish a local Endpoint or restore Registry replication to populate the canonical catalogue." actionLabel="Create Endpoint" onAction={() => onNavigate('endpoints')} /> : offers.map((offer, index) => { const nodeId = getText(offer, 'node_id'); const endpointId = getText(offer, 'endpoint_id'); const origin = getText(offer, 'origin') || 'external'; const remote = remotes?.discovered.find((item) => getText(item, 'node_id') === nodeId && getText(item, 'endpoint_id') === endpointId); const attachSource = remote ?? offer; const attached = Boolean(getRecord(attachSource)?.already_attached); const key = `${nodeId}:${endpointId}`; return <div key={`${key}:${index}`} className="grid gap-3 px-5 py-4 lg:grid-cols-[minmax(0,1.5fr)_minmax(9rem,0.7fr)_minmax(8rem,0.6fr)_auto] lg:items-center"><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-slate-100">{getText(offer, 'display_name') || endpointId || getText(offer, 'bundle_id')}</p><StatusBadge value={origin === 'own' ? 'published' : getText(offer, 'status') || 'ready'} /></div><p className="mt-1 truncate font-mono text-[11px] text-slate-500">{nodeId} · {getText(offer, 'model_class') || getText(offer, 'model_id') || 'model class not disclosed'}</p><ParameterPolicySummary offer={offer} /></div><SessionValue label="Origin" value={origin} /><SessionValue label="Price" value={marketPrice(offer)} /><div>{origin === 'own' ? <Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" onClick={() => onNavigate('endpoints')}>Open Endpoint<ChevronRight /></Button> : <Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" size="sm" disabled={!endpointId || attached || busy === key} onClick={() => void attach(attachSource)}>{attached ? 'Attached' : busy === key ? 'Attaching...' : 'Attach'}</Button>}</div></div> })}</CardContent></Card> : null}
   </div>
+}
+
+function ParameterPolicySummary({ offer }: { offer: DashboardRecord }) {
+  const policy = getRecord(offer.parameter_policy)
+  const parameters = Array.isArray(policy?.parameters)
+    ? policy.parameters.filter((item): item is DashboardRecord => Boolean(getRecord(item)))
+    : []
+  if (parameters.length === 0) {
+    return <p className="mt-2 text-xs text-slate-500">Request parameter policy not disclosed</p>
+  }
+  const editableCount = parameters.filter((parameter) => getRecord(parameter)?.mutable === true).length
+  return <details className="mt-2 rounded-md border border-cyan-300/10 bg-cyan-300/[0.025] px-2.5 py-1.5">
+    <summary className="cursor-pointer list-none text-[11px] font-medium text-cyan-100">Request controls · {editableCount} editable</summary>
+    <div className="mt-2 grid gap-1.5 border-t border-border/50 pt-2">
+      {parameters.map((parameter) => {
+        const item = getRecord(parameter) ?? {}
+        const name = getText(item, 'name') || 'parameter'
+        const mutable = item.mutable === true
+        const defaultValue = item.default === undefined ? '—' : String(item.default)
+        const minimum = item.minimum === undefined || item.minimum === null ? null : String(item.minimum)
+        const maximum = item.maximum === undefined || item.maximum === null ? null : String(item.maximum)
+        const bounds = minimum !== null || maximum !== null ? ` · ${minimum ?? '—'}…${maximum ?? '—'}` : ''
+        return <div key={name} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 font-mono text-[10px] text-slate-400"><span className="text-slate-200">{name}</span><span>default {defaultValue} · {mutable ? 'editable' : 'locked'}{bounds}</span></div>
+      })}
+    </div>
+  </details>
 }
 
 function marketPrice(offer: DashboardRecord): string {

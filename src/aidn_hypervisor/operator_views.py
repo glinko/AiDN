@@ -4,6 +4,7 @@ from aidn_hypervisor.endpoint_publications.models import (
     configuration_hash_for_publication,
     legacy_configuration_hash_for_publication,
 )
+from aidn_hypervisor.runtime_parameter_policy import marketplace_parameter_policy
 from aidn_hypervisor.operator_onboarding import (
     ONBOARDING_STEPS,
     build_onboarding_payload,
@@ -44,6 +45,10 @@ def _local_publication_configuration_hash(manifest) -> str:
         session=manifest.session.model_dump(mode="json"),
         execution=_execution_payload_for_manifest(manifest),
         profile=manifest.profile.model_dump(mode="json"),
+        runtime_parameter_policy={
+            key: value.model_dump(mode="json", by_alias=True)
+            for key, value in manifest.runtime_parameter_policy.items()
+        },
     )
     return configuration_hash_for_publication(payload)
 
@@ -118,6 +123,7 @@ def _snapshot_publication_configuration_hash(manifest, snapshot) -> str:
                 manifest.execution_strategy,
             ),
             "proxy_target": snapshot.proxy_target,
+            "runtime_parameter_policy": snapshot.runtime_parameter_policy,
         }
     )
     return _local_publication_configuration_hash(snapshot_manifest)
@@ -1073,6 +1079,13 @@ def build_operator_endpoints_payload(
                 "local_agent_use": manifest.local_agent_use,
                 "profile": manifest.profile.model_dump(mode="json"),
                 "runtime": manifest.runtime.model_dump(mode="json"),
+                "runtime_parameter_policy": {
+                    key: value.model_dump(mode="json", by_alias=True)
+                    for key, value in manifest.runtime_parameter_policy.items()
+                },
+                "parameter_policy": marketplace_parameter_policy(
+                    manifest.runtime_parameter_policy
+                ),
                 "session": manifest.session.model_dump(mode="json"),
                 "execution_strategy": manifest.execution_strategy,
                 "proxy_target": (

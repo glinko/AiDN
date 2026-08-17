@@ -23,6 +23,7 @@ from aidn_hypervisor.endpoints.mvp_session_application_service import (
 )
 from aidn_hypervisor.endpoints.service import EndpointStateError
 from aidn_hypervisor.session_application_service import SessionApplicationService
+from aidn_hypervisor.runtime_parameter_policy import marketplace_parameter_policy
 
 
 class AttachProxyTargetRequest(BaseModel):
@@ -158,6 +159,10 @@ def build_endpoint_router(
             session=endpoint.session.model_dump(mode="json"),
             execution=_publication_execution_payload(endpoint),
             profile=endpoint.profile.model_dump(mode="json"),
+            runtime_parameter_policy={
+                key: value.model_dump(mode="json", by_alias=True)
+                for key, value in endpoint.runtime_parameter_policy.items()
+            },
         )
         return configuration_hash_for_publication(payload)
 
@@ -344,7 +349,14 @@ def build_endpoint_router(
             result = service.get_endpoint(endpoint_id)
         except KeyError:
             return _error(404, "endpoint_not_found", f"Unknown endpoint: {endpoint_id}")
-        return _ok({"endpoint": result.endpoint.model_dump(mode="json")})
+        return _ok(
+            {
+                "endpoint": result.endpoint.model_dump(mode="json"),
+                "parameter_policy": marketplace_parameter_policy(
+                    result.endpoint.runtime_parameter_policy
+                ),
+            }
+        )
 
     @router.delete("/{endpoint_id}")
     async def delete_endpoint(endpoint_id: str) -> JSONResponse:

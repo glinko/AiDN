@@ -102,7 +102,13 @@ def _store(tmp_path):
     )
 
 
-def _client(tmp_path, *, local_agent_use: bool = True, model_class: str = "llm_text"):
+def _client(
+    tmp_path,
+    *,
+    local_agent_use: bool = True,
+    model_class: str = "llm_text",
+    runtime_parameter_policy: dict | None = None,
+):
     endpoint = EndpointManifest(
         endpoint_id="ep-local",
         owner_wallet="wallet-test",
@@ -114,6 +120,7 @@ def _client(tmp_path, *, local_agent_use: bool = True, model_class: str = "llm_t
         display_name="Qwen local",
         model_class=model_class,
         local_agent_use=local_agent_use,
+        runtime_parameter_policy=runtime_parameter_policy or {},
     )
     store = _store(tmp_path)
     issued = store.create_inference_credential(
@@ -201,6 +208,41 @@ def test_chat_completion_opens_owner_session_and_preserves_editable_parameters(t
     assert request.payload["max_tokens"] == 128
     assert sessions.opened[0]["accounting_contract"]["contract_version"] == "owner-agent.v1"
     assert sessions.opened[0]["request_charge_ceiling_q_atoms"] == 0
+
+
+def test_chat_completion_rejects_locked_endpoint_parameter_before_opening_session(tmp_path) -> None:
+    client, issued, service, sessions = _client(
+        tmp_path,
+        runtime_parameter_policy={
+            "temperature": {
+                "value": 0.7,
+                "consumer_editable": True,
+                "min": 0.0,
+                "max": 2.0,
+            },
+            "context_length": {
+                "value": 4096,
+                "consumer_editable": False,
+                "min": 512,
+                "max": 131072,
+            },
+        },
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {issued.token}"},
+        json={
+            "model": "qwen-local",
+            "messages": [{"role": "user", "content": "hello"}],
+            "context_length": 8192,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "parameter_policy_violation"
+    assert service.submitted == []
+    assert sessions.opened == []
 
 
 def test_streaming_returns_a_buffered_openai_compatible_sse_response(tmp_path) -> None:

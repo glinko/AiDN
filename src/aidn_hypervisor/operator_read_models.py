@@ -175,6 +175,10 @@ class OperatorReadModelService:
             "priority_class": bundle.priority_class,
             "max_parallel_requests": bundle.max_parallel_requests,
             "enabled": bundle.enabled,
+            "runtime_parameter_policy": {
+                key: value.model_dump(mode="json", by_alias=True)
+                for key, value in bundle.runtime_parameter_policy.items()
+            },
             "endpoint": bundle.endpoint,
             "runtime_id": runtime.runtime_id if runtime is not None else None,
             "runtime_status": runtime.status if runtime is not None else "stopped",
