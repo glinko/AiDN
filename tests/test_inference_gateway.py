@@ -75,7 +75,7 @@ class _HypervisorService:
 
     def submit(self, request):
         self.submitted.append(request)
-        task = SimpleNamespace(task_id="task-agent-test", status="completed")
+        task = SimpleNamespace(task_id="task-agent-test", status="queued")
         self._result = {"ok": True, "output_text": "hello from llama", "model_id": "qwen"}
         return task
 

@@ -310,7 +310,11 @@ def build_inference_router(
         except (RuntimeError, ValueError, KeyError) as error:
             return _error(503, str(error), code="inference_execution_failed", error_type="server_error")
         result = hypervisor_service.task_result(task.task_id)
-        if getattr(task, "status", None) != "completed" or not isinstance(result, dict):
+        # ``submit`` returns the queue snapshot created before its synchronous
+        # processing pass. A successfully completed task therefore still has
+        # its original ``queued`` status on that stale object. The committed
+        # result is the authoritative completion signal for this request.
+        if not isinstance(result, dict):
             return _error(
                 503,
                 "The inference runtime did not complete the request",
