@@ -200,6 +200,7 @@ def test_chat_completion_opens_owner_session_and_preserves_editable_parameters(t
     assert request.payload["top_p"] == 0.8
     assert request.payload["max_tokens"] == 128
     assert sessions.opened[0]["accounting_contract"]["contract_version"] == "owner-agent.v1"
+    assert sessions.opened[0]["request_charge_ceiling_q_atoms"] == 0
 
 
 def test_streaming_is_rejected_explicitly_in_mvp(tmp_path) -> None:
@@ -223,6 +224,7 @@ def test_chat_completion_replaces_legacy_owner_agent_session(tmp_path) -> None:
     client, issued, _, sessions = _client(tmp_path)
     sessions.session.accounting_contract_snapshot = {"maximum_request_charge": 0.0}
     sessions.session.session_id = "sess-legacy"
+    sessions.session.request_charge_ceiling_q_atoms = None
     client._aidn_credential_store.bind_inference_session(
         issued.credential_id,
         "sess-legacy",

@@ -191,7 +191,13 @@ def build_inference_router(
                     AccountingContract.model_validate(
                         getattr(session, "accounting_contract_snapshot", {})
                     )
-                except ValidationError:
+                    if (
+                        getattr(session, "economic_profile", None) == "OWNER_AGENT"
+                        and getattr(session, "request_charge_ceiling_q_atoms", None)
+                        != 0
+                    ):
+                        raise ValueError("legacy owner-agent request ceiling")
+                except (ValidationError, ValueError):
                     if getattr(session, "economic_profile", None) != "OWNER_AGENT":
                         raise ValueError("Inference session has an invalid accounting contract")
                     session_service.close_session(credential.session_id)
@@ -208,6 +214,9 @@ def build_inference_router(
             provider_wallet=endpoint.owner_wallet,
             node_id=hypervisor_service.node_id,
             deposit_q=0.0,
+            deposit_q_atoms=0,
+            fixed_price_q_atoms=0,
+            request_charge_ceiling_q_atoms=0,
             session_policy=endpoint.session.model_dump(mode="json"),
             accounting_contract=hypervisor_service.accounting_contract_for_endpoint(
                 endpoint
