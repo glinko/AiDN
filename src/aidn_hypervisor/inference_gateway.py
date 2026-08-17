@@ -14,8 +14,9 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from aidn_hypervisor.accounting.models import AccountingContract
 from aidn_hypervisor.domain.models import TaskRequest
 from aidn_hypervisor.mcp.credentials import InferenceCredential, McpCredentialStore
 
@@ -182,11 +183,25 @@ def build_inference_router(
             if session is not None:
                 if session.client_wallet != credential.owner_wallet:
                     raise ValueError("Inference session owner does not match the credential")
-                session_service.require_request_budget(
-                    endpoint_id=endpoint.endpoint_id,
-                    session_id=credential.session_id,
-                )
-                return credential.session_id
+                # Prior gateway versions persisted a minimal, non-canonical
+                # accounting payload. It cannot be sent to an approved
+                # runtime, so retire only that legacy owner-agent session and
+                # replace it below with the Endpoint's immutable contract.
+                try:
+                    AccountingContract.model_validate(
+                        getattr(session, "accounting_contract_snapshot", {})
+                    )
+                except ValidationError:
+                    if getattr(session, "economic_profile", None) != "OWNER_AGENT":
+                        raise ValueError("Inference session has an invalid accounting contract")
+                    session_service.close_session(credential.session_id)
+                    session = None
+                if session is not None:
+                    session_service.require_request_budget(
+                        endpoint_id=endpoint.endpoint_id,
+                        session_id=credential.session_id,
+                    )
+                    return credential.session_id
         result = session_service.open_session(
             endpoint_id=endpoint.endpoint_id,
             client_wallet=credential.owner_wallet,

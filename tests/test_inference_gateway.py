@@ -29,7 +29,14 @@ class _SessionService:
             session_id="sess-agent-test",
             status="active",
             client_wallet="wallet-test",
+            economic_profile="OWNER_AGENT",
+            accounting_contract_snapshot={
+                "contract_version": "owner-agent.v1",
+                "pricing_version": "owner-agent.v1",
+                "checkpoint_policy": "per_request",
+            },
         )
+        self.closed: list[str] = []
 
     def open_session(self, **payload):
         self.opened.append(payload)
@@ -42,6 +49,21 @@ class _SessionService:
 
     def require_request_budget(self, *, endpoint_id: str, session_id: str):
         return self.session
+
+    def close_session(self, session_id: str):
+        self.closed.append(session_id)
+        self.session = SimpleNamespace(
+            session_id="sess-agent-replacement",
+            status="active",
+            client_wallet="wallet-test",
+            economic_profile="OWNER_AGENT",
+            accounting_contract_snapshot={
+                "contract_version": "owner-agent.v1",
+                "pricing_version": "owner-agent.v1",
+                "checkpoint_policy": "per_request",
+            },
+        )
+        return SimpleNamespace(session=self.session)
 
 
 class _HypervisorService:
@@ -111,7 +133,9 @@ def _client(tmp_path, *, local_agent_use: bool = True, model_class: str = "llm_t
             credential_store=store,
         )
     )
-    return TestClient(app), issued, service, sessions
+    client = TestClient(app)
+    client._aidn_credential_store = store
+    return client, issued, service, sessions
 
 
 def test_models_is_limited_to_the_credential_endpoint(tmp_path) -> None:
@@ -193,6 +217,25 @@ def test_streaming_is_rejected_explicitly_in_mvp(tmp_path) -> None:
 
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "streaming_not_supported"
+
+
+def test_chat_completion_replaces_legacy_owner_agent_session(tmp_path) -> None:
+    client, issued, _, sessions = _client(tmp_path)
+    sessions.session.accounting_contract_snapshot = {"maximum_request_charge": 0.0}
+    sessions.session.session_id = "sess-legacy"
+    client._aidn_credential_store.bind_inference_session(
+        issued.credential_id,
+        "sess-legacy",
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {issued.token}"},
+        json={"model": "qwen-local", "messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert response.status_code == 200
+    assert sessions.closed == ["sess-legacy"]
 
 
 def test_invalid_bearer_token_cannot_reach_task_lifecycle(tmp_path) -> None:
