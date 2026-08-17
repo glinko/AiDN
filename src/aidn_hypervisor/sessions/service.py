@@ -1165,8 +1165,17 @@ class SessionService:
         accepted_consumer_refund_beneficiary = (
             consumer_refund_beneficiary or client_wallet
         )
+        owner_agent_session = economic_profile == "OWNER_AGENT"
+        if owner_agent_session and deposit_q != 0.0:
+            raise ValueError("OWNER_AGENT sessions must not lock a deposit")
+        if not owner_agent_session and deposit_q <= 0.0:
+            raise ValueError("deposit must be positive outside OWNER_AGENT")
+        if owner_agent_session and deposit_q_atoms not in {None, 0}:
+            raise ValueError("OWNER_AGENT sessions must not lock deposit atoms")
+        if not owner_agent_session and deposit_q_atoms is not None and deposit_q_atoms <= 0:
+            raise ValueError("deposit atoms must be positive outside OWNER_AGENT")
         minimum_deposit = float(session_policy.get("minimum_deposit", 0.0) or 0.0)
-        if deposit_q < minimum_deposit:
+        if not owner_agent_session and deposit_q < minimum_deposit:
             raise ValueError("deposit is below the minimum deposit")
         max_sessions = int(session_policy.get("max_concurrent_sessions", 1) or 1)
         queue_policy = str(session_policy.get("queue_policy", "busy") or "busy")

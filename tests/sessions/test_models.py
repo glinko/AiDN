@@ -29,6 +29,30 @@ def test_endpoint_session_requires_positive_locked_deposit() -> None:
         )
 
 
+def test_endpoint_session_allows_zero_locked_deposit_for_owner_agent() -> None:
+    session = EndpointSession(
+        session_id="sess-owner-agent",
+        endpoint_id="ep-1",
+        client_wallet="wallet-owner",
+        provider_wallet="wallet-owner",
+        node_id="node-1",
+        status="active",
+        created_at="2026-07-01T00:00:00+00:00",
+        started_at="2026-07-01T00:00:00+00:00",
+        last_activity_at="2026-07-01T00:00:00+00:00",
+        expires_at="2026-07-01T01:00:00+00:00",
+        idle_deadline_at="2026-07-01T00:10:00+00:00",
+        deposit_locked_q=0.0,
+        deposit_locked_q_atoms=0,
+        economic_profile="OWNER_AGENT",
+        reserved_slot_index=0,
+        queue_policy_snapshot="busy",
+        session_policy_snapshot={"minimum_deposit": 0.0},
+    )
+
+    assert session.deposit_locked_q == 0.0
+
+
 def test_locked_deposit_rejects_consumed_amount_above_locked_amount() -> None:
     with pytest.raises(ValidationError):
         LockedDeposit(

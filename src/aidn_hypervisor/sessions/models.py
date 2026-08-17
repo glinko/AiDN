@@ -243,9 +243,9 @@ class EndpointSession(BaseModel):
     last_activity_at: str | None = None
     expires_at: str
     idle_deadline_at: str
-    deposit_locked_q: float = Field(gt=0.0)
+    deposit_locked_q: float = Field(ge=0.0)
     economic_profile: str | None = None
-    deposit_locked_q_atoms: int | None = Field(default=None, gt=0)
+    deposit_locked_q_atoms: int | None = Field(default=None, ge=0)
     fixed_price_q_atoms: int | None = Field(default=None, ge=0)
     request_charge_ceiling_q_atoms: int | None = Field(default=None, ge=0)
     canonical_funding_state_hash: str | None = None
@@ -319,12 +319,26 @@ class EndpointSession(BaseModel):
             normalized["session_amendment_sequence"] = len(amendment_chain)
         return normalized
 
+    @model_validator(mode="after")
+    def _validate_deposit_for_economic_profile(self):
+        """Only an explicitly local owner-agent session may carry no escrow."""
+        if self.economic_profile == "OWNER_AGENT":
+            return self
+        if self.deposit_locked_q <= 0.0:
+            raise ValueError("locked deposit must be positive outside OWNER_AGENT")
+        if (
+            self.deposit_locked_q_atoms is not None
+            and self.deposit_locked_q_atoms <= 0
+        ):
+            raise ValueError("locked deposit atoms must be positive outside OWNER_AGENT")
+        return self
+
 
 class LockedDeposit(BaseModel):
     deposit_id: str
     session_id: str
     wallet_id: str
-    locked_q: float = Field(gt=0.0)
+    locked_q: float = Field(ge=0.0)
     consumed_q: float = Field(default=0.0, ge=0.0)
     refunded_q: float = Field(default=0.0, ge=0.0)
     status: DepositStatus = "locked"

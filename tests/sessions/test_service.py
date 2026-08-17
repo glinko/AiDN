@@ -74,6 +74,40 @@ def test_open_session_rejects_deposit_below_minimum() -> None:
         )
 
 
+def test_open_owner_agent_session_allows_zero_escrow_and_zero_cost_budget() -> None:
+    service = _session_service()
+
+    opened = service.open_session(
+        endpoint_id="ep-owner-agent",
+        client_wallet="wallet-owner",
+        provider_wallet="wallet-owner",
+        node_id="node-1",
+        deposit_q=0.0,
+        deposit_q_atoms=0,
+        economic_profile="OWNER_AGENT",
+        session_policy=_session_policy(minimum_deposit=12.0, minimum_session_fee=0.0),
+        accounting_contract={"maximum_request_charge": 0.0, "profile": "OWNER_AGENT"},
+    )
+
+    assert opened.deposit.locked_q == 0.0
+    assert service.require_request_budget(
+        endpoint_id="ep-owner-agent",
+        session_id=opened.session.session_id,
+    ) == opened.session
+
+
+def test_open_session_rejects_zero_escrow_outside_owner_agent() -> None:
+    with pytest.raises(ValueError, match="positive outside OWNER_AGENT"):
+        _session_service().open_session(
+            endpoint_id="ep-1",
+            client_wallet="wallet-client",
+            provider_wallet="wallet-provider",
+            node_id="node-1",
+            deposit_q=0.0,
+            session_policy=_session_policy(minimum_deposit=0.0),
+        )
+
+
 def test_validator_pending_session_does_not_record_local_open_operation() -> None:
     recorded: list[dict] = []
     service = SessionService(
