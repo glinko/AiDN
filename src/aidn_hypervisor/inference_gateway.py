@@ -194,7 +194,9 @@ def build_inference_router(
             node_id=hypervisor_service.node_id,
             deposit_q=0.0,
             session_policy=endpoint.session.model_dump(mode="json"),
-            accounting_contract={"maximum_request_charge": 0.0, "profile": "OWNER_AGENT"},
+            accounting_contract=hypervisor_service.accounting_contract_for_endpoint(
+                endpoint
+            ),
             endpoint_configuration_hash=endpoint.configuration_hash,
             endpoint_payment_beneficiary=endpoint.owner_wallet,
             consumer_refund_beneficiary=credential.owner_wallet,

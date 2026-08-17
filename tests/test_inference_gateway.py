@@ -60,6 +60,16 @@ class _HypervisorService:
     def task_result(self, task_id: str):
         return self._result
 
+    def accounting_contract_for_endpoint(self, endpoint):
+        return {
+            "contract_version": "owner-agent.v1",
+            "capability_id": endpoint.capabilities[0] if endpoint.capabilities else None,
+            "pricing_version": "owner-agent.v1",
+            "checkpoint_policy": "per_request",
+            "maximum_request_charge": 0.0,
+            "billable_units": [],
+        }
+
 
 def _store(tmp_path):
     return McpCredentialStore(
@@ -165,6 +175,7 @@ def test_chat_completion_opens_owner_session_and_preserves_editable_parameters(t
     assert request.payload["temperature"] == 0.2
     assert request.payload["top_p"] == 0.8
     assert request.payload["max_tokens"] == 128
+    assert sessions.opened[0]["accounting_contract"]["contract_version"] == "owner-agent.v1"
 
 
 def test_streaming_is_rejected_explicitly_in_mvp(tmp_path) -> None:
