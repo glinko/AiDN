@@ -419,7 +419,7 @@ class LlamaCppOpenAIAdapter:
     @staticmethod
     def _generation_parameters(request_payload: dict) -> dict:
         """Map canonical policy values while ignoring locked launch settings."""
-        return {
+        parameters = {
             "max_tokens": request_payload.get("max_tokens", 64),
             "temperature": request_payload.get("temperature", 0),
             **(
@@ -428,6 +428,18 @@ class LlamaCppOpenAIAdapter:
                 else {}
             ),
         }
+        # Qwen3-style llama.cpp templates spend the entire output budget in
+        # hidden reasoning when thinking is left enabled.  That produces a
+        # successful upstream response with empty user-facing content, which
+        # makes OpenAI-compatible agents retry until their session expires.
+        # Keep the operator-facing text path useful by disabling thinking by
+        # default while allowing an explicit endpoint/request override.
+        chat_template_kwargs = request_payload.get("chat_template_kwargs")
+        if isinstance(chat_template_kwargs, dict):
+            parameters["chat_template_kwargs"] = chat_template_kwargs
+        else:
+            parameters["chat_template_kwargs"] = {"enable_thinking": False}
+        return parameters
 
     @staticmethod
     def _choice_text(choice: dict) -> str:

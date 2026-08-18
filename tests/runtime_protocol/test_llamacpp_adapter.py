@@ -155,6 +155,22 @@ def test_llamacpp_adapter_maps_provider_usage_into_final_runtime_evidence(monkey
     assert calls == [True]
 
 
+def test_llamacpp_adapter_disables_thinking_by_default_but_preserves_override() -> None:
+    default_parameters = LlamaCppOpenAIAdapter._generation_parameters(
+        {"max_tokens": 128, "temperature": 0.2}
+    )
+    assert default_parameters["chat_template_kwargs"] == {"enable_thinking": False}
+
+    override_parameters = LlamaCppOpenAIAdapter._generation_parameters(
+        {
+            "max_tokens": 128,
+            "temperature": 0.2,
+            "chat_template_kwargs": {"enable_thinking": True},
+        }
+    )
+    assert override_parameters["chat_template_kwargs"] == {"enable_thinking": True}
+
+
 def test_llamacpp_adapter_records_failed_terminal_evidence_for_upstream_error(monkeypatch) -> None:
     adapter = LlamaCppOpenAIAdapter(
         endpoint="http://provider",
