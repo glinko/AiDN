@@ -62,6 +62,32 @@ With PowerShell, save those lines to a temporary input file and pipe them to
 the process, or use the test harness below. The notification intentionally has
 no response.
 
+## Client integration and bounded workflows
+
+This file describes the MCP wire protocol and a developer smoke test. It is
+not necessary to send 128 requests to connect a client. A normal connection is
+one `initialize` request, one `notifications/initialized` notification and a
+small number of focused tool calls. A read-only inspection should usually be
+finished in 3-8 tool calls; a plan/apply mutation is normally two tool calls
+plus the separate operator approval request.
+
+Keep the workflow bounded when an Agent is driving MCP:
+
+- read this quickstart once, then call only the specific tools needed for the
+  task;
+- do not repeatedly issue the same tool with the same arguments when the
+  result is unchanged;
+- after two identical no-progress results, stop and report the blocker instead
+  of retrying indefinitely;
+- split large repository reviews into named files or small path ranges rather
+  than asking a tool to dump the whole tree in one session.
+
+The `messages` limit reported by a model gateway (for example, HTTP 422 after
+more than 128 messages) is a provider/session policy, not an MCP requirement.
+It indicates that the Agent loop accumulated too much history—usually because
+of a repeated tool call. Start a fresh session after a failed loop and fix the
+loop guard; increasing the provider limit alone only postpones the failure.
+
 ## Plan/apply example
 
 Bundle mutations are never a single blind call. First request a plan:
@@ -90,8 +116,14 @@ Provider endpoint. The session must be granted `PROVIDER:WRITE`; the default
 policy requires the separate operator token to approve the plan.
 
 ```json
-{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"aidn.provider.attach","arguments":{"plugin_id":"llama.cpp","display_name":"Local llama.cpp","configuration":{"endpoint":"http://192.168.88.20:8080"},"mode":"plan","request_id":"req-provider-1","idempotency_key":"idem-provider-1"}}}
+{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"aidn.provider.attach","arguments":{"plugin_id":"llama.cpp","display_name":"Local llama.cpp","configuration":{"endpoint":"http://127.0.0.1:8080"},"mode":"plan","request_id":"req-provider-1","idempotency_key":"idem-provider-1"}}}
 ```
+
+The loopback endpoint above is valid only when the MCP server and llama.cpp
+runtime run on the same node. Do not copy a loopback URL into a remote Agent's
+configuration. For a remote Agent, call the Hypervisor's authenticated HTTP
+MCP gateway and keep the provider endpoint local to the Hypervisor node. The
+old `192.168.88.20` example was a stale lab address and must not be used.
 
 Approve the returned plan through `/mcp/operator/approve`, then repeat the
 same arguments with `mode: "apply"` and the returned `plan_hash`. This action
@@ -119,6 +151,56 @@ The Agent calls `POST /mcp` with `Authorization: Bearer <agent-token>`.
 `initialize` returns an `Mcp-Session-Id`; send that header on subsequent
 requests. The transport session is ephemeral, while the bound Control Session
 and audit/plan state use the persistent MCP state file described above.
+
+Hermes can consume this endpoint as a Streamable HTTP MCP server. Its
+`mcp_servers` entry belongs on the Hermes host, and must contain the real Agent
+token out of band; never commit it to this repository:
+
+```yaml
+mcp_servers:
+  aidn-hypervisor:
+    url: https://node.example.net/mcp
+    headers:
+      Authorization: "Bearer <agent-token>"
+    timeout: 180
+    connect_timeout: 15
+```
+
+Use the LAN URL only when the gateway is intentionally bound to the LAN and
+firewalled to the Agent host. For a public deployment use the production mTLS
+profile below. The operator token is separate and must not be placed in the
+Agent's `mcp_servers` entry; approvals stay on the operator boundary.
+
+If Hermes and the Hypervisor share a host, stdio is simpler and avoids opening
+an HTTP listener:
+
+```yaml
+mcp_servers:
+  aidn-hypervisor:
+    command: /opt/aidn/.venv/bin/aidn-mcp-server
+    args:
+      - --agent-identity
+      - agent:hermes
+      - --operator-identity
+      - operator:local
+      - --control-session-id
+      - acs-hermes
+      - --scope
+      - CAPABILITIES:READ
+      - --scope
+      - NODE:READ
+      - --scope
+      - BUNDLE:READ
+      - --scope
+      - RESOURCES:READ
+    env:
+      AIDN_HYPERVISOR_STATE_PATH: /var/lib/aidn/hypervisor-state.json
+    timeout: 180
+```
+
+For mutations, add `PROVIDER:WRITE` or the other narrowly required scope only
+after the operator has approved the policy. A remote stdio command on a
+different node is not a substitute for the authenticated HTTP gateway.
 
 When enabled, an authenticated Agent or Operator request renews the bound
 Control Session lease when it enters its renewal window. Renewal does not
@@ -199,6 +281,15 @@ state remains available, while clients must reconnect their ephemeral MCP
 transport session. Rotate the three TLS handles atomically with the Secret
 Manager `put_many()` operation where possible. A partial or invalid bundle does
 not replace the active certificate and is not served.
+
+## Troubleshooting a stuck Agent
+
+If logs show the same tool and arguments repeating, cancel that run and start
+a new session. Verify that the Agent's loop guard is enabled and that the MCP
+server returns a terminal error for an unchanged/no-progress request. Do not
+retry a `422 messages` response with the same accumulated history: it cannot
+reduce the message count. The MCP handshake itself is still the three-line
+sequence shown above.
 
 ## Tests
 
