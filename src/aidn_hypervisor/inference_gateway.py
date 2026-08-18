@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 import re
 import time
 from typing import Any, Literal
@@ -33,6 +34,16 @@ from aidn_hypervisor.runtime_parameter_policy import (
 # personal-agent gateway.
 _PERSONAL_AGENT_MODEL_CLASSES = frozenset({"llm_text", "llm.chat"})
 
+# The previous 256 KiB guard was smaller than a normal 128K-token agent
+# request once MCP tool schemas and results were included.  Keep a bounded
+# application-level limit, but make it large enough for the configured model
+# context and overridable per deployment.  This is a request-body budget, not
+# a promise that the provider can execute a request of that size.
+_DEFAULT_MAX_REQUEST_BYTES = 4 * 1024 * 1024
+_MAX_REQUEST_BYTES_ENV = "AIDN_INFERENCE_MAX_REQUEST_BYTES"
+_DEFAULT_MAX_MESSAGES = 512
+_MAX_MESSAGES_ENV = "AIDN_INFERENCE_MAX_MESSAGES"
+
 
 class ChatMessage(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -48,7 +59,11 @@ class ChatCompletionRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     model: str = Field(min_length=1, max_length=256)
-    messages: list[ChatMessage] = Field(min_length=1, max_length=128)
+    # The effective limit is applied by the router so deployments can tune it
+    # without changing the Pydantic schema.  A static 128-item schema limit
+    # rejected otherwise-valid MCP conversations before the gateway could
+    # compact or apply its byte budget.
+    messages: list[ChatMessage] = Field(min_length=1)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     top_p: float | None = Field(default=None, ge=0.0, le=1.0)
     top_k: int | None = Field(default=None, ge=1, le=100000)
@@ -78,15 +93,59 @@ def _error(
     )
 
 
-def _message_size(messages: list[ChatMessage]) -> int:
-    total = 0
-    for message in messages:
-        content = message.content
-        if isinstance(content, str):
-            total += len(content)
-        elif isinstance(content, list):
-            total += sum(len(str(item)) for item in content)
-    return total
+def _serialized_request_size(payload: ChatCompletionRequest) -> int:
+    """Return the UTF-8 size of the parsed OpenAI request body.
+
+    Counting only message text underestimates agent requests: MCP tool
+    schemas, tool calls, names, and structured content all contribute to the
+    body sent to the gateway.  Serializing the validated request gives the
+    guard the same byte-oriented unit as the HTTP transport.
+    """
+
+    encoded = json.dumps(
+        payload.model_dump(exclude_none=True, mode="json"),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return len(encoded)
+
+
+def _resolve_max_request_bytes(value: int | None) -> int:
+    """Resolve and validate the inference request body budget."""
+
+    if value is None:
+        raw = os.getenv(_MAX_REQUEST_BYTES_ENV, "").strip()
+        if raw:
+            try:
+                value = int(raw)
+            except ValueError as error:
+                raise ValueError(
+                    f"{_MAX_REQUEST_BYTES_ENV} must be a positive integer"
+                ) from error
+        else:
+            value = _DEFAULT_MAX_REQUEST_BYTES
+    if value < 1:
+        raise ValueError(f"{_MAX_REQUEST_BYTES_ENV} must be a positive integer")
+    return value
+
+
+def _resolve_max_messages(value: int | None) -> int:
+    """Resolve and validate the maximum number of chat messages."""
+
+    if value is None:
+        raw = os.getenv(_MAX_MESSAGES_ENV, "").strip()
+        if raw:
+            try:
+                value = int(raw)
+            except ValueError as error:
+                raise ValueError(
+                    f"{_MAX_MESSAGES_ENV} must be a positive integer"
+                ) from error
+        else:
+            value = _DEFAULT_MAX_MESSAGES
+    if value < 1:
+        raise ValueError(f"{_MAX_MESSAGES_ENV} must be a positive integer")
+    return value
 
 
 def _stream_event(payload: dict[str, Any]) -> str:
@@ -242,6 +301,8 @@ def build_inference_router(
     endpoint_service: Any,
     session_service: Any,
     credential_store: McpCredentialStore | None,
+    max_request_bytes: int | None = None,
+    max_messages: int | None = None,
 ) -> APIRouter:
     """Build the `/v1` data-plane router.
 
@@ -251,6 +312,8 @@ def build_inference_router(
     """
 
     router = APIRouter(prefix="/v1")
+    request_body_limit = _resolve_max_request_bytes(max_request_bytes)
+    message_limit = _resolve_max_messages(max_messages)
 
     def authenticate(request: Request) -> InferenceCredential | JSONResponse:
         if credential_store is None:
@@ -459,8 +522,25 @@ def build_inference_router(
         if isinstance(authenticated, JSONResponse):
             return authenticated
         credential = authenticated
-        if _message_size(payload.messages) > 262_144:
-            return _error(413, "The request messages exceed the 256 KiB limit", code="request_too_large")
+        if len(payload.messages) > message_limit:
+            return _error(
+                422,
+                (
+                    "The inference request contains too many messages "
+                    f"({len(payload.messages)} > {message_limit})"
+                ),
+                code="messages_too_many",
+            )
+        request_size = _serialized_request_size(payload)
+        if request_size > request_body_limit:
+            return _error(
+                413,
+                (
+                    "The inference request body exceeds the configured limit "
+                    f"({request_size} bytes > {request_body_limit} bytes)"
+                ),
+                code="request_too_large",
+            )
         try:
             endpoint = endpoint_for(credential, payload.model)
         except LookupError as error:

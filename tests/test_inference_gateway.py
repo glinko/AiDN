@@ -113,6 +113,8 @@ def _client(
     local_agent_use: bool = True,
     model_class: str = "llm_text",
     runtime_parameter_policy: dict | None = None,
+    max_request_bytes: int | None = None,
+    max_messages: int | None = None,
 ):
     endpoint = EndpointManifest(
         endpoint_id="ep-local",
@@ -143,6 +145,8 @@ def _client(
             endpoint_service=_EndpointService(endpoint),
             session_service=sessions,
             credential_store=store,
+            max_request_bytes=max_request_bytes,
+            max_messages=max_messages,
         )
     )
     client = TestClient(app)
@@ -262,6 +266,97 @@ def test_chat_completion_forwards_tools_and_returns_native_tool_calls(tmp_path) 
     assert body["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == "delegate_task"
     assert service.submitted[0].payload["tools"] == [tool_definition]
     assert service.submitted[0].payload["tool_choice"] == "auto"
+
+
+def test_chat_completion_request_limit_counts_tool_schemas(tmp_path) -> None:
+    client, issued, service, sessions = _client(tmp_path, max_request_bytes=4096)
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {issued.token}"},
+        json={
+            "model": "qwen-local",
+            "messages": [{"role": "user", "content": "Inspect the site"}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "delegate_task",
+                        "description": "x" * 5000,
+                        "parameters": {"type": "object"},
+                    },
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "request_too_large"
+    assert "bytes" in response.json()["error"]["message"]
+    assert service.submitted == []
+    assert sessions.opened == []
+
+
+def test_chat_completion_allows_large_mcp_context_with_explicit_budget(tmp_path) -> None:
+    client, issued, service, _ = _client(tmp_path, max_request_bytes=512 * 1024)
+    large_result = "результат MCP " * 12_000
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {issued.token}"},
+        json={
+            "model": "qwen-local",
+            "messages":[
+                {"role": "system", "content": "You are an agent."},
+                {"role": "tool", "content": large_result, "tool_call_id": "call-1"},
+                {"role": "user", "content": "Summarize the result."},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert service.submitted[0].payload["messages"][1]["content"] == large_result
+
+
+def test_chat_completion_accepts_more_than_128_messages(tmp_path) -> None:
+    client, issued, service, _ = _client(tmp_path)
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {issued.token}"},
+        json={
+            "model": "qwen-local",
+            "messages": [
+                {"role": "user", "content": f"round-{index}"}
+                for index in range(131)
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert len(service.submitted[0].payload["messages"]) == 131
+
+
+def test_chat_completion_reports_configured_message_limit(tmp_path) -> None:
+    client, issued, service, sessions = _client(tmp_path, max_messages=128)
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {issued.token}"},
+        json={
+            "model": "qwen-local",
+            "messages": [
+                {"role": "user", "content": f"round-{index}"}
+                for index in range(129)
+            ],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "messages_too_many"
+    assert "129 > 128" in response.json()["error"]["message"]
+    assert service.submitted == []
+    assert sessions.opened == []
 
 
 def test_chat_completion_converts_legacy_xml_tool_markup_without_leaking_it(tmp_path) -> None:
