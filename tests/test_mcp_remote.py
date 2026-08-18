@@ -132,7 +132,11 @@ def _headers(token: str = AGENT_TOKEN, session_id: str | None = None) -> dict[st
     return headers
 
 
-def _initialize(client: TestClient, token: str = AGENT_TOKEN) -> str:
+def _initialize(
+    client: TestClient,
+    token: str = AGENT_TOKEN,
+    protocol_version: str = "2025-06-18",
+) -> str:
     response = client.post(
         "/mcp",
         headers=_headers(token),
@@ -141,14 +145,14 @@ def _initialize(client: TestClient, token: str = AGENT_TOKEN) -> str:
             "id": 1,
             "method": "initialize",
             "params": {
-                "protocolVersion": "2025-06-18",
+                "protocolVersion": protocol_version,
                 "capabilities": {},
                 "clientInfo": {"name": "remote-test", "version": "0.1"},
             },
         },
     )
     assert response.status_code == 200
-    assert response.json()["result"]["protocolVersion"] == "2025-06-18"
+    assert response.json()["result"]["protocolVersion"] == protocol_version
     session_id = response.headers["Mcp-Session-Id"]
     initialized = client.post(
         "/mcp",
@@ -157,6 +161,19 @@ def _initialize(client: TestClient, token: str = AGENT_TOKEN) -> str:
     )
     assert initialized.status_code == 202
     return session_id
+
+
+def test_remote_gateway_accepts_hermes_latest_handshake_version(tmp_path) -> None:
+    client, _gateway = _client(tmp_path, scopes=("CAPABILITIES:READ",))
+    session_id = _initialize(client, protocol_version="2025-11-25")
+
+    response = client.post(
+        "/mcp",
+        headers=_headers(session_id=session_id),
+        json={"jsonrpc": "2.0", "id": 2, "method": "ping"},
+    )
+    assert response.status_code == 200
+    assert response.json()["result"] == {}
 
 
 def test_revocation_rejects_credential_and_closes_transport_sessions(tmp_path) -> None:

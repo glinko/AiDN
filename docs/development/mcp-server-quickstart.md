@@ -47,13 +47,25 @@ commands to it and do not parse human-readable logs from stdout. Each output
 line is a JSON-RPC response; diagnostics belong on stderr in future transport
 profiles.
 
-## Minimal smoke input
+## Protocol negotiation and minimal smoke input
+
+AiDN accepts MCP protocol versions `2025-11-25`, `2025-06-18`, and
+`2025-03-26`. Hermes Agent 0.20.x sends `2025-11-25` in its `initialize`
+request even if an older `protocol_version` value is present in its YAML
+configuration. Do not keep retrying or rewrite the request to work around
+that hint: the server accepts the Hermes handshake directly.
+
+The HTTP endpoint is POST-only, so a `405` response to `GET /mcp` or
+`HEAD /mcp` is expected. Test the actual JSON-RPC handshake instead. A valid
+remote connection is one `initialize` request followed by one
+`notifications/initialized` notification; the response includes an
+`Mcp-Session-Id` header for subsequent calls.
 
 The following sequence negotiates the protocol, completes the lifecycle, and
 reads the capability tool:
 
 ```json
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke-client","version":"0.1"}}}
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"smoke-client","version":"0.1"}}}
 {"jsonrpc":"2.0","method":"notifications/initialized"}
 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"aidn.capabilities.get","arguments":{}}}
 ```
@@ -70,6 +82,25 @@ one `initialize` request, one `notifications/initialized` notification and a
 small number of focused tool calls. A read-only inspection should usually be
 finished in 3-8 tool calls; a plan/apply mutation is normally two tool calls
 plus the separate operator approval request.
+
+For Hermes, configure only the authenticated URL and token. The current
+Hermes HTTP transport chooses the handshake version itself, so a
+`protocol_version` YAML hint is not a substitute for a compatible server:
+
+```yaml
+mcp_servers:
+  aidn:
+    url: http://192.168.88.122:8766/mcp
+    headers:
+      Authorization: "Bearer <agent-token>"
+    timeout: 180
+    connect_timeout: 30
+```
+
+If Hermes reports `Unsupported MCP protocol version: 2025-11-25`, stop the
+loop and check the node deployment rather than repeating `initialize`. Three
+failed handshakes are enough to diagnose a transport or version problem; do
+not spend the model context on repeated identical MCP calls.
 
 Keep the workflow bounded when an Agent is driving MCP:
 

@@ -140,6 +140,24 @@ def test_mcp_initialize_and_tools_are_scope_filtered() -> None:
     assert "aidn.bundle.activate" not in names
 
 
+def test_mcp_initialize_accepts_hermes_latest_handshake_version() -> None:
+    server = _server("CAPABILITIES:READ")
+    response = server.handle_message(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "hermes", "version": "0.20.3"},
+            },
+        }
+    )
+
+    assert response["result"]["protocolVersion"] == "2025-11-25"
+
+
 def test_mcp_default_web_session_can_use_an_explicit_persisted_identity(monkeypatch) -> None:
     monkeypatch.setenv("AIDN_MCP_CONTROL_SESSION_ID", "acs-explicit-web")
     server = build_mcp_server(_service())

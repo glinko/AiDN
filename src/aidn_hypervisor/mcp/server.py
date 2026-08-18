@@ -32,7 +32,12 @@ from aidn_hypervisor.operator_views import (
 )
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
-SUPPORTED_MCP_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26")
+# Hermes Agent 0.20.x sends the 2025-11-25 handshake even when its
+# mcp_servers config contains an older protocol_version hint. The AiDN
+# control plane does not use any 2025-11-25-only features yet, so accepting
+# that negotiated version keeps the JSON-RPC boundary interoperable while
+# preserving the older client versions already in the field.
+SUPPORTED_MCP_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
 MCP_SERVER_VERSION = "0.1.0"
 DEFAULT_CONTROL_SESSION_TTL_SECONDS = 3600
 MIN_CONTROL_SESSION_TTL_SECONDS = 60
