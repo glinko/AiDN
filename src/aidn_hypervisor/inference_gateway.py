@@ -8,7 +8,9 @@ the provider result in the OpenAI response shape.
 
 from __future__ import annotations
 
+import html
 import json
+import re
 import time
 from typing import Any, Literal
 from uuid import uuid4
@@ -24,7 +26,6 @@ from aidn_hypervisor.runtime_parameter_policy import (
     apply_runtime_parameter_policy_payload,
 )
 
-
 # Provider plugins expose the OpenAI-compatible text generation surface as
 # ``llm.chat``, while the model-install flow historically stored its workload
 # as ``llm_text``.  Both are local text-generation routes; treating only the
@@ -39,6 +40,8 @@ class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant", "tool", "developer"]
     content: str | list[dict[str, Any]] | None = None
     name: str | None = Field(default=None, max_length=128)
+    tool_calls: list[dict[str, Any]] | None = Field(default=None, max_length=128)
+    tool_call_id: str | None = Field(default=None, max_length=256)
 
 
 class ChatCompletionRequest(BaseModel):
@@ -55,6 +58,9 @@ class ChatCompletionRequest(BaseModel):
     context_length: int | None = Field(default=None, ge=1, le=131072)
     repeat_penalty: float | None = Field(default=None, ge=0.0, le=10.0)
     extra_body: dict[str, Any] = Field(default_factory=dict, max_length=32)
+    tools: list[dict[str, Any]] | None = Field(default=None, max_length=128)
+    tool_choice: str | dict[str, Any] | None = None
+    parallel_tool_calls: bool | None = None
     stream: bool = False
     user: str | None = Field(default=None, max_length=256)
 
@@ -87,6 +93,147 @@ def _stream_event(payload: dict[str, Any]) -> str:
     """Encode one OpenAI-compatible server-sent event."""
 
     return f"data: {json.dumps(payload, separators=(',', ':'))}\n\n"
+
+
+_TOOL_CALL_BLOCK_RE = re.compile(
+    r"<tool_call>\s*(?P<body>.*?)\s*</tool_call>",
+    re.IGNORECASE | re.DOTALL,
+)
+_TOOL_FUNCTION_RE = re.compile(
+    r"<function\s*=\s*(?P<name>[A-Za-z_][\w.-]*)\s*>(?P<body>.*?)</function>",
+    re.IGNORECASE | re.DOTALL,
+)
+_TOOL_PARAMETER_RE = re.compile(
+    r"<parameter\s*=\s*(?P<name>[A-Za-z_][\w.-]*)\s*>(?P<value>.*?)</parameter>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _decode_tool_parameter(value: str) -> Any:
+    """Decode a llama.cpp XML parameter without losing plain text values."""
+
+    text = html.unescape(value.strip())
+    if not text:
+        return ""
+    # Tool arguments are often strings, but accepting JSON scalars/containers
+    # keeps the bridge compatible with model-generated numeric and structured
+    # parameters as well.
+    try:
+        decoded = json.loads(text)
+    except (TypeError, ValueError):
+        return text
+    return decoded
+
+
+def _new_tool_call(*, name: str, arguments: dict[str, Any], call_id: str | None = None) -> dict[str, Any]:
+    return {
+        "id": call_id or f"call-{uuid4().hex}",
+        "type": "function",
+        "function": {
+            "name": name,
+            "arguments": json.dumps(arguments, ensure_ascii=False, separators=(",", ":")),
+        },
+    }
+
+
+def _normalize_native_tool_calls(raw_calls: Any) -> list[dict[str, Any]]:
+    """Normalize provider tool calls to the OpenAI response shape."""
+
+    if not isinstance(raw_calls, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for raw_call in raw_calls:
+        if not isinstance(raw_call, dict):
+            continue
+        function = raw_call.get("function")
+        if not isinstance(function, dict):
+            continue
+        name = function.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        arguments = function.get("arguments", {})
+        if isinstance(arguments, str):
+            arguments_json = arguments
+        else:
+            arguments_json = json.dumps(
+                arguments,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        normalized.append(
+            {
+                "id": str(raw_call.get("id") or f"call-{uuid4().hex}"),
+                "type": str(raw_call.get("type") or "function"),
+                "function": {"name": name.strip(), "arguments": arguments_json},
+            }
+        )
+    return normalized
+
+
+def _parse_tool_call_markup(text: str) -> tuple[str, list[dict[str, Any]]]:
+    """Convert llama.cpp's legacy XML tool syntax into structured calls.
+
+    Some llama.cpp/Qwen combinations emit ``<tool_call>`` markup when a
+    request reaches the server without its OpenAI ``tools`` field.  Keeping a
+    narrow compatibility parser here prevents that protocol artifact from
+    leaking into Telegram or other agent UIs.  Unparseable markup is left
+    untouched so a malformed model response remains diagnosable.
+    """
+
+    if not isinstance(text, str) or "<tool_call" not in text.lower():
+        return text, []
+    calls: list[dict[str, Any]] = []
+    removable_spans: list[tuple[int, int]] = []
+    for block in _TOOL_CALL_BLOCK_RE.finditer(text):
+        body = block.group("body")
+        parsed_in_block: list[dict[str, Any]] = []
+        for function in _TOOL_FUNCTION_RE.finditer(body):
+            name = function.group("name").strip()
+            arguments = {
+                parameter.group("name").strip(): _decode_tool_parameter(parameter.group("value"))
+                for parameter in _TOOL_PARAMETER_RE.finditer(function.group("body"))
+            }
+            parsed_in_block.append(_new_tool_call(name=name, arguments=arguments))
+        if not parsed_in_block:
+            # A few templates use JSON inside the tool_call wrapper instead
+            # of the function/parameter tags.  Accept only the explicit
+            # name+arguments contract; arbitrary JSON must stay visible.
+            try:
+                decoded = json.loads(html.unescape(body.strip()))
+            except (TypeError, ValueError):
+                decoded = None
+            if isinstance(decoded, dict):
+                name = decoded.get("name") or decoded.get("function")
+                arguments = decoded.get("arguments", {})
+                if isinstance(name, str) and isinstance(arguments, dict):
+                    parsed_in_block.append(_new_tool_call(name=name, arguments=arguments))
+        if parsed_in_block:
+            calls.extend(parsed_in_block)
+            removable_spans.append((block.start(), block.end()))
+    if not calls:
+        return text, []
+    visible_parts: list[str] = []
+    cursor = 0
+    for start, end in removable_spans:
+        visible_parts.append(text[cursor:start])
+        cursor = end
+    visible_parts.append(text[cursor:])
+    return "".join(visible_parts).strip(), calls
+
+
+def _assistant_output(result: dict[str, Any]) -> tuple[str | None, list[dict[str, Any]]]:
+    """Return visible assistant text and structured tool calls from a task."""
+
+    raw_text = result.get("output_text")
+    text = raw_text if isinstance(raw_text, str) else str(raw_text or "")
+    tool_calls = _normalize_native_tool_calls(result.get("tool_calls"))
+    if not tool_calls:
+        text, tool_calls = _parse_tool_call_markup(text)
+    else:
+        # A provider can include a compatibility block alongside native calls;
+        # strip only the block while retaining the native call payload.
+        text, _ = _parse_tool_call_markup(text)
+    return (text or None), tool_calls
 
 
 def build_inference_router(
@@ -231,7 +378,9 @@ def build_inference_router(
                             raise ValueError("legacy owner-agent request ceiling")
                     except (ValidationError, ValueError):
                         if getattr(session, "economic_profile", None) != "OWNER_AGENT":
-                            raise ValueError("Inference session has an invalid accounting contract")
+                            raise ValueError(
+                                "Inference session has an invalid accounting contract"
+                            ) from None
                         session_service.close_session(credential.session_id)
                         session = None
                     if session is not None:
@@ -342,9 +491,27 @@ def build_inference_router(
                 {
                     key: value
                     for key, value in payload.extra_body.items()
-                    if key not in {"messages", "prompt", "model"}
+                    if key
+                    not in {
+                        "messages",
+                        "prompt",
+                        "model",
+                        "tools",
+                        "tool_choice",
+                        "parallel_tool_calls",
+                    }
                 }
             )
+            # Preserve the OpenAI tool contract all the way to the reviewed
+            # Provider adapter.  Older gateway versions silently discarded
+            # these fields, which made Qwen/llama.cpp fall back to emitting
+            # ``<tool_call>`` XML as ordinary assistant text.
+            if payload.tools is not None:
+                request_payload["tools"] = payload.tools
+            if payload.tool_choice is not None:
+                request_payload["tool_choice"] = payload.tool_choice
+            if payload.parallel_tool_calls is not None:
+                request_payload["parallel_tool_calls"] = payload.parallel_tool_calls
             try:
                 request_payload = apply_runtime_parameter_policy_payload(
                     request_payload,
@@ -394,17 +561,31 @@ def build_inference_router(
                 code="upstream_error",
                 error_type="server_error",
             )
-        text = result.get("output_text")
-        if not isinstance(text, str):
-            text = str(text or "")
+        text, tool_calls = _assistant_output(result)
         completion_id = "chatcmpl-" + task.task_id
         created = int(time.time())
+        finish_reason = "tool_calls" if tool_calls else "stop"
         if payload.stream:
             # Runtime execution is currently request/response based. Emit a
             # standards-compatible buffered stream after the approved task
             # completes so OpenAI clients (including Hermes) can use their
             # normal streaming path without exposing an unbounded provider
             # connection or pretending that tokens arrived incrementally.
+            delta: dict[str, Any] = {"role": "assistant"}
+            if text is not None:
+                delta["content"] = text
+            if tool_calls:
+                delta["tool_calls"] = [
+                    {
+                        "index": index,
+                        "id": call["id"],
+                        "type": call["type"],
+                        "function": call["function"],
+                    }
+                    for index, call in enumerate(tool_calls)
+                ]
+            if len(delta) == 1:
+                delta["content"] = ""
             events = [
                 _stream_event(
                     {
@@ -415,7 +596,7 @@ def build_inference_router(
                         "choices": [
                             {
                                 "index": 0,
-                                "delta": {"role": "assistant", "content": text},
+                                "delta": delta,
                                 "finish_reason": None,
                             }
                         ],
@@ -428,7 +609,7 @@ def build_inference_router(
                         "created": created,
                         "model": credential.model_alias,
                         "choices": [
-                            {"index": 0, "delta": {}, "finish_reason": "stop"}
+                            {"index": 0, "delta": {}, "finish_reason": finish_reason}
                         ],
                     }
                 ),
@@ -450,8 +631,12 @@ def build_inference_router(
                 "choices": [
                     {
                         "index": 0,
-                        "message": {"role": "assistant", "content": text},
-                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "content": text,
+                            **({"tool_calls": tool_calls} if tool_calls else {}),
+                        },
+                        "finish_reason": finish_reason,
                     }
                 ],
                 "aidn": {"endpoint_id": endpoint.endpoint_id, "task_id": task.task_id},

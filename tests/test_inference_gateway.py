@@ -72,11 +72,16 @@ class _HypervisorService:
     def __init__(self) -> None:
         self.submitted = []
         self._result = None
+        self._forced_result = None
 
     def submit(self, request):
         self.submitted.append(request)
         task = SimpleNamespace(task_id="task-agent-test", status="queued")
-        self._result = {"ok": True, "output_text": "hello from llama", "model_id": "qwen"}
+        self._result = self._forced_result or {
+            "ok": True,
+            "output_text": "hello from llama",
+            "model_id": "qwen",
+        }
         return task
 
     def task_result(self, task_id: str):
@@ -210,6 +215,91 @@ def test_chat_completion_opens_owner_session_and_preserves_editable_parameters(t
     assert sessions.opened[0]["request_charge_ceiling_q_atoms"] == 0
 
 
+def test_chat_completion_forwards_tools_and_returns_native_tool_calls(tmp_path) -> None:
+    client, issued, service, _ = _client(tmp_path)
+    tool_definition = {
+        "type": "function",
+        "function": {
+            "name": "delegate_task",
+            "description": "Delegate a task",
+            "parameters": {
+                "type": "object",
+                "properties": {"goal": {"type": "string"}},
+                "required": ["goal"],
+            },
+        },
+    }
+    service._forced_result = {
+        "ok": True,
+        "output_text": "I will inspect that site.",
+        "tool_calls": [
+            {
+                "id": "call-native-1",
+                "type": "function",
+                "function": {
+                    "name": "delegate_task",
+                    "arguments": '{"goal":"Inspect the site"}',
+                },
+            }
+        ],
+    }
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {issued.token}"},
+        json={
+            "model": "qwen-local",
+            "messages": [{"role": "user", "content": "Inspect the site"}],
+            "tools": [tool_definition],
+            "tool_choice": "auto",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["choices"][0]["finish_reason"] == "tool_calls"
+    assert body["choices"][0]["message"]["content"] == "I will inspect that site."
+    assert body["choices"][0]["message"]["tool_calls"][0]["function"]["name"] == "delegate_task"
+    assert service.submitted[0].payload["tools"] == [tool_definition]
+    assert service.submitted[0].payload["tool_choice"] == "auto"
+
+
+def test_chat_completion_converts_legacy_xml_tool_markup_without_leaking_it(tmp_path) -> None:
+    client, issued, service, _ = _client(tmp_path)
+    service._forced_result = {
+        "ok": True,
+        "output_text": (
+            "I will inspect that site.\n\n"
+            "<tool_call>\n"
+            "<function=delegate_task>\n"
+            "<parameter=goal>Inspect https://aidn.rootnode.cv</parameter>\n"
+            "</function>\n"
+            "</tool_call>"
+        ),
+    }
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {issued.token}"},
+        json={
+            "model": "qwen-local",
+            "messages": [{"role": "user", "content": "Inspect the site"}],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    choice = body["choices"][0]
+    assert choice["finish_reason"] == "tool_calls"
+    assert choice["message"]["content"] == "I will inspect that site."
+    assert "<tool_call>" not in response.text
+    assert choice["message"]["tool_calls"][0]["function"]["name"] == "delegate_task"
+    assert (
+        choice["message"]["tool_calls"][0]["function"]["arguments"]
+        == '{"goal":"Inspect https://aidn.rootnode.cv"}'
+    )
+
+
 def test_chat_completion_rejects_locked_endpoint_parameter_before_opening_session(tmp_path) -> None:
     client, issued, service, sessions = _client(
         tmp_path,
@@ -261,6 +351,35 @@ def test_streaming_returns_a_buffered_openai_compatible_sse_response(tmp_path) -
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
     assert '"content":"hello from llama"' in response.text
+    assert "data: [DONE]" in response.text
+
+
+def test_streaming_converts_legacy_xml_tool_markup_to_sse_tool_calls(tmp_path) -> None:
+    client, issued, service, _ = _client(tmp_path)
+    service._forced_result = {
+        "ok": True,
+        "output_text": (
+            "I will inspect that site.\n"
+            "<tool_call><function=delegate_task>"
+            "<parameter=goal>Inspect the site</parameter>"
+            "</function></tool_call>"
+        ),
+    }
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {issued.token}"},
+        json={
+            "model": "qwen-local",
+            "messages": [{"role": "user", "content": "inspect"}],
+            "stream": True,
+        },
+    )
+
+    assert response.status_code == 200
+    assert "<tool_call>" not in response.text
+    assert '"tool_calls"' in response.text
+    assert '"finish_reason":"tool_calls"' in response.text
     assert "data: [DONE]" in response.text
 
 

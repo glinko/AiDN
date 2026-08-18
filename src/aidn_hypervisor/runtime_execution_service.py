@@ -286,7 +286,7 @@ class RuntimeExecutionService:
                 result=result,
             )
             result_payload = result.result_payload or {}
-            self._host._task_results[task_id] = {
+            task_result = {
                 "ok": True,
                 "task_type": task.request.task_type,
                 "output_text": result_payload.get("text", ""),
@@ -297,6 +297,9 @@ class RuntimeExecutionService:
                     "final_usage_report_id": result.final_usage_report_id,
                 },
             }
+            if isinstance(result_payload.get("tool_calls"), list):
+                task_result["tool_calls"] = result_payload["tool_calls"]
+            self._host._task_results[task_id] = task_result
             self._host.queue.transition_status(task_id, "completed")
             self._host.record_event(
                 event_type="task.completed",

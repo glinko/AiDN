@@ -171,6 +171,63 @@ def test_llamacpp_adapter_disables_thinking_by_default_but_preserves_override() 
     assert override_parameters["chat_template_kwargs"] == {"enable_thinking": True}
 
 
+def test_llamacpp_adapter_preserves_native_tool_calls_and_forwards_tool_schema(monkeypatch) -> None:
+    adapter = LlamaCppOpenAIAdapter(
+        endpoint="http://provider",
+        model="qwen",
+        runtime_signature="runtime-signed",
+    )
+    tool_definition = {
+        "type": "function",
+        "function": {
+            "name": "delegate_task",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+    request = _request()
+    request.request_payload = {
+        "messages": [{"role": "user", "content": "inspect"}],
+        "tools": [tool_definition],
+        "tool_choice": "auto",
+    }
+    path, upstream_payload = adapter._upstream_payload(request, stream=False)
+    assert path == "/v1/chat/completions"
+    assert upstream_payload["tools"] == [tool_definition]
+    assert upstream_payload["tool_choice"] == "auto"
+
+    monkeypatch.setattr(
+        adapter,
+        "_completion",
+        lambda _: {
+            "model": "qwen",
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "role": "assistant",
+                        "content": "I will inspect it.",
+                        "tool_calls": [
+                            {
+                                "id": "call-1",
+                                "type": "function",
+                                "function": {
+                                    "name": "delegate_task",
+                                    "arguments": '{"goal":"inspect"}',
+                                },
+                            }
+                        ],
+                    },
+                }
+            ],
+        },
+    )
+    protocol = _Protocol()
+    result = adapter.execute(protocol, "connection-1", request)
+
+    assert result.result_payload["text"] == "I will inspect it."
+    assert result.result_payload["tool_calls"][0]["id"] == "call-1"
+
+
 def test_llamacpp_adapter_records_failed_terminal_evidence_for_upstream_error(monkeypatch) -> None:
     adapter = LlamaCppOpenAIAdapter(
         endpoint="http://provider",
