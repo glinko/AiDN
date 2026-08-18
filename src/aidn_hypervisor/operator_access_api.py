@@ -1015,8 +1015,8 @@ def build_operator_access_router(
             return operation_error(error)
         return JSONResponse(status_code=202, content=result)
 
-    @router.post("/pair", status_code=204)
-    async def pair(payload: PairingRequest, request: Request, response: Response) -> Response:
+    @router.post("/pair", status_code=200)
+    async def pair(payload: PairingRequest, request: Request) -> Response:
         if access_service is None:
             return JSONResponse(status_code=404, content={"error": {"code": "DASHBOARD_ACCESS_DISABLED"}})
         if not allow_insecure_lan and request.url.scheme != "https":
@@ -1028,7 +1028,18 @@ def build_operator_access_router(
         )
         if session is None:
             return JSONResponse(status_code=403, content={"error": {"code": "DASHBOARD_PAIRING_INVALID"}})
-        response.set_cookie(
+        # Return a small JSON success body instead of 204.  Some iOS/WebKit
+        # clients have historically been unreliable about retaining a
+        # Set-Cookie header from a 204 fetch response; the dashboard pairing
+        # flow must work on the phone that is normally used to operate a LAN
+        # node.  The session id remains HttpOnly and is never returned in the
+        # JSON body.
+        paired = JSONResponse(
+            status_code=200,
+            content={"status": "paired", "expires_at": session.expires_at},
+            headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+        )
+        paired.set_cookie(
             _COOKIE_NAME,
             session.session_id,
             httponly=True,
@@ -1037,7 +1048,7 @@ def build_operator_access_router(
             path=_COOKIE_PATH,
             max_age=_COOKIE_MAX_AGE[payload.duration],
         )
-        return Response(status_code=204, headers=dict(response.headers))
+        return paired
 
     @router.post("/credentials", status_code=201)
     async def create_credential(payload: CredentialCreateRequest, request: Request) -> Response:

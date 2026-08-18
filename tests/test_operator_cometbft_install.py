@@ -248,7 +248,7 @@ def test_install_route_is_paired_and_accepts_only_reviewed_payload(tmp_path, mon
 
     assert client.post("/operators/dashboard/access/operations/cometbft/install", json={}).status_code == 401
     pairing = access.create_pairing(ttl_seconds=600)
-    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 200
     response = client.post(
         "/operators/dashboard/access/operations/cometbft/install",
         json={"mode": "validator", "chain_id": "aidn-testnet-1"},
@@ -279,7 +279,7 @@ def test_reconnect_route_requires_reset_but_not_local_network_acknowledgement(tm
     client = TestClient(app)
     client.headers.update(_BROWSER_HEADERS)
     pairing = access.create_pairing(ttl_seconds=600)
-    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 200
 
     payload = {
         "mode": "non_validator",

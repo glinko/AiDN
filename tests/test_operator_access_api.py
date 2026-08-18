@@ -171,7 +171,11 @@ def test_credential_mutation_requires_pairing_and_reveals_only_new_value(tmp_pat
     ).status_code == 401
 
     pairing = access.create_pairing(ttl_seconds=600)
-    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+    pairing_response = client.post("/operators/dashboard/access/pair", json={"code": pairing.code})
+    assert pairing_response.status_code == 200
+    assert pairing_response.json()["status"] == "paired"
+    assert pairing_response.headers["cache-control"] == "no-store"
+    assert "aidn_dashboard_access=" in pairing_response.headers["set-cookie"]
 
     created = client.post(
         "/operators/dashboard/access/credentials",
@@ -233,7 +237,7 @@ def test_inference_token_requires_local_agent_opt_in(tmp_path) -> None:
     client = TestClient(app)
     client.headers.update(_BROWSER_HEADERS)
     pairing = access.create_pairing(ttl_seconds=600)
-    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 200
 
     rejected = client.post(
         "/operators/dashboard/access/inference-credentials",
@@ -285,7 +289,7 @@ def test_inference_token_accepts_openai_chat_runtime_binding(tmp_path) -> None:
     client = TestClient(app)
     client.headers.update(_BROWSER_HEADERS)
     pairing = access.create_pairing(ttl_seconds=600)
-    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 200
 
     issued = client.post(
         "/operators/dashboard/access/inference-credentials",
@@ -353,7 +357,7 @@ def test_disabling_local_agent_use_revokes_endpoint_tokens_without_rotating_conf
     client = TestClient(app)
     client.headers.update(_BROWSER_HEADERS)
     pairing = access.create_pairing(ttl_seconds=600)
-    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 200
 
     response = client.post(
         f"/operators/dashboard/access/operations/endpoints/{endpoint.endpoint_id}/local-agent-use",
@@ -388,7 +392,7 @@ def test_dashboard_network_access_is_pair_bound_and_limited_to_loopback_or_lan(t
 
     assert client.post("/operators/dashboard/access/operations/network", json={"mode": "lan"}).status_code == 401
     pairing = access.create_pairing(ttl_seconds=600)
-    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 200
 
     initial = client.get("/operators/dashboard/access/status")
     assert initial.json()["network_access"]["effective_mode"] == "loopback"
@@ -415,7 +419,7 @@ def test_paired_operator_can_list_and_update_only_known_agent_permissions(tmp_pa
     client = TestClient(app)
     client.headers.update(_BROWSER_HEADERS)
     pairing = access.create_pairing(ttl_seconds=600)
-    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 200
 
     catalog = client.get("/operators/dashboard/access/permission-catalog")
     assert catalog.status_code == 200
@@ -484,7 +488,7 @@ def test_agent_enrollment_is_approved_only_by_a_paired_dashboard(tmp_path) -> No
     assert client.post(approval_url).status_code == 401
 
     pairing = access.create_pairing(ttl_seconds=600)
-    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 200
     approved = client.post(f"/operators/dashboard/access/enrollment-requests/{created.json()['request_id']}/approve")
     assert approved.status_code == 200
     assert approved.json()["state"] == "approved"
@@ -513,7 +517,7 @@ def test_build_app_wires_secret_backed_access_management(monkeypatch, tmp_path) 
     client.headers.update(_BROWSER_HEADERS)
 
     pairing = app.state.dashboard_access_service.create_pairing(ttl_seconds=60)
-    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 200
     status = client.get("/operators/dashboard/access/status")
     assert status.status_code == 200
     assert status.json()["enabled"] is True
@@ -542,7 +546,7 @@ def test_paired_dashboard_operations_require_pairing_and_call_bounded_service(tm
     ).status_code == 401
 
     pairing = access.create_pairing(ttl_seconds=600)
-    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 200
 
     assert client.post("/operators/dashboard/access/operations/bundles/bundle-a/enable").json()["enabled"] is True
     assert client.post("/operators/dashboard/access/operations/bundles/bundle-a/retry").json()["status"] == "retried"
@@ -645,7 +649,7 @@ def test_wallet_transfer_preview_is_read_only_and_submit_updates_local_ledger(tm
     ).status_code == 401
 
     pairing = access.create_pairing(ttl_seconds=600)
-    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 200
 
     preview = client.post(
         "/operators/dashboard/access/operations/wallet/transfer/preview",
@@ -690,7 +694,7 @@ def test_wallet_transfer_rejects_self_transfer_and_insufficient_balance(tmp_path
     client = TestClient(app)
     client.headers.update(_BROWSER_HEADERS)
     pairing = access.create_pairing(ttl_seconds=600)
-    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 200
 
     self_transfer = client.post(
         "/operators/dashboard/access/operations/wallet/transfer/preview",
@@ -750,7 +754,7 @@ def test_wallet_transfer_pending_state_is_visible_without_local_debit(tmp_path) 
     client = TestClient(app)
     client.headers.update(_BROWSER_HEADERS)
     pairing = access.create_pairing(ttl_seconds=600)
-    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 200
 
     submitted = client.post(
         "/operators/dashboard/access/operations/wallet/transfer",
@@ -862,7 +866,7 @@ def test_paired_dashboard_model_and_bundle_lifecycle_operations_are_bounded(tmp_
     ).status_code == 401
 
     pairing = access.create_pairing(ttl_seconds=600)
-    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 200
 
     assert client.post(
         "/operators/dashboard/access/operations/models/install",

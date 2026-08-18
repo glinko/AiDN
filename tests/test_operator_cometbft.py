@@ -143,7 +143,7 @@ def test_cometbft_control_route_requires_paired_dashboard(monkeypatch, tmp_path)
 
     assert client.post("/operators/dashboard/access/operations/cometbft/start").status_code == 401
     pairing = access.create_pairing(ttl_seconds=600)
-    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 204
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 200
     response = client.post("/operators/dashboard/access/operations/cometbft/restart")
 
     assert response.status_code == 202
