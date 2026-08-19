@@ -286,6 +286,40 @@ def test_credential_effective_policy_is_consistent_across_mcp_reads(tmp_path) ->
     assert policy["effective_approval_policy"]["bundle_retire"] == "AUTO"
 
 
+def test_credential_restricted_retire_reports_approval_required_without_internal_error(tmp_path) -> None:
+    credentials = McpCredentialStore(
+        secret_manager=FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
+    )
+    issued = credentials.create_credential(
+        label="restricted retire agent",
+        scopes=("CAPABILITIES:READ", "BUNDLE:READ", "BUNDLE:RETIRE"),
+    )
+    client, _gateway = _client_with_credentials(tmp_path, credentials)
+    session_id = _initialize(client, issued.token or "")
+
+    request = {
+        "bundle_id": "bundle-a",
+        "mode": "plan",
+        "request_id": "remote-restricted-retire",
+        "idempotency_key": "remote-restricted-retire-idem",
+    }
+    plan = _tool_call(client, session_id, "aidn.bundle.retire", request, token=issued.token or "")
+    plan_payload = plan["structuredContent"]
+    assert plan_payload["requires_approval"] is True
+
+    denied = _tool_call(
+        client,
+        session_id,
+        "aidn.bundle.retire",
+        {**request, "mode": "apply", "plan_hash": plan_payload["plan_hash"]},
+        token=issued.token or "",
+    )
+    error = denied["structuredContent"]["error"]
+    assert denied["isError"] is True
+    assert error["code"] == "MCP_APPROVAL_REQUIRED"
+    assert error["details"]["approval_mode"] == "OPERATOR_CONFIRMATION"
+
+
 def _tool_call(
     client: TestClient,
     session_id: str,
