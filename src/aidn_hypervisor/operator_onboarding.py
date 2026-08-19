@@ -81,6 +81,22 @@ def build_onboarding_payload(
         item.get("publication_status") == "published" for item in endpoint_items
     )
     completed = bool(persisted.get("completed")) or has_published_endpoint
+    completed_at = persisted.get("completed_at")
+    completed_via = persisted.get("completed_via")
+    if has_published_endpoint:
+        # The endpoint publication projection is authoritative for the live
+        # state. Older persisted onboarding records may predate the finality
+        # callback and therefore lack completion metadata even though the
+        # endpoint is already published.
+        completed_via = completed_via or "first_local_endpoint_published"
+        if completed_at is None:
+            published_at = sorted(
+                item.get("published_at")
+                for item in endpoint_items
+                if item.get("publication_status") == "published"
+                and isinstance(item.get("published_at"), str)
+            )
+            completed_at = published_at[0] if published_at else None
 
     if completed:
         current_step = "operate"
@@ -110,14 +126,14 @@ def build_onboarding_payload(
                 "label": label,
                 "workspace": workspace,
                 "status": status,
-                "completed_at": persisted.get("completed_at") if status == "complete" else None,
+                "completed_at": completed_at if status == "complete" else None,
             }
         )
 
     return {
         "completed": completed,
-        "completed_at": persisted.get("completed_at"),
-        "completed_via": persisted.get("completed_via"),
+        "completed_at": completed_at,
+        "completed_via": completed_via,
         "current_step": current_step,
         "workspace": _WORKSPACE_BY_STEP[current_step],
         "last_workspace": persisted.get("last_workspace", "home"),

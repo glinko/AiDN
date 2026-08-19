@@ -38,3 +38,30 @@ def test_build_onboarding_payload_completes_after_first_published_endpoint() -> 
     assert payload["completed"] is True
     assert payload["current_step"] == "operate"
     assert payload["recommended_action"]["action"] == "open-home"
+
+
+def test_build_onboarding_payload_recovers_completion_metadata_from_publication() -> None:
+    payload = build_onboarding_payload(
+        wallet_ready=True,
+        provider_count=1,
+        bundle_count=1,
+        endpoint_items=[
+            {
+                "endpoint_id": "endpoint-1",
+                "publication_status": "published",
+                "published_at": "2026-08-19T02:00:00+00:00",
+                "bundle_id": "whisper-a",
+            }
+        ],
+        first_endpoint_candidate={"bundle_id": "whisper-a"},
+        persisted={
+            "completed": False,
+            "completed_at": None,
+            "completed_via": None,
+        },
+    )
+
+    assert payload["completed"] is True
+    assert payload["current_step"] == "operate"
+    assert payload["completed_via"] == "first_local_endpoint_published"
+    assert payload["completed_at"] == "2026-08-19T02:00:00+00:00"
