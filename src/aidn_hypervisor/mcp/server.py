@@ -1545,12 +1545,26 @@ class McpControlPlane:
         }
 
     def _node_status(self) -> dict[str, Any]:
+        # Keep the MCP node summary on the same canonical operator read model
+        # as ``aidn.bundle.list``.  The legacy fleet payload contains useful
+        # runtime facts, but its persisted onboarding field can lag behind the
+        # endpoint publication projection (for example after a consensus
+        # finality update).  Reusing the bundle projection makes status reads
+        # reflect the endpoint state that operators and the dashboard see.
+        bundle_payload = build_operator_bundles_payload(
+            service=self.service,
+            endpoint_service=self.endpoint_service,
+            endpoint_publication_service=self.endpoint_publication_service,
+            validation_service=self.validation_service,
+        )
         return {
             "node": self.service.node_identity(),
             "queue": self.service.queue_summary(),
             "resources": self._resource_status(),
-            "bundles": self.service.operator_dashboard_fleet().get("bundles", []),
-            "onboarding": self.service.operator_onboarding_state(),
+            "bundles": bundle_payload.get("items", []),
+            "onboarding": bundle_payload.get(
+                "onboarding", self.service.operator_onboarding_state()
+            ),
         }
 
     def _node_health(self) -> dict[str, Any]:

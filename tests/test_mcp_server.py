@@ -9,6 +9,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from aidn_hypervisor.domain.models import BundleConfig, NodeCapacity, ResourceProfile
+from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
+from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
+from aidn_hypervisor.endpoints.models import CreateEndpointCommand
+from aidn_hypervisor.endpoints.service import EndpointService
+from aidn_hypervisor.endpoints.store import EndpointStore
 from aidn_hypervisor.mcp import (
     ControlSession,
     DelegatedBudget,
@@ -182,6 +187,52 @@ def test_mcp_resources_read_existing_operator_state_without_private_keys() -> No
     payload = json.loads(response["result"]["contents"][0]["text"])
     assert payload["node"]["node_id"] == "node-local"
     assert "private_key" not in json.dumps(payload)
+
+
+def test_mcp_node_status_uses_current_endpoint_publication_read_model() -> None:
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-test",
+            bundle_id="bundle-a",
+            bundle_hash="bundle-a-hash",
+            display_name="Local model",
+            model_class="llm.text",
+            capabilities=["llm_text.generate"],
+        )
+    )
+    publication_service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    publication_service.publish_configuration(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet="wallet-test",
+        node_id=service.node_id,
+        wallet_private_key="test-private-key",
+    )
+
+    # Reproduce the stale persisted state that previously leaked through
+    # aidn.node.status even though the endpoint publication was already live.
+    service.sync_operator_onboarding_state(
+        endpoint_items=[{"publication_status": "configured"}]
+    )
+    server = build_mcp_server(
+        service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=publication_service,
+        session=_session("NODE:READ"),
+    )
+    _initialize(server)
+
+    result = _call(server, "aidn.node.status")
+
+    assert result["isError"] is False
+    payload = result["structuredContent"]
+    assert payload["onboarding"]["completed"] is True
+    assert payload["onboarding"]["current_step"] == "operate"
+    assert payload["bundles"][0]["publish_status"] == "published"
 
 
 def test_mcp_permission_denial_is_a_tool_error() -> None:
