@@ -262,6 +262,7 @@ class NetworkProjectionService:
         bundle_id: str | None = None,
         include_disabled: bool = False,
     ) -> dict:
+        self._host.refresh_runtime_health(bundle_id)
         self._host._cleanup_expired_allocations()
         self._host._reconcile_pending_allocations()
         bundles = self._host._filtered_catalog_bundles(
@@ -287,6 +288,10 @@ class NetworkProjectionService:
         }
 
     def canonical_overlay_inventory(self) -> dict:
+        # Canonical capability records are consumed by node advertisements and
+        # MCP node status.  Keep them on the same live runtime projection as
+        # the operator dashboard instead of copying a stale snapshot.
+        self._host.refresh_runtime_health()
         current_publication_records = self._current_publication_records()
         capabilities = project_capability_definitions(self._host)
         runtimes = project_capability_runtimes(self._host)

@@ -1579,6 +1579,10 @@ class McpControlPlane:
         bundle = next((item for item in self.service.bundles if item.bundle_id == bundle_id), None)
         if bundle is None:
             raise McpDomainError("MCP_BUNDLE_NOT_FOUND", f"Bundle not found: {bundle_id}")
+        # ``bundle.get`` is a read-only tool, but runtime readiness is an
+        # external fact.  Reconcile it before serializing the object so MCP
+        # clients do not poll a permanently stale ``starting/unknown`` value.
+        self.service.refresh_runtime_health(bundle_id)
         runtime = self.service._runtime_for_bundle(bundle_id)
         return {
             "bundle": _json_safe(bundle),
@@ -1616,7 +1620,10 @@ class McpControlPlane:
         unhealthy = [
             item["bundle_id"]
             for item in runtimes
-            if item.get("runtime_status") not in {"running", "healthy", "starting", "stopped"}
+            if (
+                item.get("runtime_status") not in {"running", "healthy", "starting", "stopped"}
+                or item.get("runtime_health_status") in {"unhealthy", "cooldown"}
+            )
         ]
         return {
             "status": "degraded" if unhealthy else "healthy",

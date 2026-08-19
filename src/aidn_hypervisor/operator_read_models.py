@@ -24,6 +24,10 @@ class OperatorReadModelService:
 
     def fleet(self) -> dict:
         service = self._service
+        # Runtime state is partly external (managed process + provider HTTP
+        # health), so a durable snapshot alone is not authoritative.  Reconcile
+        # before constructing every operator-facing fleet projection.
+        service.refresh_runtime_health()
         resources = (
             service.resources.summary()
             if service.resources is not None

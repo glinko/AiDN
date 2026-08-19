@@ -986,6 +986,7 @@ def build_api_router(
 
     @router.get("/bundles")
     async def list_bundles() -> list[dict]:
+        service.refresh_runtime_health()
         runtimes = service.list_runtimes()
         return [
             {
@@ -1008,6 +1009,7 @@ def build_api_router(
 
     @router.get("/runtimes")
     async def list_runtimes() -> list[dict]:
+        service.refresh_runtime_health()
         return [
             {
                 "runtime_id": runtime.runtime_id,
@@ -1039,6 +1041,7 @@ def build_api_router(
 
     @router.get("/runtimes/{runtime_id}")
     async def get_runtime(runtime_id: str) -> dict:
+        service.refresh_runtime_health(force=True)
         try:
             runtime = service.get_runtime(runtime_id)
         except KeyError as error:

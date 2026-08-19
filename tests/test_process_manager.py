@@ -116,3 +116,27 @@ def test_managed_process_cleans_private_launch_files_after_exit(tmp_path) -> Non
         time.sleep(0.01)
     assert not secret_file.exists()
     assert not secret_directory.exists()
+
+
+def test_managed_process_exit_projects_stopped_state_and_notifies() -> None:
+    observed = []
+    manager = ProviderProcessManager(
+        enable_subprocesses=True,
+        on_runtime_state_change=observed.append,
+    )
+
+    handle = manager.start_runtime(
+        {
+            "command": [sys.executable, "-c", "raise SystemExit(7)"],
+            "launch_mode": "managed_process",
+        }
+    )
+
+    deadline = time.monotonic() + 2
+    while handle.status != "stopped" and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert handle.status == "stopped"
+    assert handle.health_status == "unhealthy"
+    assert handle.last_error == "managed runtime exited with code 7"
+    assert observed == [handle]

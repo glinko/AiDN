@@ -295,6 +295,16 @@ class HypervisorService:
         self.operator_read_models = OperatorReadModelService(self)
         self._events: list[JournalEvent] = []
         self._runtime_boundary = RuntimeProtocolBoundaryService(self)
+        # Managed child processes can change state without an API request.
+        # Let the process manager persist those transitions so another shared
+        # state-store writer cannot reintroduce an old runtime snapshot.
+        bind_runtime_callback = getattr(
+            self.runtimes,
+            "set_runtime_state_change_callback",
+            None,
+        )
+        if callable(bind_runtime_callback):
+            bind_runtime_callback(self._persist_state)
 
     def bind_consensus_finality_source(self, consensus_finality_source) -> None:
         """Bind one verified finality source to the Hypervisor and Registry."""
@@ -1295,6 +1305,7 @@ class HypervisorService:
         return self._allocation_lifecycle_facade().release_allocation(allocation_id)
 
     def capability_inventory(self) -> list[dict]:
+        self.refresh_runtime_health()
         return [
             {
                 "bundle_id": bundle.bundle_id,
@@ -2019,6 +2030,19 @@ class HypervisorService:
 
     def list_runtimes(self) -> list[RuntimeHandle]:
         return self._runtime_boundary.list_runtimes()
+
+    def refresh_runtime_health(
+        self,
+        bundle_id: str | None = None,
+        *,
+        force: bool = False,
+    ) -> list[RuntimeHandle]:
+        """Return runtime state reconciled with live provider processes."""
+
+        return self._runtime_boundary._bundle_runtime_policy_facade().refresh_runtime_health(
+            bundle_id,
+            force=force,
+        )
 
     def process_pending(self) -> dict[str, int]:
         return self._task_lifecycle_facade().process_pending()

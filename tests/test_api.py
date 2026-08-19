@@ -1232,7 +1232,9 @@ def test_start_bundle_endpoint_launches_runtime_and_updates_bundle_status() -> N
     bundles_response = client.get("/bundles")
 
     assert bundles_response.status_code == 200
-    assert bundles_response.json()[0]["status"] == "starting"
+    # Read endpoints reconcile provider health before projecting lifecycle
+    # state, so a managed fake runtime is immediately reported as ready.
+    assert bundles_response.json()[0]["status"] == "running"
 
 
 def test_start_bundle_endpoint_rejects_disabled_bundles() -> None:
@@ -1301,8 +1303,8 @@ def test_runtime_detail_endpoint_returns_runtime_with_history() -> None:
         "runtime_id": "rt-1",
         "bundle_id": "whisper-a",
         "command": ["python", "-m", "http.server", "0"],
-        "status": "starting",
-        "health_status": "unknown",
+        "status": "running",
+        "health_status": "healthy",
         "active_task_count": 0,
         "failure_streak": 0,
         "cooldown_until": None,

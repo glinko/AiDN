@@ -235,6 +235,23 @@ def test_mcp_node_status_uses_current_endpoint_publication_read_model() -> None:
     assert payload["bundles"][0]["publish_status"] == "published"
 
 
+def test_mcp_bundle_get_reconciles_live_provider_health() -> None:
+    service = _service()
+    service.start_bundle("bundle-a")
+    server = build_mcp_server(
+        service,
+        session=_session("BUNDLE:READ"),
+    )
+    _initialize(server)
+
+    result = _call(server, "aidn.bundle.get", {"bundle_id": "bundle-a"})
+
+    assert result["isError"] is False
+    runtime = result["structuredContent"]["runtime"]
+    assert runtime["status"] == "running"
+    assert runtime["health_status"] == "healthy"
+
+
 def test_mcp_permission_denial_is_a_tool_error() -> None:
     server = _server("BUNDLE:READ")
     _initialize(server)

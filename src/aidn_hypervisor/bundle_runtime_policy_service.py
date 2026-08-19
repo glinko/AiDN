@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import time
+from threading import RLock
 
 from aidn_hypervisor.bundle_hash import bundle_config_hash
 from aidn_hypervisor.domain.models import BundleConfig, TaskRequest
 from aidn_hypervisor.process_manager import RuntimeHandle
 
 _ACTIVE_EXECUTION_STATUSES = {"admitted", "starting", "running"}
+_ACTIVE_RUNTIME_STATUSES = {"starting", "running", "draining"}
+_RUNTIME_HEALTH_PROBE_INTERVAL_SECONDS = 5.0
 
 
 class BundleRuntimePolicyService:
@@ -14,6 +17,8 @@ class BundleRuntimePolicyService:
 
     def __init__(self, host) -> None:
         self._host = host
+        self._health_probe_lock = RLock()
+        self._health_probe_at: dict[str, float] = {}
 
     def get_runtime(self, runtime_id: str) -> RuntimeHandle:
         for runtime in self.list_runtimes():
@@ -316,6 +321,94 @@ class BundleRuntimePolicyService:
             return list(self._host.runtimes.list_runtimes())
         return list(self._host.runtimes or [])
 
+    def refresh_runtime_health(
+        self,
+        bundle_id: str | None = None,
+        *,
+        force: bool = False,
+    ) -> list[RuntimeHandle]:
+        """Reconcile live provider health before returning operator state.
+
+        Runtime lifecycle is split across three facts: the child process,
+        provider readiness, and the durable snapshot.  Starting a runtime used
+        to write only ``starting/unknown`` and the task path was the only code
+        that ever performed a health probe.  Read-only MCP/dashboard calls
+        therefore kept receiving that stale projection forever.  This bounded
+        read-side reconciler makes the provider plugin the authority for
+        readiness while keeping probes rate-limited to avoid turning polling
+        clients into a health-check flood.
+        """
+
+        with self._health_probe_lock:
+            process_state_changed = False
+            sync_process_state = getattr(self._host.runtimes, "sync_process_state", None)
+            if callable(sync_process_state):
+                process_state_changed = bool(sync_process_state())
+
+            now = time.monotonic()
+            runtimes = self.list_runtimes()
+            candidates = [
+                runtime
+                for runtime in runtimes
+                if runtime.bundle_id is not None
+                and (bundle_id is None or runtime.bundle_id == bundle_id)
+                and runtime.status in _ACTIVE_RUNTIME_STATUSES
+            ]
+            changed = process_state_changed
+            for runtime in candidates:
+                # A provider cooldown is an intentional circuit-breaker state,
+                # not a stale health probe.  Keep it visible until the
+                # cooldown expires or an explicit retry/reset clears it.
+                if self.bundle_in_cooldown(runtime.bundle_id or ""):
+                    continue
+                last_probe = self._health_probe_at.get(runtime.runtime_id)
+                if (
+                    not force
+                    and last_probe is not None
+                    and now - last_probe < _RUNTIME_HEALTH_PROBE_INTERVAL_SECONDS
+                ):
+                    continue
+
+                try:
+                    bundle = self.get_bundle(runtime.bundle_id or "")
+                    plugin = self._host._get_plugin(bundle.plugin_id)
+                    diagnostic = plugin.health_check_diagnostic(runtime)
+                    healthy = bool(diagnostic.get("healthy"))
+                    diagnostic_message = diagnostic.get("message")
+                    diagnostic_code = diagnostic.get("code")
+                except Exception as error:  # pragma: no cover - plugin boundary
+                    healthy = False
+                    diagnostic_message = str(error)
+                    diagnostic_code = "provider_health_check_failed"
+
+                self._health_probe_at[runtime.runtime_id] = now
+                previous = (
+                    runtime.status,
+                    runtime.health_status,
+                    runtime.last_error,
+                )
+                if healthy:
+                    if runtime.status == "starting":
+                        runtime.status = "running"
+                    runtime.health_status = "healthy"
+                    runtime.last_error = None
+                else:
+                    runtime.health_status = "unhealthy"
+                    runtime.last_error = str(
+                        diagnostic_message
+                        or diagnostic_code
+                        or f"Runtime health check failed: {runtime.bundle_id}"
+                    )
+                changed = changed or previous != (
+                    runtime.status,
+                    runtime.health_status,
+                    runtime.last_error,
+                )
+
+            if changed:
+                self._host._persist_state()
+            return runtimes
+
     def get_bundle(self, bundle_id: str) -> BundleConfig:
         for bundle in self._host.bundles:
             if bundle.bundle_id == bundle_id:
@@ -323,8 +416,14 @@ class BundleRuntimePolicyService:
         raise KeyError(bundle_id)
 
     def runtime_for_bundle(self, bundle_id: str) -> RuntimeHandle | None:
+        sync_process_state = getattr(self._host.runtimes, "sync_process_state", None)
+        if callable(sync_process_state):
+            sync_process_state()
         for runtime in self.list_runtimes():
-            if runtime.bundle_id == bundle_id:
+            if (
+                runtime.bundle_id == bundle_id
+                and runtime.status in _ACTIVE_RUNTIME_STATUSES
+            ):
                 return runtime
         return None
 
