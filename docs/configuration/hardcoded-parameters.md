@@ -87,6 +87,26 @@ Plugin-container identity variables (`AIDN_PLUGIN_HOST_*`) are also
 documented in the template, but are generated per approved installation and
 must not be set as global operator configuration.
 
+### Web build and UI defaults
+
+The browser bundles have a separate build-time surface. These values are not
+read from the Hypervisor process environment:
+
+| Surface | Current value | How to override / migrate |
+| --- | --- | --- |
+| Website API | `VITE_WEBSITE_API_BASE` or `/api/site/v1` | Set at website build time; production should use the reverse proxy route |
+| Website dev proxy | `AIDN_WEBSITE_BACKEND_URL` or `http://127.0.0.1:8000` | Set in the Vite environment; never use this as a production public URL |
+| Website demo mode | `VITE_WEBSITE_DEMO=true` or Vite `demo` mode | Demo metrics are explicitly illustrative and must stay disabled in production |
+| Install command ref | `VITE_AIDN_INSTALL_REF` or `operator-bootstrap-v0.1.0-rc1` | Pin an immutable tag/commit; never silently fall back to `main` |
+| Dashboard API proxy | `VITE_AIDN_API_ROOT` or same-origin | Build-time only; the browser must not embed credentials |
+| Dashboard request timeout | `15,000 ms` in `web/operator-dashboard/src/lib/api.ts` | Candidate for a build/runtime API policy, with bounded minimum/maximum |
+| Provider form fallbacks | `temperature=0.7`, `top_p=0.9`, `top_k=40`, `repeat_penalty=1.1`, `max_tokens=512`, `context_length=4096` (llama/Ollama), `8192` (vLLM), GPU utilization `0.9` | These are UI fallback drafts only. The API response and Bundle revision must remain authoritative; remove duplication once a provider schema endpoint is available |
+| Model form fallback | Endpoint `http://127.0.0.1:8080`, capability version `1.0.0` | Candidate for provider catalog metadata; local loopback is intentionally safe for development |
+| Dashboard network form | RPC `26657`, P2P `26656`, ABCI `26658`; loopback by default | Reviewed CometBFT request defaults; do not loosen host choices without firewall/acknowledgement checks |
+
+The frontend's `Q_ATOMS_PER_Q = 1_000_000` is a display conversion and must
+match the backend economic unit; it is not an operator setting.
+
 ## Configuration precedence and state boundaries
 
 1. An explicit request/CLI argument wins.
