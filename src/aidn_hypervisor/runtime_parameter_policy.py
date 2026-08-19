@@ -74,6 +74,10 @@ _DEFAULTS: dict[str, dict[str, dict[str, Any]]] = {
         # it in host RAM can make long-context GGUF models fit on a constrained
         # GPU while remaining explicit in the launch policy.
         "kv_offload": {"value": True, "consumer_editable": False},
+        # Quantized KV tensors keep long contexts in VRAM without requiring
+        # the full F16 cache. These are operator-owned residency settings.
+        "kv_cache_type_k": {"value": "f16", "consumer_editable": False},
+        "kv_cache_type_v": {"value": "f16", "consumer_editable": False},
     },
     "vllm": {
         "temperature": {"value": 0.7, "consumer_editable": True, "min": 0.0, "max": 2.0},

@@ -1287,6 +1287,8 @@ const endpointParameterDefaults: Record<string, EndpointParameterDraft[]> = {
     { name: 'max_tokens', value: '512', consumerEditable: true, minimum: 1, maximum: 32768 },
     { name: 'context_length', value: '4096', consumerEditable: false, minimum: 512, maximum: 131072 },
     { name: 'gpu_layers', value: '99', consumerEditable: false, minimum: 0, maximum: 999 },
+    { name: 'kv_cache_type_k', value: 'f16', consumerEditable: false },
+    { name: 'kv_cache_type_v', value: 'f16', consumerEditable: false },
   ],
   ollama: [
     { name: 'temperature', value: '0.7', consumerEditable: true, minimum: 0, maximum: 2 },
@@ -1404,7 +1406,10 @@ function EndpointDraftControl({ ownerWallet, bundles, bindings, onRefresh }: { o
          model_class: modelClass.trim() || 'llm.chat',
          capabilities: [modelClass.trim() || 'llm.chat'],
          runtime_parameter_policy: Object.fromEntries(parameterDrafts.map((parameter) => [parameter.name, {
-           value: Number(parameter.value),
+           value: (() => {
+             const numeric = Number(parameter.value)
+             return parameter.value.trim() !== '' && Number.isFinite(numeric) ? numeric : parameter.value.trim()
+           })(),
            consumer_editable: parameter.consumerEditable,
            min: parameter.minimum,
            max: parameter.maximum,
@@ -1533,6 +1538,9 @@ function ModelsWorkspace({ installs, workspace, isLoading, error, onRefresh, onN
   const [maxTokensEditable, setMaxTokensEditable] = useState(true)
   const [contextLength, setContextLength] = useState('4096')
   const [contextLengthEditable, setContextLengthEditable] = useState(false)
+  const [kvOffload, setKvOffload] = useState(true)
+  const [kvCacheTypeK, setKvCacheTypeK] = useState('f16')
+  const [kvCacheTypeV, setKvCacheTypeV] = useState('f16')
   const [gpuMemoryUtilization, setGpuMemoryUtilization] = useState('0.9')
   const [gpuMemoryEditable, setGpuMemoryEditable] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
@@ -1600,6 +1608,11 @@ function ModelsWorkspace({ installs, workspace, isLoading, error, onRefresh, onN
     }
     if (provider === 'ollama' || provider === 'vllm') {
       policy.gpu_memory_utilization = { value: number(gpuMemoryUtilization, 'GPU memory utilization'), consumer_editable: gpuMemoryEditable, min: 0.1, max: 0.99 }
+    }
+    if (provider === 'llama') {
+      policy.kv_offload = { value: kvOffload, consumer_editable: false }
+      policy.kv_cache_type_k = { value: kvCacheTypeK.trim() || 'f16', consumer_editable: false }
+      policy.kv_cache_type_v = { value: kvCacheTypeV.trim() || 'f16', consumer_editable: false }
     }
     return policy
   }

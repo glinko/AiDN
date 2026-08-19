@@ -91,6 +91,8 @@ def test_llamacpp_launch_spec_contains_operator_locked_allocation_flags() -> Non
     assert command[command.index("--ctx-size") + 1] == "4096"
     assert "--n-gpu-layers" in command
     assert "--kv-offload" in command
+    assert command[command.index("--cache-type-k") + 1] == "f16"
+    assert command[command.index("--cache-type-v") + 1] == "f16"
 
 
 def test_llamacpp_launch_spec_can_keep_long_context_kv_cache_on_host() -> None:
@@ -105,6 +107,12 @@ def test_llamacpp_launch_spec_can_keep_long_context_kv_cache_on_host() -> None:
                 "kv_offload": defaults["kv_offload"].model_copy(
                     update={"value": False}
                 ),
+                "kv_cache_type_k": defaults["kv_cache_type_k"].model_copy(
+                    update={"value": "q8_0"}
+                ),
+                "kv_cache_type_v": defaults["kv_cache_type_v"].model_copy(
+                    update={"value": "q8_0"}
+                ),
             }
         }
     )
@@ -112,6 +120,30 @@ def test_llamacpp_launch_spec_can_keep_long_context_kv_cache_on_host() -> None:
     assert command[command.index("--ctx-size") + 1] == "131072"
     assert command[command.index("--n-gpu-layers") + 1] == "99"
     assert "--no-kv-offload" in command
+
+
+def test_llamacpp_launch_spec_can_keep_quantized_long_context_kv_cache_on_gpu() -> None:
+    defaults = default_runtime_parameter_policy("llama.cpp")
+    bundle = _bundle().model_copy(
+        update={
+            "runtime_parameter_policy": {
+                **defaults,
+                "context_length": defaults["context_length"].model_copy(
+                    update={"value": 131072}
+                ),
+                "kv_cache_type_k": defaults["kv_cache_type_k"].model_copy(
+                    update={"value": "q8_0"}
+                ),
+                "kv_cache_type_v": defaults["kv_cache_type_v"].model_copy(
+                    update={"value": "q8_0"}
+                ),
+            }
+        }
+    )
+    command = LlamaCppPlugin().build_launch_spec(bundle)["command"]
+    assert "--kv-offload" in command
+    assert command[command.index("--cache-type-k") + 1] == "q8_0"
+    assert command[command.index("--cache-type-v") + 1] == "q8_0"
 
 
 def test_hugging_face_blob_url_is_resolved_to_download_artifact() -> None:
