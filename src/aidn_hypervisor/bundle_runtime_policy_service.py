@@ -270,6 +270,13 @@ class BundleRuntimePolicyService:
                 bundle_id=bundle.bundle_id,
                 runtime_id=runtime.runtime_id,
             )
+            # A managed command can exit between ``start_runtime`` returning
+            # and this initial snapshot write.  Reconcile once here so the
+            # first durable projection cannot overwrite a watcher-updated
+            # ``stopped`` state with the old ``starting`` value.
+            sync_process_state = getattr(self._host.runtimes, "sync_process_state", None)
+            if callable(sync_process_state):
+                sync_process_state()
             self._host._persist_state()
             return runtime
 

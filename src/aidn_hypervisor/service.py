@@ -2576,7 +2576,14 @@ class HypervisorService:
     def _replace_runtimes(self, runtimes: list[RuntimeHandle]) -> None:
         self._runtime_boundary._replace_runtimes(runtimes)
 
-    def _persist_state(self) -> None:
+    def _persist_state(self, _runtime: RuntimeHandle | None = None) -> None:
+        """Persist the current snapshot.
+
+        ``ProviderProcessManager`` invokes the callback with the runtime that
+        changed.  The snapshot is still taken from the service as a whole, so
+        the argument is intentionally ignored; accepting it keeps background
+        process-exit persistence on the same callback contract as the manager.
+        """
         if self.state_store is None:
             return
         self.state_store.save(self.snapshot_state())

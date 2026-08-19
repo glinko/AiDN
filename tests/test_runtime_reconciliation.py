@@ -1,4 +1,6 @@
 from pathlib import Path
+import sys
+import time
 
 from aidn_hypervisor.domain.models import BundleConfig, NodeCapacity, ResourceProfile
 from aidn_hypervisor.persistence import FileStateStore
@@ -11,7 +13,11 @@ from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
 
 
-def _service(tmp_path: Path) -> HypervisorService:
+def _service(
+    tmp_path: Path,
+    *,
+    runtimes: ProviderProcessManager | None = None,
+) -> HypervisorService:
     plugins = PluginRegistry()
     plugins.register(FakeManagedPlugin())
     return HypervisorService(
@@ -35,7 +41,7 @@ def _service(tmp_path: Path) -> HypervisorService:
             )
         ],
         plugins=plugins,
-        runtimes=ProviderProcessManager(),
+        runtimes=runtimes or ProviderProcessManager(),
         state_store=FileStateStore(tmp_path / "hypervisor-state.json"),
     )
 
@@ -60,3 +66,29 @@ def test_stopped_process_is_not_selected_as_an_active_bundle_runtime(tmp_path) -
 
     assert service._runtime_for_bundle("bundle-a") is None
     assert service._bundle_inventory_status(service._get_bundle("bundle-a")) == "stopped"
+
+
+def test_process_exit_persists_without_a_follow_up_read(tmp_path) -> None:
+    manager = ProviderProcessManager(enable_subprocesses=True)
+    service = _service(tmp_path, runtimes=manager)
+
+    runtime = manager.start_runtime(
+        {
+            "command": [sys.executable, "-c", "import time; time.sleep(0.25); raise SystemExit(7)"],
+            "launch_mode": "managed_process",
+            "bundle_id": "bundle-a",
+        }
+    )
+    service._persist_state()
+
+    deadline = time.monotonic() + 2
+    while (
+        service.state_store.load().runtimes[0].status != "stopped"
+        and time.monotonic() < deadline
+    ):
+        time.sleep(0.01)
+
+    persisted = service.state_store.load().runtimes[0]
+    assert persisted.status == "stopped"
+    assert persisted.health_status == "unhealthy"
+    assert persisted.last_error == "managed runtime exited with code 7"
