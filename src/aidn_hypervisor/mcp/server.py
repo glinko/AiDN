@@ -208,7 +208,10 @@ class ControlSession:
     agent_identity: str
     operator_identity: str
     scopes: frozenset[str]
-    expires_at: datetime
+    # ``None`` is the explicit stateless mode.  The remote gateway still
+    # authenticates every request with a revocable bearer credential; this
+    # field only controls the optional server-side lease.
+    expires_at: datetime | None
     created_at: datetime = field(default_factory=_now)
     budget: DelegatedBudget | None = None
     approval_policy: dict[str, str] = field(default_factory=dict)
@@ -221,7 +224,7 @@ class ControlSession:
             "operator_identity": self.operator_identity,
             "scopes": sorted(self.scopes),
             "created_at": _iso(self.created_at),
-            "expires_at": _iso(self.expires_at),
+            "expires_at": _iso(self.expires_at) if self.expires_at else None,
             "budget": self.budget.to_record() if self.budget else None,
             "approval_policy": dict(self.approval_policy),
             "approved_plan_hashes": sorted(self.approved_plan_hashes),
@@ -254,20 +257,26 @@ class ControlSession:
             raise McpPersistenceError("MCP_INTERNAL_ERROR", "Persisted MCP approval policy is invalid")
         budget_record = record.get("budget")
         budget = DelegatedBudget.from_record(budget_record) if budget_record is not None else None
+        expires_at_value = record.get("expires_at")
+        expires_at = (
+            None
+            if expires_at_value is None
+            else _parse_datetime(expires_at_value, "session.expires_at")
+        )
         return cls(
             control_session_id=required_string("control_session_id"),
             agent_identity=required_string("agent_identity"),
             operator_identity=required_string("operator_identity"),
             scopes=frozenset(scopes),
             created_at=_parse_datetime(record.get("created_at"), "session.created_at"),
-            expires_at=_parse_datetime(record.get("expires_at"), "session.expires_at"),
+            expires_at=expires_at,
             budget=budget,
             approval_policy=dict(approval_policy),
             approved_plan_hashes=frozenset(approved_plan_hashes),
         )
 
     def require_active(self) -> None:
-        if _now() >= self.expires_at:
+        if self.expires_at is not None and _now() >= self.expires_at:
             raise McpDomainError(
                 "MCP_CONTROL_SESSION_EXPIRED",
                 "The Agent Control Session has expired",
@@ -306,7 +315,7 @@ class ControlSession:
             "budget": self.budget.public() if self.budget else None,
             "approval_policy": dict(self.approval_policy),
             "created_at": _iso(self.created_at),
-            "expires_at": _iso(self.expires_at),
+            "expires_at": _iso(self.expires_at) if self.expires_at else None,
         }
 
 
@@ -424,6 +433,7 @@ class McpControlPlane:
         mcp_state_store: McpPersistentStateStore | None = None,
         control_session_auto_renew: bool = False,
         control_session_ttl_seconds: int = DEFAULT_CONTROL_SESSION_TTL_SECONDS,
+        control_session_stateless: bool = False,
     ) -> None:
         if control_session_ttl_seconds < MIN_CONTROL_SESSION_TTL_SECONDS:
             raise ValueError(
@@ -438,6 +448,7 @@ class McpControlPlane:
         self.mcp_state_store = mcp_state_store
         self.control_session_auto_renew = control_session_auto_renew
         self.control_session_ttl_seconds = control_session_ttl_seconds
+        self.control_session_stateless = control_session_stateless
         persisted_state = mcp_state_store.load() if mcp_state_store is not None else {
             "sessions": {},
             "audit_events": [],
@@ -452,6 +463,16 @@ class McpControlPlane:
             },
         }
         self.session = self._restore_session(session, persisted_state)
+        if self.control_session_stateless:
+            # A stateless Control Session is still scoped and audited, but its
+            # lease is not an additional expiry boundary.  The bearer
+            # credential resolver remains the revocation boundary for remote
+            # requests.
+            self.session.expires_at = None
+        elif self.session.expires_at is None:
+            # Switching stateless mode off must restore a finite lease rather
+            # than inheriting the previous ``None`` value from persistence.
+            self.session.expires_at = _now() + timedelta(seconds=self.control_session_ttl_seconds)
         self._persist_session = True
         self._plans = self._restore_plans(persisted_state)
         self._idempotency = self._restore_idempotency(persisted_state)
@@ -606,6 +627,14 @@ class McpControlPlane:
         valid bearer credential can recover a persisted session after an idle
         period. It never changes identity, scopes, budget or approvals.
         """
+
+        if self.control_session_stateless:
+            return {
+                "renewed": False,
+                "stateless": True,
+                "control_session_id": self.session.control_session_id,
+                "expires_at": None,
+            }
 
         now = _now()
         if not self.control_session_auto_renew:
@@ -1740,9 +1769,25 @@ def build_mcp_server(
     mcp_state_store: McpPersistentStateStore | None = None,
     control_session_auto_renew: bool | None = None,
     control_session_ttl_seconds: int | None = None,
+    control_session_stateless: bool | None = None,
 ) -> McpJsonRpcServer:
     """Build an MCP server around an already constructed Hypervisor service."""
 
+    resolved_auto_renew = (
+        _env_bool("AIDN_MCP_CONTROL_SESSION_AUTO_RENEW", default=False)
+        if control_session_auto_renew is None
+        else control_session_auto_renew
+    )
+    resolved_ttl_seconds = (
+        int(os.environ.get("AIDN_MCP_CONTROL_SESSION_TTL_SECONDS", DEFAULT_CONTROL_SESSION_TTL_SECONDS))
+        if control_session_ttl_seconds is None
+        else control_session_ttl_seconds
+    )
+    resolved_stateless = (
+        _env_bool("AIDN_MCP_CONTROL_SESSION_STATELESS", default=False)
+        if control_session_stateless is None
+        else control_session_stateless
+    )
     resolved_session = session or ControlSession(
         control_session_id=os.environ.get("AIDN_MCP_CONTROL_SESSION_ID", "acs-local-default"),
         agent_identity=os.environ.get("AIDN_MCP_AGENT_IDENTITY", "agent:local"),
@@ -1755,22 +1800,16 @@ def build_mcp_server(
             ).split(",")
             if item.strip()
         ),
-        expires_at=_now() + timedelta(hours=1),
+        expires_at=(
+            None
+            if resolved_stateless
+            else _now() + timedelta(seconds=resolved_ttl_seconds)
+        ),
         approval_policy={
             "bundle_activate": "AUTO",
             "bundle_retire": "OPERATOR_CONFIRMATION",
             "provider_attach": "OPERATOR_CONFIRMATION",
         },
-    )
-    resolved_auto_renew = (
-        _env_bool("AIDN_MCP_CONTROL_SESSION_AUTO_RENEW", default=False)
-        if control_session_auto_renew is None
-        else control_session_auto_renew
-    )
-    resolved_ttl_seconds = (
-        int(os.environ.get("AIDN_MCP_CONTROL_SESSION_TTL_SECONDS", DEFAULT_CONTROL_SESSION_TTL_SECONDS))
-        if control_session_ttl_seconds is None
-        else control_session_ttl_seconds
     )
     control = McpControlPlane(
         service,
@@ -1782,6 +1821,7 @@ def build_mcp_server(
         mcp_state_store=mcp_state_store,
         control_session_auto_renew=resolved_auto_renew,
         control_session_ttl_seconds=resolved_ttl_seconds,
+        control_session_stateless=resolved_stateless,
     )
     return McpJsonRpcServer(control)
 

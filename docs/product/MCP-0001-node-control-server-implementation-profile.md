@@ -85,7 +85,7 @@ Every server instance has one explicit `ControlSession` containing:
 - agent identity;
 - operator identity;
 - scoped permissions;
-- expiry;
+- an optional lease expiry;
 - optional delegated budget view;
 - approval policy;
 - approved plan hashes.
@@ -151,6 +151,16 @@ Operator request may renew an expired persisted lease, but renewal never
 changes identity, scopes, budget, approvals or emergency-stop state. Invalid
 credentials cannot renew a session, and an idle session still expires until a
 valid credential reconnects.
+
+For a long-lived local Agent integration, set
+`AIDN_MCP_CONTROL_SESSION_STATELESS=true`. In this mode the server-side
+Control Session has no lease expiry (`expires_at: null`), while every remote
+request still requires the active, revocable MCP bearer credential and its
+stored scopes. This removes the idle-session failure seen by agents such as
+Hermes without making the MCP route unauthenticated. The protocol transport
+session (`Mcp-Session-Id`) remains stateful as required by MCP and is recreated
+after a gateway restart. Turning stateless mode off restores a finite lease
+using `AIDN_MCP_CONTROL_SESSION_TTL_SECONDS`.
 
 The production launcher additionally requires either `--certfile`, `--keyfile`,
 and `--ca-file`, or the corresponding Secret Manager handles. It configures

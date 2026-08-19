@@ -507,6 +507,54 @@ def test_remote_gateway_renews_expired_control_session_after_bearer_authenticati
     assert server.control.audit.query()["items"][-1]["event_type"] == "MCP_CONTROL_SESSION_RENEWED"
 
 
+def test_remote_gateway_stateless_control_session_uses_bearer_as_revocation_boundary() -> None:
+    session = _session("NODE:READ")
+    session.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    server = build_mcp_server(
+        _service(),
+        session=session,
+        control_session_stateless=True,
+    )
+    gateway = McpRemoteGateway(server.control, agent_token="agent-secret")
+    app = FastAPI()
+    app.include_router(build_mcp_remote_router(gateway))
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer agent-secret"}
+
+    initialize = client.post(
+        "/mcp",
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": "2025-03-26"},
+        },
+    )
+    assert initialize.status_code == 200
+    transport_session_id = initialize.headers["mcp-session-id"]
+    initialized = client.post(
+        "/mcp",
+        headers={**headers, "Mcp-Session-Id": transport_session_id},
+        json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+    )
+    assert initialized.status_code == 202
+
+    health = client.post(
+        "/mcp",
+        headers={**headers, "Mcp-Session-Id": transport_session_id},
+        json={
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": "aidn.node.health", "arguments": {}},
+        },
+    )
+    assert health.status_code == 200
+    assert health.json()["result"]["isError"] is False
+    assert server.control.session.expires_at is None
+
+
 def test_mcp_corrupt_persisted_audit_chain_fails_closed(tmp_path) -> None:
     state_path = tmp_path / "mcp-control-state.json"
     store = McpPersistentStateStore(state_path)

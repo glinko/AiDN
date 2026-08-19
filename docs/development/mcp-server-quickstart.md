@@ -175,6 +175,10 @@ $env:AIDN_MCP_OPERATOR_TOKEN = "replace-with-a-different-operator-secret"
 $env:AIDN_MCP_CONTROL_SESSION_ID = "acs-node-operator-1"
 $env:AIDN_MCP_CONTROL_SESSION_AUTO_RENEW = "true"
 $env:AIDN_MCP_CONTROL_SESSION_TTL_SECONDS = "3600"
+# For a long-lived local Agent, remove the server-side lease.  Bearer
+# credentials remain mandatory and revocable; only the extra Control Session
+# expiry is disabled.
+$env:AIDN_MCP_CONTROL_SESSION_STATELESS = "true"
 uv run uvicorn aidn_hypervisor.main:build_app --factory --host 127.0.0.1 --port 8766
 ```
 
@@ -182,6 +186,9 @@ The Agent calls `POST /mcp` with `Authorization: Bearer <agent-token>`.
 `initialize` returns an `Mcp-Session-Id`; send that header on subsequent
 requests. The transport session is ephemeral, while the bound Control Session
 and audit/plan state use the persistent MCP state file described above.
+With `AIDN_MCP_CONTROL_SESSION_STATELESS=true`, the bound Control Session has
+`expires_at: null`; the bearer credential is the revocation boundary. The MCP
+transport session remains stateful and is recreated after a Hypervisor restart.
 
 Hermes can consume this endpoint as a Streamable HTTP MCP server. Its
 `mcp_servers` entry belongs on the Hermes host, and must contain the real Agent
