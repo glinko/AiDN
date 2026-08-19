@@ -1,4 +1,7 @@
 import json
+import os
+import shutil
+from pathlib import Path
 from urllib import error, parse, request
 
 from aidn_hypervisor.plugins.base import ProviderPlugin
@@ -287,10 +290,45 @@ class LlamaCppPlugin(ProviderPlugin):
             },
         }
 
-    @staticmethod
-    def _launch_command(bundle_config, *, host: str, port: str) -> list[str]:
+    @classmethod
+    def _server_binary(cls) -> str:
+        """Resolve the reviewed llama-server binary for managed processes.
+
+        Provider installers keep the executable in the operator-owned runtime
+        root, while manually built CUDA runtimes commonly remain under a
+        ``build-*/bin`` directory.  The Hypervisor service intentionally has a
+        small systemd PATH, so relying on ``llama-server`` being discoverable
+        there makes an otherwise installed provider look broken.
+        """
+
+        configured = os.environ.get("AIDN_LLAMA_CPP_SERVER_BIN", "").strip()
+        if configured:
+            return configured
+
+        # Preserve the normal command when an operator explicitly installed a
+        # system-wide/runtime-PATH binary.
+        if shutil.which("llama-server"):
+            return "llama-server"
+
+        runtime_root = os.environ.get("AIDN_LLAMA_CPP_RUNTIME_ROOT", "").strip()
+        root = Path(runtime_root).expanduser() if runtime_root else (
+            Path.home() / ".local" / "share" / "aidn" / "providers" / "llama.cpp"
+        )
+        candidates = [root / "bin" / "llama-server"]
+        candidates.extend(sorted(root.glob("build*/bin/llama-server")))
+        for candidate in candidates:
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
+
+        # Keep the original command as the final fallback so the process
+        # manager raises FileNotFoundError and the MCP boundary can report a
+        # precise, actionable diagnostic.
+        return "llama-server"
+
+    @classmethod
+    def _launch_command(cls, bundle_config, *, host: str, port: str) -> list[str]:
         command = [
-            "llama-server",
+            cls._server_binary(),
             "--model",
             bundle_config.model_id,
             "--host",

@@ -885,6 +885,25 @@ class McpControlPlane:
                 result=domain_error.code,
             )
             return self.failure(domain_error, audit_event_id=audit_event["audit_event_id"])
+        except FileNotFoundError as error:
+            missing_path = getattr(error, "filename", None)
+            if not isinstance(missing_path, str) or not missing_path:
+                missing_path = "the configured runtime executable or working directory"
+            domain_error = McpDomainError(
+                "MCP_RUNTIME_ARTIFACT_NOT_FOUND",
+                "The configured runtime executable or working directory was not found",
+                details={"missing_path": missing_path},
+            )
+            audit_event = self.audit.append(
+                event_type="MCP_TOOL_FAILED",
+                agent_identity=self.session.agent_identity,
+                operator_identity=self.session.operator_identity,
+                tool=name,
+                request_id=arguments.get("request_id"),
+                action_class=tool.action_class,
+                result=domain_error.code,
+            )
+            return self.failure(domain_error, audit_event_id=audit_event["audit_event_id"])
         except Exception as error:  # pragma: no cover - defensive adapter boundary
             domain_error = McpDomainError(
                 "MCP_INTERNAL_ERROR",

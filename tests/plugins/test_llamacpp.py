@@ -188,6 +188,15 @@ def test_llamacpp_plugin_build_launch_spec_derives_host_and_port_from_endpoint()
     }
 
 
+def test_llamacpp_plugin_uses_operator_configured_server_binary(monkeypatch) -> None:
+    configured_binary = "/opt/aidn/providers/llama.cpp/bin/llama-server"
+    monkeypatch.setenv("AIDN_LLAMA_CPP_SERVER_BIN", configured_binary)
+
+    launch_spec = LlamaCppPlugin().build_launch_spec(_bundle())
+
+    assert launch_spec["command"][0] == configured_binary
+
+
 def test_llamacpp_plugin_estimate_resources_keeps_cold_start_and_sets_concurrency_hint() -> None:
     plugin = LlamaCppPlugin()
     bundle = _bundle().model_copy(

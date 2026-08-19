@@ -109,6 +109,10 @@ ad-hoc shell locals):
 - **Provider acceptance probes:** `AIDN_LLAMACPP_ENDPOINT`,
   `AIDN_LLAMACPP_MODEL`, `AIDN_LLAMACPP_LIVE`, `AIDN_VLLM_ENDPOINT`,
   `AIDN_VLLM_MODEL`, `AIDN_OLLAMA_ENDPOINT`, `AIDN_OLLAMA_MODEL`.
+- **Managed llama.cpp runtime discovery:** `AIDN_LLAMA_CPP_RUNTIME_ROOT`,
+  `AIDN_LLAMA_CPP_SERVER_BIN`. The plugin first honors an explicit binary,
+  then a PATH installation, then the operator runtime root (`bin/` and
+  `build*/bin/`).
 - **Faucet service:** `AIDN_FAUCET_HOST`,
   `AIDN_FAUCET_PENDING_RECONCILE_INTERVAL_SECONDS`,
   `AIDN_FAUCET_AGENT_TOKEN`, `AIDN_FAUCET_CREATOR_TOKEN`,

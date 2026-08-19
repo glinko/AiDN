@@ -316,6 +316,33 @@ def test_mcp_bundle_activation_uses_plan_hash_and_idempotency() -> None:
     assert conflict["structuredContent"]["error"]["code"] == "MCP_IDEMPOTENCY_CONFLICT"
 
 
+def test_mcp_runtime_file_not_found_is_reported_as_stable_domain_error() -> None:
+    server = _server("BUNDLE:READ", "BUNDLE:ACTIVATE", "AUDIT:READ")
+    _initialize(server)
+    request = {
+        "bundle_id": "bundle-a",
+        "mode": "plan",
+        "request_id": "request-runtime-missing",
+        "idempotency_key": "idem-runtime-missing",
+    }
+    plan = _call(server, "aidn.bundle.activate", request)["structuredContent"]
+
+    def missing_runtime(_bundle_id: str):
+        raise FileNotFoundError(2, "No such file or directory", "llama-server")
+
+    server.control.service.start_bundle = missing_runtime
+    result = _call(
+        server,
+        "aidn.bundle.activate",
+        {**request, "mode": "apply", "plan_hash": plan["plan_hash"]},
+    )
+
+    assert result["isError"] is True
+    error = result["structuredContent"]["error"]
+    assert error["code"] == "MCP_RUNTIME_ARTIFACT_NOT_FOUND"
+    assert error["details"] == {"missing_path": "llama-server"}
+
+
 def test_mcp_disruptive_mutation_requires_approved_plan() -> None:
     server = build_mcp_server(
         _service(runtime=True),
