@@ -795,12 +795,18 @@ class McpControlPlane:
 
     def capabilities(self) -> dict[str, Any]:
         self.session.require_active()
+        approval_policy = dict(self.session.approval_policy)
         return {
             "spec_version": "MCP-0001/0.1",
             "server_version": MCP_SERVER_VERSION,
             "mcp_protocol_version": MCP_PROTOCOL_VERSION,
             "node_identity": _json_safe(self.service.node_identity()),
             "control_session": self.session.public(),
+            # Keep the effective, credential-scoped policy at a stable
+            # top-level location as well as inside ``control_session``.  A
+            # remote agent must never have to infer whether a value came from
+            # the operator baseline or its own delegated credential.
+            "effective_approval_policy": approval_policy,
             "implemented_tools": sorted(self._tools),
             "implemented_resources": sorted(self._resources),
             "deferred_tool_families": [
@@ -960,6 +966,7 @@ class McpControlPlane:
                 lambda _args: {
                     "scheduler": self.service.operator_requests_policy(),
                     "approval_policy": dict(self.session.approval_policy),
+                    "effective_approval_policy": dict(self.session.approval_policy),
                 },
             ),
             "aidn.host.inspect": McpTool(
@@ -1519,7 +1526,23 @@ class McpControlPlane:
         bundle_id = self._required_string(arguments, "bundle_id")
         if arguments.get("mode") == "plan":
             return self._build_plan(self._tools["aidn.bundle.retire"], arguments)
-        stopped = self.service.stop_bundle(bundle_id)
+        # Retirement is deliberately idempotent.  A stopped Bundle is still a
+        # valid retirement target; ``stop_bundle`` historically raised a
+        # KeyError when no runtime existed, which leaked as MCP_INTERNAL_ERROR
+        # and made a safe retry impossible.
+        runtime = self.service._runtime_for_bundle(bundle_id)
+        if runtime is None:
+            stopped = {"bundle_id": bundle_id, "status": "already_stopped"}
+        else:
+            try:
+                stopped = self.service.stop_bundle(bundle_id)
+            except KeyError:
+                # A runtime may disappear between the read and the stop call.
+                # Treat that race as the same idempotent state, but preserve a
+                # genuine KeyError from an inconsistent runtime registry.
+                if self.service._runtime_for_bundle(bundle_id) is not None:
+                    raise
+                stopped = {"bundle_id": bundle_id, "status": "already_stopped"}
         disabled = self.service.set_bundle_enabled(bundle_id, False)
         return {"bundle_id": bundle_id, "runtime": stopped, "bundle": disabled, "status": "retired"}
 

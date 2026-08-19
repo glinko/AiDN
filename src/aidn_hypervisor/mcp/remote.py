@@ -98,6 +98,14 @@ class _ScopedMcpControlPlane:
         # operator session. Plans and audit events are still persisted through
         # the shared stores by the copied view.
         view._persist_session = False
+        # Tool/resource handlers are closures created by ``_build_tools`` and
+        # ``_build_resources``.  Rebuild them on the scoped copy so those
+        # closures bind to the credential-scoped session instead of the
+        # canonical operator session.  Without this, capabilities correctly
+        # reported Hermes' effective policy while aidn.policy.get leaked the
+        # baseline policy, making approval decisions contradictory.
+        view._tools = view._build_tools()
+        view._resources = view._build_resources()
         return view
 
     def tool_definitions(self) -> list[dict[str, Any]]:

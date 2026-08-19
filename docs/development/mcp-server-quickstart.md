@@ -140,6 +140,15 @@ trusted operator approval boundary; it must not be fabricated by an Agent.
 Approved plan hashes survive a process restart when the persistent state path
 is configured.
 
+Read the effective policy from both `aidn.capabilities.get` and
+`aidn.policy.get` before applying a mutation. The value is credential-scoped:
+`effective_approval_policy` (and `control_session.approval_policy`) describes
+what this Agent token may apply, while `policy.scheduler` is only the local
+routing policy. These values must agree. A stopped Bundle is a valid retirement
+target; the apply result is `retired` with runtime status `already_stopped`, so
+retrying a retirement does not turn an already-safe state into an internal
+error.
+
 ### Attach an existing Provider
 
 The MCP mutation boundary also supports attaching an already reachable

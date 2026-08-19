@@ -261,6 +261,31 @@ def test_credential_scopes_filter_tools_and_take_effect_after_session_reconnect(
     assert policy["bundle_activate"] == "AUTO"
 
 
+def test_credential_effective_policy_is_consistent_across_mcp_reads(tmp_path) -> None:
+    credentials = McpCredentialStore(
+        secret_manager=FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
+    )
+    issued = credentials.create_credential(
+        label="retire agent",
+        scopes=("CAPABILITIES:READ", "SCHEDULER:READ", "BUNDLE:RETIRE"),
+        auto_approved_scopes=("BUNDLE:RETIRE",),
+    )
+    client, _gateway = _client_with_credentials(tmp_path, credentials)
+    session_id = _initialize(client, issued.token or "")
+
+    capabilities = _tool_call(
+        client, session_id, "aidn.capabilities.get", {}, token=issued.token or ""
+    )["structuredContent"]
+    policy = _tool_call(
+        client, session_id, "aidn.policy.get", {}, token=issued.token or ""
+    )["structuredContent"]
+
+    assert capabilities["effective_approval_policy"]["bundle_retire"] == "AUTO"
+    assert capabilities["control_session"]["approval_policy"]["bundle_retire"] == "AUTO"
+    assert policy["approval_policy"]["bundle_retire"] == "AUTO"
+    assert policy["effective_approval_policy"]["bundle_retire"] == "AUTO"
+
+
 def _tool_call(
     client: TestClient,
     session_id: str,

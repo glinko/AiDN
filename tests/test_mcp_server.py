@@ -342,6 +342,58 @@ def test_mcp_disruptive_mutation_requires_approved_plan() -> None:
     assert result["structuredContent"]["error"]["code"] == "MCP_APPROVAL_REQUIRED"
 
 
+def test_mcp_bundle_retire_is_idempotent_when_runtime_is_already_stopped() -> None:
+    server = _server(
+        "BUNDLE:READ",
+        "BUNDLE:RETIRE",
+        approval_policy={"bundle_retire": "AUTO"},
+    )
+    _initialize(server)
+    request = {
+        "bundle_id": "bundle-a",
+        "mode": "plan",
+        "request_id": "request-retire-stopped",
+        "idempotency_key": "idem-retire-stopped",
+    }
+    plan = _call(server, "aidn.bundle.retire", request)["structuredContent"]
+
+    result = _call(
+        server,
+        "aidn.bundle.retire",
+        {**request, "mode": "apply", "plan_hash": plan["plan_hash"]},
+    )
+
+    assert result["isError"] is False
+    payload = result["structuredContent"]
+    assert payload["status"] == "retired"
+    assert payload["runtime"] == {"bundle_id": "bundle-a", "status": "already_stopped"}
+    assert payload["bundle"]["enabled"] is False
+
+
+def test_mcp_policy_and_capabilities_expose_the_same_effective_approval_policy() -> None:
+    server = _server(
+        "CAPABILITIES:READ",
+        "SCHEDULER:READ",
+        approval_policy={
+            "bundle_activate": "AUTO",
+            "bundle_retire": "OPERATOR_CONFIRMATION",
+        },
+    )
+    _initialize(server)
+
+    capabilities = _call(server, "aidn.capabilities.get")["structuredContent"]
+    policy = _call(server, "aidn.policy.get")["structuredContent"]
+
+    expected = {
+        "bundle_activate": "AUTO",
+        "bundle_retire": "OPERATOR_CONFIRMATION",
+    }
+    assert capabilities["effective_approval_policy"] == expected
+    assert capabilities["control_session"]["approval_policy"] == expected
+    assert policy["approval_policy"] == expected
+    assert policy["effective_approval_policy"] == expected
+
+
 def test_mcp_provider_attach_requires_plan_and_operator_approval() -> None:
     server = _server(
         "PROVIDER:READ",
