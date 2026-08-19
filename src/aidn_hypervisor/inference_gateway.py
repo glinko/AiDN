@@ -12,11 +12,13 @@ import html
 import json
 import os
 import re
+import threading
 import time
 from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import APIRouter, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -312,6 +314,18 @@ def build_inference_router(
     """
 
     router = APIRouter(prefix="/v1")
+    # ``HypervisorService.submit`` drives the local task lifecycle
+    # synchronously and waits for provider generation before it returns.
+    # Calling it directly from this async route would block Uvicorn's event
+    # loop for the whole model turn, including MCP keepalives and dashboard
+    # requests.  Keep the stateful lifecycle serialized, but move the blocking
+    # section to a worker thread so the HTTP control plane stays responsive.
+    submission_lock = threading.Lock()
+
+    def submit_inference_task(task_request: TaskRequest):
+        with submission_lock:
+            return hypervisor_service.submit(task_request)
+
     request_body_limit = _resolve_max_request_bytes(max_request_bytes)
     message_limit = _resolve_max_messages(max_messages)
 
@@ -605,7 +619,8 @@ def build_inference_router(
                 )
             session_id = ensure_session(credential, endpoint)
             request_id = "agent-" + uuid4().hex
-            task = hypervisor_service.submit(
+            task = await run_in_threadpool(
+                submit_inference_task,
                 TaskRequest(
                     task_type="llm_text.generate",
                     payload=request_payload,
@@ -618,7 +633,7 @@ def build_inference_router(
                         "inference_credential_id": credential.credential_id,
                         "agent_identity": credential.credential_id,
                     },
-                )
+                ),
             )
         except (RuntimeError, ValueError, KeyError) as error:
             return _error(503, str(error), code="inference_execution_failed", error_type="server_error")
