@@ -50,12 +50,38 @@ class EndpointApplicationService:
             compatibility_bundle = self._hypervisor_service.bundle_for_runtime_binding(
                 str(runtime_binding_id)
             )
-            command_data["bundle_id"] = compatibility_bundle.bundle_id
-            command_data["bundle_hash"] = command_data.get("bundle_hash") or (
+            # Runtime bindings identify the provider/model execution path, while
+            # endpoint drafts may deliberately pin an immutable Bundle revision
+            # (for example, a 128K context revision).  Historically we always
+            # replaced the requested bundle with the compatibility projection,
+            # silently pinning new endpoints to the old revision.  Once that
+            # revision was retired, local-agent credentials started returning
+            # ``Requested bundle is disabled`` even though the new runtime was
+            # healthy.  Preserve an explicit revision after validating that it
+            # belongs to this runtime binding's provider/model lineage.
+            requested_bundle_id = str(command_data.get("bundle_id") or "").strip()
+            selected_bundle = compatibility_bundle
+            if requested_bundle_id and requested_bundle_id != compatibility_bundle.bundle_id:
+                selected_bundle = self._bundle_for_runtime_binding_revision(
+                    requested_bundle_id=requested_bundle_id,
+                    compatibility_bundle=compatibility_bundle,
+                )
+                if selected_bundle is None:
+                    raise ValueError("runtime_binding_bundle_mismatch")
+            command_data["bundle_id"] = selected_bundle.bundle_id
+            requested_bundle_hash = str(command_data.get("bundle_hash") or "").strip()
+            selected_bundle_hash = selected_bundle.bundle_hash or (
                 self._hypervisor_service.bundle_hash_for_runtime_binding(
                     str(runtime_binding_id)
                 )
             )
+            if (
+                requested_bundle_hash
+                and selected_bundle.bundle_hash
+                and requested_bundle_hash != selected_bundle.bundle_hash
+            ):
+                raise ValueError("runtime_binding_bundle_hash_mismatch")
+            command_data["bundle_hash"] = requested_bundle_hash or selected_bundle_hash
         elif self._hypervisor_service is not None and not command_data.get("bundle_hash"):
             bundle_id = str(command_data.get("bundle_id") or "")
             bundle = next(
@@ -158,11 +184,20 @@ class EndpointApplicationService:
         runtime_binding_id = command_data.get("runtime_binding_id")
         if runtime_binding_id:
             try:
-                return self._hypervisor_service.bundle_for_runtime_binding(
+                requested_bundle_id = str(command_data.get("bundle_id") or "").strip()
+                compatibility_bundle = self._hypervisor_service.bundle_for_runtime_binding(
                     str(runtime_binding_id)
                 )
             except (KeyError, ValueError):
                 return None
+            if requested_bundle_id and requested_bundle_id != compatibility_bundle.bundle_id:
+                selected_bundle = self._bundle_for_runtime_binding_revision(
+                    requested_bundle_id=requested_bundle_id,
+                    compatibility_bundle=compatibility_bundle,
+                )
+                if selected_bundle is not None:
+                    return selected_bundle
+            return compatibility_bundle
         bundle_id = str(command_data.get("bundle_id") or "")
         return next(
             (
@@ -172,6 +207,55 @@ class EndpointApplicationService:
             ),
             None,
         )
+
+    def _bundle_for_runtime_binding_revision(
+        self,
+        *,
+        requested_bundle_id: str,
+        compatibility_bundle,
+    ):
+        """Resolve an enabled immutable revision for a Runtime Binding.
+
+        A Bundle revision is safe to pin when it is enabled and describes the
+        same provider/model/workload lineage as the binding compatibility
+        projection.  The binding remains the execution identity; the revision
+        only selects the operator-owned runtime contract.
+        """
+        try:
+            candidates = self._hypervisor_service.bundle_config()
+        except (AttributeError, KeyError, ValueError):
+            return None
+        for candidate in candidates:
+            if candidate.bundle_id != requested_bundle_id or not candidate.enabled:
+                continue
+            same_lineage = all(
+                getattr(candidate, field, None) == getattr(compatibility_bundle, field, None)
+                for field in ("plugin_id", "provider_type", "workload_type", "model_id")
+            )
+            if not same_lineage:
+                return None
+            # A revision created from this compatibility bundle is the normal
+            # case.  Accept a direct compatibility id as well, but never allow
+            # a disabled or unrelated bundle to be smuggled into an endpoint.
+            lineage_ids = {compatibility_bundle.bundle_id}
+            current = candidate
+            while getattr(current, "revision_of", None):
+                parent_id = current.revision_of
+                lineage_ids.add(parent_id)
+                current = next(
+                    (item for item in candidates if item.bundle_id == parent_id),
+                    current,
+                )
+                if current.bundle_id == parent_id and not getattr(
+                    current, "revision_of", None
+                ):
+                    break
+            if (
+                candidate.bundle_id == compatibility_bundle.bundle_id
+                or compatibility_bundle.bundle_id in lineage_ids
+            ):
+                return candidate
+        return None
 
     def delete_endpoint(self, endpoint_id: str) -> dict:
         """Soft-delete an Endpoint and schedule its report custody grace."""

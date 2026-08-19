@@ -1915,6 +1915,82 @@ def test_create_endpoint_route_accepts_runtime_binding_id() -> None:
     assert body["data"]["endpoint"]["runtime_binding_id"] == "rtb-1"
 
 
+def test_create_endpoint_route_preserves_explicit_enabled_bundle_revision() -> None:
+    hypervisor = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
+    compatibility = BundleConfig.model_validate(
+        {
+            **_runtime_binding_bundle("bundle-rtb-1").model_dump(mode="json"),
+            "plugin_id": "llama.cpp",
+            "provider_type": "llama.cpp",
+        }
+    )
+    revision = BundleConfig.model_validate(
+        {
+            **compatibility.model_dump(mode="json"),
+            "bundle_id": "bundle-rtb-1-r4",
+            "revision": 4,
+            "revision_of": compatibility.bundle_id,
+            "bundle_hash": "bundle-hash-r4",
+            "runtime_parameter_policy": {
+                "context_length": {
+                    "value": 131072,
+                    "consumer_editable": False,
+                    "minimum": 512,
+                    "maximum": 131072,
+                }
+            },
+        }
+    )
+    hypervisor.bundle_for_runtime_binding = (  # type: ignore[attr-defined]
+        lambda runtime_binding_id: compatibility
+    )
+    hypervisor.bundle_hash_for_runtime_binding = (  # type: ignore[attr-defined]
+        lambda runtime_binding_id: compatibility.bundle_hash or "compatibility-hash"
+    )
+    hypervisor.bundle_config = (  # type: ignore[method-assign]
+        lambda: [compatibility, revision]
+    )
+    hypervisor.runtime_binding_endpoint_admission = (  # type: ignore[attr-defined]
+        lambda runtime_binding_id, endpoint_payload=None: {
+            "runtime_binding_id": runtime_binding_id,
+            "ready": True,
+            "blockers": [],
+            "warnings": [],
+            "dimensions": {},
+        }
+    )
+    client = TestClient(
+        build_app(
+            service=hypervisor,
+            endpoint_service=EndpointService(EndpointStore()),
+            session_service=SessionService(SessionStore()),
+        )
+    )
+
+    response = client.post(
+        "/api/v1/endpoints",
+        json={
+            "owner_wallet": "wallet-a",
+            "runtime_binding_id": "rtb-1",
+            "bundle_id": "bundle-rtb-1-r4",
+            "display_name": "Local Qwen 128K",
+            "model_class": "llm.chat",
+            "capabilities": ["llm.chat"],
+        },
+    )
+
+    body = response.json()
+
+    assert response.status_code == 201
+    assert body["data"]["endpoint"]["bundle_id"] == "bundle-rtb-1-r4"
+    assert body["data"]["endpoint"]["bundle_hash"] == "bundle-hash-r4"
+    assert body["data"]["endpoint"]["runtime_binding_id"] == "rtb-1"
+    assert (
+        body["data"]["endpoint"]["runtime_parameter_policy"]["context_length"]["value"]
+        == 131072
+    )
+
+
 def test_create_endpoint_route_rejects_runtime_binding_admission_blocker() -> None:
     hypervisor = HypervisorService(queue=InMemoryTaskQueue(), scheduler=Scheduler())
     hypervisor.runtime_binding_endpoint_admission = (  # type: ignore[attr-defined]

@@ -337,6 +337,15 @@ def build_endpoint_router(
                     "Endpoint draft cannot be created from this Runtime Binding yet.",
                     details=admission,
                 )
+            if str(error) in {
+                "runtime_binding_bundle_mismatch",
+                "runtime_binding_bundle_hash_mismatch",
+            }:
+                return _error(
+                    409,
+                    "runtime_binding_bundle_mismatch",
+                    "The requested Bundle revision is not an enabled revision of this Runtime Binding.",
+                )
             raise
         open_status = (
             202 if result["payload"].get("status") == "CONSENSUS_PENDING" else 201
