@@ -27,6 +27,8 @@ from aidn_hypervisor.runtime_protocol.models import (
     RuntimeUsageReport,
 )
 
+_TERMINAL_REQUEST_STATES = {"COMPLETED", "PARTIAL", "CANCELLED", "FAILED", "EXPIRED", "UNRECOVERABLE"}
+
 if TYPE_CHECKING:
     from aidn_hypervisor.state import HypervisorStateSnapshot
 
@@ -170,7 +172,7 @@ class RuntimeProtocolStore:
                 ),
                 "runtime_protocol_messages": list(self.messages.values()),
                 "runtime_protocol_sequences": dict(self.runtime_sequences),
-                "runtime_protocol_requests": list(self.requests.values()),
+                "runtime_protocol_requests": self._persisted_requests(),
                 "runtime_protocol_cancellations": list(self.cancellations.values()),
                 "runtime_protocol_cancellation_results": list(
                     self.cancellation_results.values()
@@ -208,6 +210,37 @@ class RuntimeProtocolStore:
             }
         )
         self._state_store.save(snapshot)
+
+    def _persisted_requests(self) -> list[RuntimeRequestRecord]:
+        """Persist terminal request identity without replaying full transcripts.
+
+        Runtime request hashes, lifecycle fields, and usage evidence remain
+        durable and sufficient for replay/finality checks.  The full MCP
+        payload is needed only while a request is active; once terminal, a
+        stable state reference prevents the shared Hypervisor snapshot from
+        growing by the same transcript on every inference turn.
+        """
+
+        persisted: list[RuntimeRequestRecord] = []
+        for record in self.requests.values():
+            if record.request_state not in _TERMINAL_REQUEST_STATES:
+                persisted.append(record)
+                continue
+            request = record.request
+            if request.request_payload is None:
+                persisted.append(record)
+                continue
+            compact_request = request.model_copy(
+                update={
+                    "request_payload": None,
+                    "request_payload_reference": (
+                        "state://runtime-request/"
+                        f"{request.request_id}/{request.request_payload_hash}"
+                    ),
+                }
+            )
+            persisted.append(record.model_copy(update={"request": compact_request}))
+        return persisted
 
     @staticmethod
     def _checkpoint_key(checkpoint: RuntimeStateCheckpoint) -> str:

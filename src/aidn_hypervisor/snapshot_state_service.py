@@ -38,6 +38,49 @@ from aidn_hypervisor.state import (
 )
 
 _ACTIVE_EXECUTION_STATUSES = {"admitted", "starting", "running"}
+_TERMINAL_TASK_STATUSES = {"completed", "failed", "cancelled"}
+
+
+def _persisted_task_request(task) -> object:
+    """Avoid persisting unbounded agent transcripts in terminal task history.
+
+    The live TaskRequest remains untouched in memory while a task executes.
+    Once a task is terminal, restart recovery only needs its lifecycle status
+    and result; retaining every MCP tool schema/result in the main snapshot
+    makes every subsequent write increasingly expensive.  Keep a small,
+    operator-readable preview while preserving the original task envelope
+    shape for older readers.
+    """
+
+    if task.status not in _TERMINAL_TASK_STATUSES:
+        return task.request
+    payload = task.request.payload
+    messages = payload.get("messages") if isinstance(payload, dict) else None
+    tools = payload.get("tools") if isinstance(payload, dict) else None
+    # Small non-agent tasks are useful to retain verbatim.  Agent requests
+    # with a transcript or tool catalog are the source of unbounded growth.
+    if not (
+        isinstance(messages, list)
+        and len(messages) > 4
+        or isinstance(tools, list)
+        and len(tools) > 4
+    ):
+        return task.request
+
+    preview: dict = {
+        "_aidn_persisted": "request_payload_elided",
+        "message_count": len(messages) if isinstance(messages, list) else 0,
+        "tool_count": len(tools) if isinstance(tools, list) else 0,
+        "fields": sorted(str(key) for key in payload),
+    }
+    if isinstance(messages, list) and messages:
+        last = messages[-1]
+        if isinstance(last, dict):
+            preview["last_role"] = last.get("role")
+            content = last.get("content")
+            if isinstance(content, str):
+                preview["last_content_preview"] = content[:512]
+    return task.request.model_copy(update={"payload": preview})
 
 
 class SnapshotStateService:
@@ -68,7 +111,7 @@ class SnapshotStateService:
                     enqueue_index=task.enqueue_index,
                     created_at=task.created_at,
                     status=task.status,
-                    request=task.request.model_copy(deep=True),
+                    request=_persisted_task_request(task).model_copy(deep=True),
                     bundle_id=self._host.selected_bundle_id(task.task_id),
                     result=self._host._task_results.get(task.task_id),
                     recovery_reason=self._host.task_recovery_reason(task.task_id),

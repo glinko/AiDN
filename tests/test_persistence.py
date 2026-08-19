@@ -620,6 +620,31 @@ def test_service_submit_persists_latest_state_to_disk(tmp_path: Path) -> None:
     assert snapshot.tasks[0].result == {"ok": True, "task_type": "audio.transcribe"}
 
 
+def test_terminal_agent_task_persistence_keeps_only_a_bounded_preview(tmp_path: Path) -> None:
+    state_path = tmp_path / "hypervisor-state.json"
+    service = _service(state_path)
+    transcript = [
+        {"role": "tool", "content": "tool output " * 2_000, "tool_call_id": str(index)}
+        for index in range(10)
+    ]
+
+    service.submit(
+        TaskRequest(
+            task_type="audio.transcribe",
+            payload={
+                "audio_ref": "clip.wav",
+                "messages": transcript,
+                "tools": [{"name": "tool"}] * 10,
+            },
+        )
+    )
+
+    persisted = FileStateStore(state_path).load().tasks[0].request.payload
+    assert persisted["_aidn_persisted"] == "request_payload_elided"
+    assert persisted["message_count"] == 10
+    assert len(persisted.get("last_content_preview", "")) <= 512
+
+
 def test_service_cancel_persists_updated_status_to_disk(tmp_path: Path) -> None:
     state_path = tmp_path / "hypervisor-state.json"
     service = _service(state_path)

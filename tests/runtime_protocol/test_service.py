@@ -1291,6 +1291,33 @@ def test_usage_reports_preserve_dimension_authority_and_hash_chain(tmp_path) -> 
     assert restored.requests[request.request_id].request_hash == request.semantic_hash()
 
 
+def test_terminal_runtime_request_persistence_elides_replay_payload(tmp_path) -> None:
+    binding = _binding()
+    state_store = FileStateStore(tmp_path / "runtime-terminal-state.json")
+    store = RuntimeProtocolStore(state_store)
+    service = _service(
+        binding,
+        {binding.runtime_id: _route(binding)},
+        store=store,
+    )
+    _, connection = _connect(service, binding)
+    request = _execute_request(binding, value="large transcript")
+    service.register_execute_request(connection.runtime_connection_id, request)
+
+    store.requests[request.request_id] = store.requests[request.request_id].model_copy(
+        update={"request_state": "COMPLETED"}
+    )
+    store.flush()
+
+    restored = RuntimeProtocolStore(state_store)
+    persisted_request = restored.requests[request.request_id].request
+    assert persisted_request.request_payload is None
+    assert persisted_request.request_payload_reference.startswith(
+        "state://runtime-request/"
+    )
+    assert persisted_request.request_payload_hash == request.request_payload_hash
+
+
 def test_recovery_requires_explicit_route_rebind(tmp_path) -> None:
     binding = _binding()
     route_holder = {binding.runtime_id: _route(binding)}
