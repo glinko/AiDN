@@ -29,6 +29,7 @@ from typing import Any, Protocol
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
+from aidn_hypervisor.config import load_operator_config
 from aidn_hypervisor.mcp.permissions import approval_policy_for_agent
 from aidn_hypervisor.mcp.server import (
     McpControlPlane,
@@ -740,6 +741,7 @@ def _http_parser() -> ArgumentParser:
 def main_http(argv: list[str] | None = None) -> None:
     """Launch the production mTLS HTTP profile with one process worker."""
 
+    load_operator_config()
     parser = _http_parser()
     args = parser.parse_args(argv)
     if os.environ.get("AIDN_MCP_REMOTE_ENABLED", "").strip().lower() not in {"1", "true", "yes", "on"}:

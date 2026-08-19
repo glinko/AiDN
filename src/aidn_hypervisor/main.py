@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from aidn_hypervisor.api import build_api_router
 from aidn_hypervisor.bundle_registry import FileBundleRegistry
+from aidn_hypervisor.config import load_operator_config
 from aidn_hypervisor.consensus.cometbft import (
     HttpCometBftRpcTransport,
     HttpCometBftWalletBalanceProvider,
@@ -116,6 +117,9 @@ def build_app(
     registry_replication_runtime: RegistryReplicationRuntime | None = None,
     remote_trust_anchor_runtime: RemoteTrustAnchorRuntime | None = None,
 ) -> FastAPI:
+    # Load the optional TOML profile before any default service or MCP session
+    # is constructed. Existing process environment values remain authoritative.
+    load_operator_config()
     state_store = _default_state_store()
     resolved_registry_service = registry_service or _build_default_registry_service(state_store=state_store)
     resolved_service = service or _build_default_service(
@@ -302,6 +306,18 @@ def build_app(
         credential_resolver=mcp_credential_store,
         operator_token=mcp_operator_token,
         require_tls=mcp_remote_tls_required,
+        max_body_bytes=_env_int(
+            "AIDN_MCP_MAX_BODY_BYTES",
+            default=1_048_576,
+            minimum=1_024,
+            maximum=64 * 1_024 * 1_024,
+        ),
+        max_transport_sessions=_env_int(
+            "AIDN_MCP_MAX_TRANSPORT_SESSIONS",
+            default=128,
+            minimum=1,
+            maximum=4_096,
+        ),
     )
     dashboard_access_service = (
         DashboardAccessService(store=mcp_credential_store)
@@ -952,6 +968,19 @@ def _env_bool(name: str, *, default: bool) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     raise ValueError(f"{name} must be a boolean")
+
+
+def _env_int(name: str, *, default: int, minimum: int, maximum: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return value
 
 
 def _build_default_consensus_service(

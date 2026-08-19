@@ -1,0 +1,114 @@
+# AiDN operator configuration profile (example)
+#
+# Select this file from the service environment:
+#   AIDN_CONFIG_FILE=/etc/aidn/aidn.toml
+#
+# Values in the real process environment take precedence over this file.  An
+# explicit CLI/request value and applied dashboard state still take precedence
+# over both.  Copy this file to a host-only path before editing it; never put
+# tokens, private keys, or a Secret Manager master key in this repository.
+#
+# The [env] keys intentionally use the same AIDN_* names as aidn.env.example.
+# This is one schema with two deployment forms: systemd can use an EnvironmentFile
+# directly, while Python entry points can load this TOML profile.
+
+[env]
+
+# Node identity and durable state
+AIDN_NODE_ID = "node-example"
+AIDN_OPERATOR_ID = "operator-example"
+AIDN_HYPERVISOR_STATE_PATH = "/var/lib/aidn/hypervisor-state.json"
+AIDN_HYPERVISOR_BUNDLES_PATH = "/var/lib/aidn/bundles.json"
+AIDN_HYPERVISOR_MODEL_STORE_PATH = "/var/lib/aidn/models"
+AIDN_OPERATOR_API_URL = "http://127.0.0.1:8766"
+
+# Dashboard and local-agent transport
+AIDN_HYPERVISOR_API_HOST = "127.0.0.1"
+AIDN_HYPERVISOR_API_PORT = 8766
+AIDN_HYPERVISOR_BIND_HOST_PATH = "/var/lib/aidn/hypervisor-bind-host"
+AIDN_HYPERVISOR_RESTART_ON_BIND_CHANGE = true
+AIDN_DASHBOARD_ACCESS_ALLOW_INSECURE_LAN = false
+AIDN_MCP_REMOTE_ENABLED = false
+AIDN_MCP_REMOTE_HOST = "127.0.0.1"
+AIDN_MCP_REMOTE_PORT = 8766
+AIDN_MCP_REMOTE_TLS_REQUIRED = false
+AIDN_MCP_MAX_BODY_BYTES = 1048576
+AIDN_MCP_MAX_TRANSPORT_SESSIONS = 128
+AIDN_MCP_TLS_RELOAD_SECONDS = 5
+AIDN_MCP_CONTROL_SESSION_STATELESS = true
+AIDN_MCP_CONTROL_SESSION_AUTO_RENEW = false
+AIDN_MCP_CONTROL_SESSION_TTL_SECONDS = 3600
+AIDN_MCP_AGENT_IDENTITY = "agent:local"
+AIDN_MCP_OPERATOR_IDENTITY = "operator-example"
+AIDN_MCP_CONTROL_SESSION_ID = "acs-local-default"
+AIDN_MCP_HOST_ROOT = "/var/lib/aidn"
+AIDN_MCP_SCOPES = ["CAPABILITIES:READ", "HOST:READ", "NODE:READ", "NETWORK:READ", "PROVIDER:READ", "MODEL:READ", "BUNDLE:READ", "ENDPOINT:READ", "RESOURCES:READ", "SCHEDULER:READ", "WALLET:READ", "BUDGET:READ", "AUDIT:READ"]
+
+# Host capacity and inference admission
+AIDN_RESOURCE_PROBE_MODE = "auto"
+AIDN_RESOURCE_CAPACITY_PATH = "/var/lib/aidn/resource-capacity.json"
+AIDN_INFERENCE_MAX_REQUEST_BYTES = 4194304
+AIDN_INFERENCE_MAX_MESSAGES = 512
+AIDN_INFERENCE_PUBLIC_BASE_URL = "http://127.0.0.1:8766"
+# Enable only together with the injected AIDN_SECRET_MANAGER_MASTER_KEY.
+# AIDN_SECRET_MANAGER_PATH = "/var/lib/aidn/registry-replication/secrets.json"
+
+# Consensus / CometBFT. Keep disabled until the reviewed install/reconnect
+# workflow has staged and applied a valid network configuration.
+AIDN_CONSENSUS_MODE = "disabled"
+AIDN_CONSENSUS_NODE_ID = "node-example"
+AIDN_COMETBFT_ENDPOINT = "tcp://127.0.0.1:26657"
+AIDN_COMETBFT_CHAIN_ID = "aidn-localnet-1"
+# AIDN_COMETBFT_SERVICE = "aidn-cometbft-node-example.service"
+# AIDN_COMETBFT_CONFIG_PATH = "/var/lib/aidn/consensus/cometbft/config/config.toml"
+# AIDN_COMETBFT_ABCI_STATE_PATH = "/var/lib/aidn/consensus/abci-state"
+AIDN_COMETBFT_ABCI_HOST = "127.0.0.1"
+AIDN_COMETBFT_ABCI_PORT = 26658
+AIDN_COMETBFT_ABCI_QUERY_TIMEOUT_SECONDS = 10
+AIDN_COMETBFT_ABCI_RETAINED_SNAPSHOTS = 8
+AIDN_COMETBFT_ABCI_SNAPSHOT_LEASE_SECONDS = 1800
+AIDN_CONSENSUS_STRICT_OPERATION_COVERAGE = true
+
+# Provider runtime broker. The broker is the only supported privilege boundary
+# for host-mutating provider installs; keep it disabled on an unprepared host.
+AIDN_ENABLE_PROVIDER_RUNTIME_INSTALL = false
+AIDN_PROVIDER_RUNTIME_DISPATCHER = "/usr/libexec/aidn-provider-runtime/aidn-provider-runtime-ubuntu.sh"
+AIDN_PROVIDER_RUNTIME_BROKER_SOCKET = "@aidn-provider-runtime-1000"
+AIDN_PROVIDER_RUNTIME_OPERATOR_NAME = "aidn"
+AIDN_PROVIDER_RUNTIME_OPERATOR_UID = 1000
+AIDN_PROVIDER_RUNTIME_OPERATOR_GID = 1000
+AIDN_PROVIDER_RUNTIME_OPERATOR_HOME = "/home/aidn"
+
+# Signed registry, trust, policy, and epoch inputs
+AIDN_NETWORK_ID = "aidn"
+# The following opt-in files are intentionally commented: enabling one makes
+# the corresponding signed/secret-backed subsystem mandatory at startup.
+# AIDN_REGISTRY_REPLICATION_CONFIG = "/var/lib/aidn/registry-replication.json"
+# AIDN_REMOTE_TRUST_ANCHOR_CONFIG = "/etc/aidn/remote-trust-anchor.json"
+# AIDN_COMETBFT_FINALITY_CONFIG = "/etc/aidn/cometbft-finality.json"
+# AIDN_PROTOCOL_AUTHORITY_POLICY_PATH = "/etc/aidn/protocol-authority-policy.json"
+AIDN_EPOCH_PARAMETER_VERSION = "genesis"
+AIDN_EPOCH_TASK_SET_VERSION = "genesis"
+AIDN_EPOCH_PROTOCOL_VERSION = "0.1"
+
+# External Faucet process. Signing credentials and treasury paths stay outside
+# this example and should be injected through its protected EnvironmentFile.
+AIDN_FAUCET_HOST = "127.0.0.1"
+AIDN_FAUCET_URL = "http://127.0.0.1:8790"
+AIDN_FAUCET_PENDING_RECONCILE_INTERVAL_SECONDS = 10
+AIDN_FAUCET_FINALITY_CONFIG = "/etc/aidn/cometbft-finality.json"
+
+# Provider acceptance probes (optional; not runtime selection)
+AIDN_LLAMACPP_ENDPOINT = "http://127.0.0.1:8080"
+AIDN_LLAMACPP_MODEL = "Qwen3.8"
+AIDN_LLAMACPP_LIVE = false
+AIDN_VLLM_ENDPOINT = "http://127.0.0.1:8000"
+AIDN_OLLAMA_ENDPOINT = "http://127.0.0.1:11434"
+
+# Website build-time values may share this file for local development. They are
+# not read by the Hypervisor API and must never contain browser credentials.
+VITE_WEBSITE_API_BASE = "/api/site/v1"
+VITE_AIDN_API_ROOT = ""
+VITE_WEBSITE_DEMO = false
+VITE_AIDN_INSTALL_REF = "operator-bootstrap-v0.1.0-rc1"
+AIDN_WEBSITE_BACKEND_URL = "http://127.0.0.1:8000"

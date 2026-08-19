@@ -21,6 +21,7 @@ from aidn_faucet.policy_registry import (
 )
 from aidn_faucet.service import FaucetService
 from aidn_faucet.store import FaucetStore
+from aidn_hypervisor.config import load_operator_config
 from aidn_hypervisor.faucet_treasury import FaucetTreasuryManifest
 
 
@@ -188,6 +189,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    load_operator_config()
     args = build_parser().parse_args(argv)
     if args.command == "serve":
         return _serve(args)

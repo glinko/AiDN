@@ -21,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, TextIO
 
+from aidn_hypervisor.config import load_operator_config
 from aidn_hypervisor.mcp.persistence import (
     McpPersistenceError,
     McpPersistentStateStore,
@@ -1874,6 +1875,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> None:
+    load_operator_config()
     args = _parse_args(argv)
     from aidn_hypervisor.main import build_app
 

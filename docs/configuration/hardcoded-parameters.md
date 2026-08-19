@@ -1,6 +1,6 @@
 # AiDN configuration and hardcoded-parameter inventory
 
-Status: inventory (2026-08-18)
+Status: inventory (2026-08-19)
 
 The canonical operator template is [`config/aidn.env.example`](../../config/aidn.env.example).
 It documents every supported `AIDN_*` runtime variable in one place without
@@ -8,13 +8,41 @@ containing secrets. The systemd templates already consume an `EnvironmentFile`;
 the Ubuntu bootstrap currently generates the same variables in its protected
 `run-hypervisor.sh` wrapper.
 
+For deployments that need one file shared by the Hypervisor, MCP entry points,
+the operator CLI, and the external Faucet, use the companion
+[`config/aidn.config.example.toml`](../../config/aidn.config.example.toml).
+Set `AIDN_CONFIG_FILE` to a host-only copy. Its `[env]` table uses the same
+variable names as the `.env` template, and existing environment values always
+win. This makes migration incremental: no systemd wrapper or existing secret
+injection mechanism has to be replaced in order to adopt the file.
+
+### Applying a TOML profile on Ubuntu
+
+```sh
+sudo install -o root -g aidn -m 0640 config/aidn.config.example.toml /etc/aidn/aidn.toml
+printf '%s\n' 'AIDN_CONFIG_FILE=/etc/aidn/aidn.toml' | sudo tee /etc/aidn/hypervisor.env >/dev/null
+sudo chown root:aidn /etc/aidn/hypervisor.env
+sudo chmod 0640 /etc/aidn/hypervisor.env
+sudo systemctl restart aidn-hypervisor
+```
+
+The example contains safe loopback/disabled defaults. Set the node identity,
+state paths, and any deliberately enabled LAN, MCP, provider-broker, or
+CometBFT options in the host-only TOML file. Inject tokens and signing keys
+through the Secret Manager or a separate protected `EnvironmentFile`; do not
+copy them into the TOML profile. If an existing EnvironmentFile already sets
+an `AIDN_*` variable, that value intentionally wins over the TOML value; remove
+that duplicate or change it explicitly. To see which source won, inspect the
+service environment and the dashboard's effective network/consensus evidence
+rather than relying on the template alone.
+
 ## What is configurable today
 
 | Area | Configuration surface | Important defaults / notes | Source of truth |
 | --- | --- | --- | --- |
 | Node and dashboard | `AIDN_NODE_ID`, `AIDN_OPERATOR_ID`, `AIDN_HYPERVISOR_*`, `AIDN_DASHBOARD_ACCESS_ALLOW_INSECURE_LAN` | Loopback `127.0.0.1:8766`; LAN bind is explicit and restarts the service | `src/aidn_hypervisor/main.py`, `dashboard_network_access.py`, `tools/aidn-operator-bootstrap-ubuntu.sh` |
 | Capacity | `AIDN_RESOURCE_PROBE_MODE`, `AIDN_RESOURCE_CAPACITY_PATH`, `AIDN_RESOURCE_GPU_VRAM_JSON` | `auto` probes CPU/RAM/NVIDIA VRAM; a valid capacity report wins over a live probe | `src/aidn_hypervisor/resource_probe.py` |
-| MCP / local agent | `AIDN_MCP_REMOTE_*`, `AIDN_MCP_CONTROL_SESSION_*`, `AIDN_MCP_SCOPES`, `AIDN_MCP_HOST_ROOT` | Remote MCP is off by default; default session TTL is 3,600 s; stateless mode removes expiry | `src/aidn_hypervisor/main.py`, `mcp/server.py`, `mcp/remote.py` |
+| MCP / local agent | `AIDN_MCP_REMOTE_*`, `AIDN_MCP_MAX_*`, `AIDN_MCP_CONTROL_SESSION_*`, `AIDN_MCP_SCOPES`, `AIDN_MCP_HOST_ROOT` | Remote MCP is off by default; body limit is 1 MiB, transport sessions 128, control-session TTL 3,600 s; stateless mode removes expiry | `src/aidn_hypervisor/main.py`, `mcp/server.py`, `mcp/remote.py` |
 | Inference admission | `AIDN_INFERENCE_MAX_REQUEST_BYTES`, `AIDN_INFERENCE_MAX_MESSAGES` | Defaults are 4 MiB and 512 messages; these guard the HTTP request and are independent of model context | `src/aidn_hypervisor/inference_gateway.py` |
 | Consensus | `AIDN_CONSENSUS_*`, `AIDN_COMETBFT_*` | Consensus defaults to disabled; local RPC `tcp://127.0.0.1:26657`, ABCI `127.0.0.1:26658`, chain `aidn-localnet-1` | `src/aidn_hypervisor/main.py`, `operator_cometbft_install.py` |
 | Host runtime broker | `AIDN_ENABLE_PROVIDER_RUNTIME_INSTALL`, `AIDN_PROVIDER_RUNTIME_*` | Must be explicitly enabled and socket-bound; broker is the privilege boundary for host-mutating installs | `src/aidn_hypervisor/main.py`, `tools/aidn-operator-bootstrap-ubuntu.sh` |
@@ -29,6 +57,7 @@ external Faucet, or the supported operator/acceptance surfaces (as opposed to
 ad-hoc shell locals):
 
 - **Identity/state:** `AIDN_NODE_ID`, `AIDN_OPERATOR_ID`,
+  `AIDN_CONFIG_FILE`,
   `AIDN_HYPERVISOR_STATE_PATH`, `AIDN_HYPERVISOR_BUNDLES_PATH`,
   `AIDN_HYPERVISOR_MODEL_STORE_PATH`, `AIDN_OPERATOR_API_URL`.
 - **Dashboard/listener:** `AIDN_HYPERVISOR_API_HOST`,
@@ -41,7 +70,8 @@ ad-hoc shell locals):
   `AIDN_HYPERVISOR_CUSTODY_SIGNING_KEY`.
 - **MCP and TLS:** `AIDN_MCP_REMOTE_ENABLED`, `AIDN_MCP_REMOTE_TOKEN`,
   `AIDN_MCP_OPERATOR_TOKEN`, `AIDN_MCP_REMOTE_HOST`, `AIDN_MCP_REMOTE_PORT`,
-  `AIDN_MCP_REMOTE_TLS_REQUIRED`, `AIDN_MCP_TLS_CERTFILE`,
+  `AIDN_MCP_REMOTE_TLS_REQUIRED`, `AIDN_MCP_MAX_BODY_BYTES`,
+  `AIDN_MCP_MAX_TRANSPORT_SESSIONS`, `AIDN_MCP_TLS_CERTFILE`,
   `AIDN_MCP_TLS_KEYFILE`, `AIDN_MCP_TLS_CA_FILE`,
   `AIDN_MCP_TLS_CERT_HANDLE`, `AIDN_MCP_TLS_KEY_HANDLE`,
   `AIDN_MCP_TLS_CA_HANDLE`, `AIDN_MCP_TLS_RELOAD_SECONDS`,
@@ -81,7 +111,8 @@ ad-hoc shell locals):
   `AIDN_VLLM_MODEL`, `AIDN_OLLAMA_ENDPOINT`, `AIDN_OLLAMA_MODEL`.
 - **Faucet service:** `AIDN_FAUCET_HOST`,
   `AIDN_FAUCET_PENDING_RECONCILE_INTERVAL_SECONDS`,
-  `AIDN_FAUCET_AGENT_TOKEN`, `AIDN_FAUCET_CREATOR_TOKEN`.
+  `AIDN_FAUCET_AGENT_TOKEN`, `AIDN_FAUCET_CREATOR_TOKEN`,
+  `AIDN_FAUCET_FINALITY_CONFIG`, `AIDN_FAUCET_URL` (acceptance tooling).
 
 Plugin-container identity variables (`AIDN_PLUGIN_HOST_*`) are also
 documented in the template, but are generated per approved installation and

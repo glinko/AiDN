@@ -15,6 +15,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from aidn_hypervisor.config import load_operator_config
 from aidn_hypervisor.mcp.credentials import McpCredentialStore
 from aidn_hypervisor.mcp.enrollment import McpEnrollmentService
 from aidn_hypervisor.secrets import FileSecretManager, SecretManagerError
@@ -392,6 +393,7 @@ def _enrollment_command(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     """Execute a local operator command without persisting secret values."""
+    load_operator_config()
     args = _build_parser().parse_args(argv)
     try:
         if args.command == "pair":
