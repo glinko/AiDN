@@ -70,6 +70,10 @@ _DEFAULTS: dict[str, dict[str, dict[str, Any]]] = {
         "max_tokens": {"value": 512, "consumer_editable": True, "min": 1, "max": 32768},
         "context_length": {"value": 4096, "consumer_editable": False, "min": 512, "max": 131072},
         "gpu_layers": {"value": 99, "consumer_editable": False, "min": 0, "max": 999},
+        # KV-cache placement is an operator-owned residency decision. Keeping
+        # it in host RAM can make long-context GGUF models fit on a constrained
+        # GPU while remaining explicit in the launch policy.
+        "kv_offload": {"value": True, "consumer_editable": False},
     },
     "vllm": {
         "temperature": {"value": 0.7, "consumer_editable": True, "min": 0.0, "max": 2.0},

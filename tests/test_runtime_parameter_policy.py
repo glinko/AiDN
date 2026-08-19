@@ -90,6 +90,28 @@ def test_llamacpp_launch_spec_contains_operator_locked_allocation_flags() -> Non
     assert "--ctx-size" in command
     assert command[command.index("--ctx-size") + 1] == "4096"
     assert "--n-gpu-layers" in command
+    assert "--kv-offload" in command
+
+
+def test_llamacpp_launch_spec_can_keep_long_context_kv_cache_on_host() -> None:
+    defaults = default_runtime_parameter_policy("llama.cpp")
+    bundle = _bundle().model_copy(
+        update={
+            "runtime_parameter_policy": {
+                **defaults,
+                "context_length": defaults["context_length"].model_copy(
+                    update={"value": 131072}
+                ),
+                "kv_offload": defaults["kv_offload"].model_copy(
+                    update={"value": False}
+                ),
+            }
+        }
+    )
+    command = LlamaCppPlugin().build_launch_spec(bundle)["command"]
+    assert command[command.index("--ctx-size") + 1] == "131072"
+    assert command[command.index("--n-gpu-layers") + 1] == "99"
+    assert "--no-kv-offload" in command
 
 
 def test_hugging_face_blob_url_is_resolved_to_download_artifact() -> None:

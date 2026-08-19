@@ -347,6 +347,9 @@ class LlamaCppPlugin(ProviderPlugin):
             setting = policy.get(name)
             if setting is not None:
                 command.extend([flag, str(setting.value)])
+        kv_offload = policy.get("kv_offload")
+        if kv_offload is not None:
+            command.append("--kv-offload" if bool(kv_offload.value) else "--no-kv-offload")
         return command
 
     def health_check(self, runtime_handle) -> bool:
