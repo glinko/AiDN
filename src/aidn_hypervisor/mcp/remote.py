@@ -29,7 +29,6 @@ from typing import Any, Protocol
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
-from aidn_hypervisor.config import load_operator_config
 from aidn_hypervisor.mcp.permissions import approval_policy_for_agent
 from aidn_hypervisor.mcp.server import (
     MCP_PROTOCOL_VERSION,
@@ -37,6 +36,7 @@ from aidn_hypervisor.mcp.server import (
     McpControlPlane,
     McpDomainError,
     McpJsonRpcServer,
+    load_operator_config,
 )
 from aidn_hypervisor.secrets import (
     FileSecretManager,
