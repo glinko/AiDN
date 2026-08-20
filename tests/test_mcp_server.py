@@ -8,6 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from aidn_hypervisor.bundle_hash import bundle_config_hash
 from aidn_hypervisor.domain.models import BundleConfig, NodeCapacity, ResourceProfile
 from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
 from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
@@ -95,6 +96,45 @@ def _server(
         _service(runtime=runtime),
         session=_session(*scopes, approval_policy=approval_policy),
         mcp_state_store=mcp_state_store,
+    )
+
+
+def _endpoint_server(*scopes: str, approval_policy: dict[str, str] | None = None):
+    service = _service()
+    bundle = service.bundle_config()[0]
+    service.bundle_for_runtime_binding = lambda _runtime_binding_id: bundle
+    service.bundle_hash_for_runtime_binding = lambda _runtime_binding_id: bundle_config_hash(bundle)
+    service.list_runtime_bindings = lambda: [
+        {
+            "runtime_binding_id": "rtb-a",
+            "capability_id": "llm_text",
+            "status": "ready",
+            "operational_state": "READY",
+        }
+    ]
+    service.runtime_binding_endpoint_admission = lambda _runtime_binding_id, endpoint_payload=None: {
+        "ready": True,
+        "blockers": [],
+        "warnings": [],
+        "dimensions": {},
+    }
+    service.owner_wallet_state = lambda: {
+        "configured": True,
+        "wallet_id": "wallet-test",
+        "public_key": None,
+    }
+    service.owner_wallet_private_key = lambda: None
+    service.sync_operator_onboarding_state = lambda **_kwargs: None
+    endpoint_service = EndpointService(EndpointStore())
+    publication_service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+    return build_mcp_server(
+        service,
+        endpoint_service=endpoint_service,
+        endpoint_publication_service=publication_service,
+        session=_session(*scopes, approval_policy=approval_policy),
     )
 
 
@@ -269,6 +309,101 @@ def test_mcp_permission_denial_is_a_tool_error() -> None:
 
     assert result["isError"] is True
     assert result["structuredContent"]["error"]["code"] == "MCP_PERMISSION_DENIED"
+
+
+def test_mcp_endpoint_write_scope_exposes_create_and_publish_tools() -> None:
+    server = _server("ENDPOINT:READ")
+    _initialize(server)
+    read_only_names = {
+        item["name"]
+        for item in server.handle_message(
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}}
+        )["result"]["tools"]
+    }
+    assert "aidn.endpoint.list" in read_only_names
+    assert "aidn.endpoint.create" not in read_only_names
+    assert "aidn.endpoint.publish" not in read_only_names
+
+    writable = _server("ENDPOINT:READ", "ENDPOINT:WRITE")
+    _initialize(writable)
+    writable_names = {
+        item["name"]
+        for item in writable.handle_message(
+            {"jsonrpc": "2.0", "id": 4, "method": "tools/list", "params": {}}
+        )["result"]["tools"]
+    }
+    assert {"aidn.endpoint.create", "aidn.endpoint.publish"}.issubset(writable_names)
+
+
+def test_mcp_agent_can_create_and_publish_endpoint_with_operator_approval() -> None:
+    server = _endpoint_server(
+        "ENDPOINT:READ",
+        "ENDPOINT:WRITE",
+        approval_policy={"endpoint_write": "OPERATOR_CONFIRMATION"},
+    )
+    _initialize(server)
+    create_request = {
+        "runtime_binding_id": "rtb-a",
+        "bundle_id": "bundle-a",
+        "display_name": "Agent endpoint",
+        "publication": {
+            "visibility": "public",
+            "discoverable": True,
+            "accepts_external_requests": True,
+        },
+        "local_agent_use": True,
+        "mode": "plan",
+        "request_id": "endpoint-create-request",
+        "idempotency_key": "endpoint-create-idem",
+    }
+    create_plan = _call(server, "aidn.endpoint.create", create_request)["structuredContent"]
+    assert create_plan["requires_approval"] is True
+    denied_create = _call(
+        server,
+        "aidn.endpoint.create",
+        {**create_request, "mode": "apply", "plan_hash": create_plan["plan_hash"]},
+    )
+    assert denied_create["structuredContent"]["error"]["code"] == "MCP_APPROVAL_REQUIRED"
+    server.control.approve_plan(
+        create_plan["plan_hash"],
+        approval_reference="operator-endpoint-create",
+        approver_identity="operator:test",
+    )
+    created = _call(
+        server,
+        "aidn.endpoint.create",
+        {**create_request, "mode": "apply", "plan_hash": create_plan["plan_hash"]},
+    )["structuredContent"]
+    endpoint = created["endpoint"]
+    assert created["status"] == "created"
+    assert endpoint["local_agent_use"] is True
+
+    publish_request = {
+        "endpoint_id": endpoint["endpoint_id"],
+        "mode": "plan",
+        "request_id": "endpoint-publish-request",
+        "idempotency_key": "endpoint-publish-idem",
+    }
+    publish_plan = _call(server, "aidn.endpoint.publish", publish_request)["structuredContent"]
+    assert publish_plan["requires_approval"] is True
+    denied_publish = _call(
+        server,
+        "aidn.endpoint.publish",
+        {**publish_request, "mode": "apply", "plan_hash": publish_plan["plan_hash"]},
+    )
+    assert denied_publish["structuredContent"]["error"]["code"] == "MCP_APPROVAL_REQUIRED"
+    server.control.approve_plan(
+        publish_plan["plan_hash"],
+        approval_reference="operator-endpoint-publish",
+        approver_identity="operator:test",
+    )
+    published = _call(
+        server,
+        "aidn.endpoint.publish",
+        {**publish_request, "mode": "apply", "plan_hash": publish_plan["plan_hash"]},
+    )["structuredContent"]
+    assert published["status"] == "FINALIZED"
+    assert published["publication"]["endpoint_id"] == endpoint["endpoint_id"]
 
 
 def test_mcp_unexpected_hypervisor_error_is_sanitized_and_audited() -> None:

@@ -90,6 +90,19 @@ AGENT_PERMISSION_CATALOG: tuple[McpAgentPermission, ...] = (
         ("aidn.endpoint.list",),
     ),
     McpAgentPermission(
+        "ENDPOINT:WRITE",
+        "Create and publish Endpoints",
+        (
+            "Create Endpoint drafts and publish them through the canonical wallet path. "
+            "Applying either plan requires operator confirmation unless explicitly "
+            "auto-approved for this credential."
+        ),
+        "Actions",
+        "critical",
+        ("aidn.endpoint.create", "aidn.endpoint.publish"),
+        "endpoint_write",
+    ),
+    McpAgentPermission(
         "RESOURCES:READ",
         "Resource status",
         "Read CPU, RAM, and VRAM reservation state.",

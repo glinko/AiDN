@@ -21,7 +21,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, TextIO
 
+from aidn_hypervisor.bundle_hash import bundle_config_hash
 from aidn_hypervisor.config import load_operator_config
+from aidn_hypervisor.endpoint_publications.service import EndpointPublicationReadinessError
+from aidn_hypervisor.endpoints.endpoint_application_service import EndpointApplicationService
 from aidn_hypervisor.mcp.persistence import (
     McpPersistenceError,
     McpPersistentStateStore,
@@ -39,7 +42,7 @@ MCP_PROTOCOL_VERSION = "2025-06-18"
 # that negotiated version keeps the JSON-RPC boundary interoperable while
 # preserving the older client versions already in the field.
 SUPPORTED_MCP_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
-MCP_SERVER_VERSION = "0.1.0"
+MCP_SERVER_VERSION = "0.2.0"
 DEFAULT_CONTROL_SESSION_TTL_SECONDS = 3600
 MIN_CONTROL_SESSION_TTL_SECONDS = 60
 
@@ -444,6 +447,16 @@ class McpControlPlane:
         self.service = service
         self.endpoint_service = endpoint_service
         self.endpoint_publication_service = endpoint_publication_service
+        self.endpoint_application_service = (
+            EndpointApplicationService(
+                endpoint_service=endpoint_service,
+                hypervisor_service=service,
+                endpoint_publication_service=endpoint_publication_service,
+                validation_service=validation_service,
+            )
+            if endpoint_service is not None
+            else None
+        )
         self.validation_service = validation_service
         self.registry_service = registry_service
         self.mcp_state_store = mcp_state_store
@@ -816,7 +829,6 @@ class McpControlPlane:
                 "aidn.node.join_network",
                 "aidn.plugin.install",
                 "aidn.model.deploy",
-                "aidn.bundle.publish",
                 "aidn.validation.request",
                 "aidn.session.open",
                 "aidn.wallet.transfer",
@@ -1091,6 +1103,76 @@ class McpControlPlane:
                     endpoint_publication_service=self.endpoint_publication_service,
                     validation_service=self.validation_service,
                 ),
+            ),
+            "aidn.endpoint.create": McpTool(
+                "aidn.endpoint.create",
+                "Plan or create an Endpoint draft from an existing Runtime Binding and immutable Bundle revision.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "runtime_binding_id": {"type": "string", "minLength": 1},
+                        "bundle_id": {"type": "string", "minLength": 1},
+                        "display_name": {"type": "string", "minLength": 1},
+                        "model_class": {"type": "string", "minLength": 1},
+                        "capabilities": {"type": "array", "items": {"type": "string"}},
+                        "runtime_parameter_policy": {"type": "object"},
+                        "profile": {"type": "object"},
+                        "runtime": {"type": "object"},
+                        "publication": {"type": "object"},
+                        "pricing": {"type": "object"},
+                        "session": {"type": "object"},
+                        "validation": {"type": "object"},
+                        "local_agent_use": {"type": "boolean"},
+                        "mode": {"enum": ["plan", "apply"]},
+                        "request_id": {"type": "string", "minLength": 1},
+                        "idempotency_key": {"type": "string", "minLength": 1},
+                        "plan_hash": {"type": "string"},
+                        "expected_revision": {"type": "string"},
+                        "approval_reference": {"type": "string"},
+                    },
+                    "required": [
+                        "runtime_binding_id",
+                        "bundle_id",
+                        "display_name",
+                        "mode",
+                        "request_id",
+                        "idempotency_key",
+                    ],
+                    "additionalProperties": False,
+                },
+                ("ENDPOINT:WRITE",),
+                "ENDPOINT_MUTATION",
+                lambda args: self._create_endpoint(args),
+                mutating=True,
+                approval_key="endpoint_write",
+            ),
+            "aidn.endpoint.publish": McpTool(
+                "aidn.endpoint.publish",
+                "Plan or publish an Endpoint draft through the canonical wallet and CometBFT publication path.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "endpoint_id": {"type": "string", "minLength": 1},
+                        "mode": {"enum": ["plan", "apply"]},
+                        "request_id": {"type": "string", "minLength": 1},
+                        "idempotency_key": {"type": "string", "minLength": 1},
+                        "plan_hash": {"type": "string"},
+                        "expected_revision": {"type": "string"},
+                        "approval_reference": {"type": "string"},
+                    },
+                    "required": [
+                        "endpoint_id",
+                        "mode",
+                        "request_id",
+                        "idempotency_key",
+                    ],
+                    "additionalProperties": False,
+                },
+                ("ENDPOINT:WRITE",),
+                "ENDPOINT_PUBLICATION",
+                lambda args: self._publish_endpoint(args),
+                mutating=True,
+                approval_key="endpoint_write",
             ),
             "aidn.resources.status": McpTool(
                 "aidn.resources.status",
@@ -1430,7 +1512,7 @@ class McpControlPlane:
             request_id=request_id,
             idempotency_key=idempotency_key,
             action_class=tool.action_class,
-            target=arguments.get("bundle_id"),
+            target=arguments.get("bundle_id") or arguments.get("endpoint_id"),
             plan_hash=plan["plan_hash"],
             approval_reference=arguments.get("approval_reference"),
             result="SUCCEEDED",
@@ -1446,7 +1528,7 @@ class McpControlPlane:
 
     def _build_plan(self, tool: McpTool, arguments: dict[str, Any]) -> dict[str, Any]:
         plan_arguments = self._plan_arguments(arguments)
-        current_revision = self._bundle_revision(arguments.get("bundle_id")) if arguments.get("bundle_id") else None
+        current_revision = self._target_revision(arguments)
         expected_revision = arguments.get("expected_revision")
         if expected_revision is not None and current_revision != expected_revision:
             raise McpDomainError(
@@ -1457,7 +1539,7 @@ class McpControlPlane:
         plan_body = {
             "tool": tool.name,
             "request_id": arguments.get("request_id"),
-            "target": arguments.get("bundle_id"),
+            "target": arguments.get("bundle_id") or arguments.get("endpoint_id"),
             "arguments": plan_arguments,
             "expected_revision": expected_revision,
             "current_revision": current_revision,
@@ -1497,6 +1579,15 @@ class McpControlPlane:
                 "attach one existing Provider endpoint",
                 f"bind it to Plugin {arguments.get('plugin_id', 'unknown')}",
             ]
+        if tool_name == "aidn.endpoint.create":
+            return [
+                "create a local Endpoint draft",
+                f"pin it to Bundle {bundle_id} and Runtime Binding {arguments.get('runtime_binding_id', 'unknown')}",
+            ]
+        if tool_name == "aidn.endpoint.publish":
+            return [
+                f"publish Endpoint {arguments.get('endpoint_id', 'unknown')} through the canonical wallet path",
+            ]
         return [tool_name]
 
     @staticmethod
@@ -1505,6 +1596,10 @@ class McpControlPlane:
             return ["active requests may be interrupted after the runtime stop"]
         if tool_name == "aidn.provider.attach":
             return ["the configured endpoint becomes available to local Runtime flows"]
+        if tool_name == "aidn.endpoint.publish":
+            return [
+                "the Endpoint publication becomes visible to network discovery according to its publication policy",
+            ]
         return []
 
     def _attach_provider(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -1565,6 +1660,150 @@ class McpControlPlane:
                 stopped = {"bundle_id": bundle_id, "status": "already_stopped"}
         disabled = self.service.set_bundle_enabled(bundle_id, False)
         return {"bundle_id": bundle_id, "runtime": stopped, "bundle": disabled, "status": "retired"}
+
+    def _create_endpoint(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self.endpoint_application_service is None:
+            raise McpDomainError(
+                "MCP_ENDPOINTS_UNAVAILABLE",
+                "Endpoint application service is not configured",
+            )
+        runtime_binding_id = self._required_string(arguments, "runtime_binding_id")
+        bundle_id = self._required_string(arguments, "bundle_id")
+        display_name = self._required_string(arguments, "display_name")
+        wallet = self.service.owner_wallet_state()
+        if not wallet.get("configured") or not wallet.get("wallet_id"):
+            raise McpDomainError(
+                "MCP_ENDPOINT_OWNER_WALLET_REQUIRED",
+                "Owner wallet must be configured before creating an Endpoint draft",
+            )
+
+        bundle = next(
+            (item for item in self.service.bundle_config() if item.bundle_id == bundle_id),
+            None,
+        )
+        if bundle is None:
+            raise McpDomainError("MCP_BUNDLE_NOT_FOUND", f"Bundle not found: {bundle_id}")
+        bindings = self.service.list_runtime_bindings()
+        binding = next(
+            (
+                item
+                for item in bindings
+                if isinstance(item, dict)
+                and item.get("runtime_binding_id") == runtime_binding_id
+            ),
+            None,
+        )
+        if binding is None:
+            raise McpDomainError(
+                "MCP_RUNTIME_BINDING_NOT_FOUND",
+                f"Runtime Binding not found: {runtime_binding_id}",
+            )
+        model_class = arguments.get("model_class") or binding.get("capability_id")
+        if not isinstance(model_class, str) or not model_class:
+            raise McpDomainError(
+                "MCP_INVALID_ARGUMENTS",
+                "model_class is required when the Runtime Binding has no capability_id",
+            )
+        capabilities = arguments.get("capabilities")
+        if capabilities is None:
+            capabilities = [model_class]
+        if not isinstance(capabilities, list) or not all(
+            isinstance(item, str) and item for item in capabilities
+        ):
+            raise McpDomainError(
+                "MCP_INVALID_ARGUMENTS",
+                "capabilities must be a list of non-empty strings",
+            )
+
+        payload: dict[str, Any] = {
+            "owner_wallet": str(wallet["wallet_id"]),
+            "runtime_binding_id": runtime_binding_id,
+            "bundle_id": bundle_id,
+            "bundle_hash": str(bundle.bundle_hash or bundle_config_hash(bundle)),
+            "display_name": display_name,
+            "model_class": model_class,
+            "capabilities": capabilities,
+        }
+        for field_name in (
+            "runtime_parameter_policy",
+            "profile",
+            "runtime",
+            "publication",
+            "pricing",
+            "session",
+            "validation",
+        ):
+            value = arguments.get(field_name)
+            if value is not None:
+                if not isinstance(value, dict):
+                    raise McpDomainError(
+                        "MCP_INVALID_ARGUMENTS",
+                        f"{field_name} must be a JSON object",
+                    )
+                payload[field_name] = value
+
+        # Validate admission before mutating state so an Agent receives a
+        # useful readiness report instead of a generic Pydantic error.
+        admission = self.service.runtime_binding_endpoint_admission(
+            runtime_binding_id,
+            endpoint_payload=payload,
+        )
+        if not admission.get("ready"):
+            raise McpDomainError(
+                "MCP_ENDPOINT_ADMISSION_BLOCKED",
+                "Runtime Binding is not ready for Endpoint creation",
+                details=admission,
+            )
+        result = self.endpoint_application_service.create_endpoint(payload)
+        endpoint = result["created"].endpoint
+        if arguments.get("local_agent_use") is True:
+            endpoint = self.endpoint_service.set_local_agent_use(
+                endpoint.endpoint_id,
+                enabled=True,
+            ).endpoint
+        return {
+            "status": "created",
+            "endpoint": _json_safe(endpoint),
+            "snapshot": _json_safe(result["created"].snapshot),
+            "onboarding": _json_safe(result.get("onboarding")),
+        }
+
+    def _publish_endpoint(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self.endpoint_application_service is None:
+            raise McpDomainError(
+                "MCP_ENDPOINTS_UNAVAILABLE",
+                "Endpoint application service is not configured",
+            )
+        endpoint_id = self._required_string(arguments, "endpoint_id")
+        try:
+            return self.endpoint_application_service.publish_endpoint(endpoint_id)
+        except EndpointPublicationReadinessError as error:
+            raise McpDomainError(
+                "MCP_ENDPOINT_PUBLICATION_BLOCKED",
+                str(error),
+                details=error.readiness,
+            ) from error
+
+    def _target_revision(self, arguments: dict[str, Any]) -> str | None:
+        bundle_id = arguments.get("bundle_id")
+        if bundle_id:
+            return self._bundle_revision(bundle_id)
+        endpoint_id = arguments.get("endpoint_id")
+        if not endpoint_id:
+            return None
+        if self.endpoint_service is None:
+            raise McpDomainError(
+                "MCP_ENDPOINTS_UNAVAILABLE",
+                "Endpoint service is not configured",
+            )
+        try:
+            endpoint = self.endpoint_service.get_endpoint(endpoint_id).endpoint
+        except KeyError as error:
+            raise McpDomainError(
+                "MCP_ENDPOINT_NOT_FOUND",
+                f"Endpoint not found: {endpoint_id}",
+            ) from error
+        return endpoint.configuration_hash
 
     def _bundle_revision(self, bundle_id: str | None) -> str | None:
         if not bundle_id:
@@ -1873,6 +2112,7 @@ def build_mcp_server(
             "bundle_activate": "AUTO",
             "bundle_retire": "OPERATOR_CONFIRMATION",
             "provider_attach": "OPERATOR_CONFIRMATION",
+            "endpoint_write": "OPERATOR_CONFIRMATION",
         },
     )
     control = McpControlPlane(
@@ -1936,6 +2176,7 @@ def main(argv: list[str] | None = None) -> None:
             "bundle_activate": "AUTO",
             "bundle_retire": "OPERATOR_CONFIRMATION",
             "provider_attach": "OPERATOR_CONFIRMATION",
+            "endpoint_write": "OPERATOR_CONFIRMATION",
         },
     )
     server = build_mcp_server(

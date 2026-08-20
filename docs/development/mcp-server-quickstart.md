@@ -170,6 +170,45 @@ same arguments with `mode: "apply"` and the returned `plan_hash`. This action
 registers only the Provider instance; model discovery and Runtime Binding
 remain separate operations.
 
+### Create and publish an Endpoint from an Agent
+
+Endpoint lifecycle control is available through the narrowly scoped
+`ENDPOINT:WRITE` permission. Existing credentials are not widened by an
+upgrade: an operator must explicitly add this scope to the Agent credential
+through the Dashboard permission catalog. The default credential policy is
+`OPERATOR_CONFIRMATION` for both draft creation and publication. The Agent can
+prepare plans, but the separate operator token must approve each plan unless
+the operator deliberately selects `ENDPOINT:WRITE` under auto-approved scopes.
+
+The Agent should first read `aidn.provider.list` and select a ready
+`runtime_binding_id`, then select the enabled immutable `bundle_id` that
+belongs to that binding (including the desired revision). The owner wallet is
+read from the node and cannot be supplied or replaced by the Agent.
+
+Create a draft (the nested objects are optional and default from the selected
+Bundle/runtime policy):
+
+```json
+{"jsonrpc":"2.0","id":30,"method":"tools/call","params":{"name":"aidn.endpoint.create","arguments":{"runtime_binding_id":"rtb-example","bundle_id":"bundle-rtb-example-r4","display_name":"Qwen local endpoint","publication":{"visibility":"public","discoverable":true,"accepts_external_requests":true},"runtime":{"context_length":131072,"temperature":0.7,"top_p":0.9,"max_tokens":1024},"runtime_parameter_policy":{"context_length":{"value":131072,"consumer_editable":false},"temperature":{"value":0.7,"consumer_editable":true}},"local_agent_use":true,"mode":"plan","request_id":"req-endpoint-create-1","idempotency_key":"idem-endpoint-create-1"}}}
+```
+
+Approve the returned `plan_hash` through the operator endpoint, then repeat
+the same request with `mode: "apply"`. The result contains the new
+`endpoint_id`. Publication is a separate plan so an operator can review the
+final Marketplace visibility, pricing, validation and parameter policy:
+
+```json
+{"jsonrpc":"2.0","id":31,"method":"tools/call","params":{"name":"aidn.endpoint.publish","arguments":{"endpoint_id":"ep-<created-id>","mode":"plan","request_id":"req-endpoint-publish-1","idempotency_key":"idem-endpoint-publish-1"}}}
+```
+
+After operator approval, apply that second plan with its `plan_hash`. With an
+enabled CometBFT network the tool submits the canonical `ENDPOINT_PUBLISH`
+wallet operation and returns `CONSENSUS_PENDING` until finality; it never
+marks a local publication as final merely because a draft exists. A failed
+readiness or canonical-wallet check is returned as a structured MCP error with
+the blocking dimensions, so the Agent should report the blocker instead of
+retrying the same call in a loop.
+
 ## Optional remote gateway
 
 The HTTP gateway is disabled by default. Enable it only for a private LAN or

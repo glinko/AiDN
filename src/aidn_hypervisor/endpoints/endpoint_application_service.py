@@ -1,6 +1,14 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from aidn_hypervisor.bundle_hash import bundle_config_hash
+from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
+from aidn_hypervisor.endpoint_publications.models import PublishedEndpointConfiguration
+from aidn_hypervisor.endpoint_publications.signing import (
+    sign_consensus_bytes,
+    verify_publication_signature,
+)
 from aidn_hypervisor.endpoints.models import (
     CreateEndpointCommand,
     UpdateEndpointCommand,
@@ -131,6 +139,243 @@ class EndpointApplicationService:
                 "onboarding": onboarding,
             },
         }
+
+    def publish_endpoint(self, endpoint_id: str) -> dict:
+        """Publish an Endpoint through the same canonical path as the operator UI.
+
+        Endpoint publication is a wallet operation when CometBFT is enabled.
+        Keeping this orchestration here lets MCP call the application boundary
+        without duplicating a local-only ``store.append`` shortcut or exposing
+        the wallet private key to the agent.
+        """
+        if (
+            self._hypervisor_service is None
+            or self._endpoint_service is None
+            or self._endpoint_publication_service is None
+        ):
+            raise ValueError("Endpoint publication service is not configured")
+
+        self._reconcile_remote_endpoint_publication(endpoint_id)
+        wallet = self._hypervisor_service.owner_wallet_state()
+        if not wallet.get("configured"):
+            raise ValueError(
+                "Owner wallet must be configured before publishing endpoint configuration"
+            )
+        record = self._endpoint_publication_service.prepare_configuration(
+            endpoint_id=endpoint_id,
+            owner_wallet=wallet["wallet_id"],
+            owner_public_key=wallet.get("public_key"),
+            node_id=self._hypervisor_service.node_id,
+            wallet_private_key=self._hypervisor_service.owner_wallet_private_key(),
+        )
+        current = self._endpoint_publication_service.current_publication(endpoint_id)
+        if current is not None and current.publication_id == record.publication_id:
+            return {
+                "status": "FINALIZED",
+                "endpoint_id": endpoint_id,
+                "publication": record.model_dump(mode="json"),
+            }
+
+        consensus = getattr(self._hypervisor_service, "consensus_service", None)
+        if consensus is None or not getattr(consensus, "is_enabled", False):
+            committed = self._endpoint_publication_service.commit_prepared_configuration(record)
+            return {
+                "status": "FINALIZED",
+                "endpoint_id": endpoint_id,
+                "publication": committed.model_dump(mode="json"),
+            }
+
+        identity_read = self._hypervisor_service.wallet_identity_read_model(record.owner_wallet)
+        identity_source = str(identity_read.get("source") or "")
+        canonical_identity_provider = getattr(
+            self._hypervisor_service, "canonical_wallet_identity_provider", None
+        )
+        canonical_identity_query = getattr(consensus, "query_wallet_identity", None)
+        canonical_identity_required = callable(canonical_identity_provider) or callable(
+            canonical_identity_query
+        )
+        if canonical_identity_required and identity_read.get("identity") is None:
+            if identity_read.get("error"):
+                raise ValueError(
+                    "canonical Wallet identity is unavailable; check the configured CometBFT RPC "
+                    "before publishing"
+                )
+            raise ValueError(
+                "Owner Wallet identity is not registered on the current canonical chain; "
+                "open Wallet and click Register in network before publishing"
+            )
+        if canonical_identity_required and identity_source in {
+            "local_projection",
+            "local_projection_unverified",
+        }:
+            raise ValueError(
+                "Wallet identity is available only in a local projection; register the Wallet "
+                "in the current canonical network before publishing"
+            )
+
+        local_sequence = self._hypervisor_service.ledger_operation_service.wallet_next_sequence(
+            record.owner_wallet
+        )
+        sequence_provider = getattr(
+            self._hypervisor_service, "canonical_wallet_sequence_provider", None
+        )
+        query_sequence = getattr(consensus, "query_wallet_next_sequence", None)
+        if callable(sequence_provider):
+            try:
+                canonical_sequence = int(sequence_provider(record.owner_wallet))
+            except (RuntimeError, OSError, ValueError, TypeError) as error:
+                raise ValueError(
+                    f"canonical Wallet sequence is unavailable; check the configured CometBFT RPC ({error})"
+                ) from error
+        elif callable(query_sequence):
+            canonical_sequence = query_sequence(record.owner_wallet)
+            if canonical_sequence is None:
+                raise ValueError(
+                    "canonical Wallet sequence is unavailable; check the configured CometBFT RPC "
+                    "and try again"
+                )
+        else:
+            canonical_sequence = local_sequence
+        if canonical_sequence is not None:
+            if self._hypervisor_service.ledger_operation_service.reconcile_wallet_sequence(
+                record.owner_wallet, canonical_sequence
+            ):
+                self._hypervisor_service._persist_state()
+            local_sequence = canonical_sequence
+
+        def build_envelope(
+            publication_record: PublishedEndpointConfiguration,
+            sequence: int,
+            retry_nonce: str | None = None,
+        ) -> LedgerOperationEnvelope:
+            evidence = [
+                publication_record.publication_id,
+                publication_record.endpoint_id,
+                publication_record.configuration_hash,
+            ]
+            if retry_nonce is not None:
+                evidence.append(f"retry:{retry_nonce}")
+            unsigned = LedgerOperationEnvelope(
+                operation_type="ENDPOINT_PUBLISH",
+                operation_version="1.0.0",
+                protocol_version="0.1",
+                origin_type="wallet",
+                initiator_id=publication_record.endpoint_id,
+                sender_wallet=publication_record.owner_wallet,
+                sender_sequence=sequence,
+                fee_payer=publication_record.owner_wallet,
+                fee_class="standard",
+                created_at=publication_record.published_at,
+                payload={"publication": publication_record.model_dump(mode="json")},
+                evidence_references=evidence,
+                signatures=[],
+            )
+            signature = sign_consensus_bytes(
+                private_key=self._hypervisor_service.owner_wallet_private_key(),
+                payload=unsigned.signing_bytes(),
+            )
+            return unsigned.model_copy(update={"signatures": [signature]})
+
+        candidates = [
+            envelope
+            for envelope in self._hypervisor_service.list_pending_consensus_envelopes()
+            if envelope.operation_type == "ENDPOINT_PUBLISH"
+            and envelope.payload.get("publication", {}).get("endpoint_id") == endpoint_id
+            and envelope.payload.get("publication", {}).get("configuration_hash")
+            == record.configuration_hash
+        ]
+        pending = next(
+            (
+                envelope
+                for envelope in reversed(candidates)
+                if envelope.sender_sequence == local_sequence
+            ),
+            None,
+        )
+        if pending is None:
+            pending = build_envelope(record, local_sequence)
+            self._hypervisor_service.stage_pending_consensus_envelope(pending)
+        previous_submission = consensus.get_submission(pending.operation_id)
+        if previous_submission is not None and previous_submission.status.value == "failed":
+            pending = build_envelope(record, local_sequence, uuid4().hex)
+            self._hypervisor_service.stage_pending_consensus_envelope(pending)
+        submission = consensus.submit_operation(pending, retry_existing=True)
+        if (
+            submission.status.value == "failed"
+            and "configuration_hash does not match canonical payload"
+            in (submission.error or "")
+        ):
+            compatibility_record = self._endpoint_publication_service.legacy_compatible_configuration(
+                record,
+                wallet_private_key=self._hypervisor_service.owner_wallet_private_key(),
+            )
+            if compatibility_record.configuration_hash != record.configuration_hash:
+                record = compatibility_record
+                pending = build_envelope(record, local_sequence, uuid4().hex)
+                self._hypervisor_service.stage_pending_consensus_envelope(pending)
+                submission = consensus.submit_operation(pending, retry_existing=True)
+
+        finality = self._hypervisor_service.ledger_operation_finality(pending.operation_id)
+        if finality.get("consensus_finalized"):
+            committed = self._endpoint_publication_service.commit_prepared_configuration(
+                record,
+                record_operations=False,
+            )
+            self._hypervisor_service.discard_pending_consensus_envelopes(pending.operation_id)
+            self._hypervisor_service.discard_pending_consensus_operations(pending.operation_id)
+            return {
+                "status": "FINALIZED",
+                "endpoint_id": endpoint_id,
+                "publication": committed.model_dump(mode="json"),
+                "consensus": {
+                    "operation_id": pending.operation_id,
+                    "submission": submission.status.value,
+                    "finality": finality,
+                },
+            }
+        if submission.status.value == "failed":
+            raise ValueError(submission.error or "Consensus rejected Endpoint publication")
+        return {
+            "status": "CONSENSUS_PENDING",
+            "endpoint_id": endpoint_id,
+            "operation_id": pending.operation_id,
+            "submission": submission.status.value,
+            "publication": record.model_dump(mode="json"),
+            "finality": finality,
+        }
+
+    def _reconcile_remote_endpoint_publication(self, endpoint_id: str) -> bool:
+        if self._endpoint_publication_service is None:
+            return False
+        consensus = getattr(self._hypervisor_service, "consensus_service", None)
+        query_publication = getattr(consensus, "query_endpoint_publication", None)
+        if consensus is None or not getattr(consensus, "is_enabled", False) or not callable(
+            query_publication
+        ):
+            return False
+        payload = query_publication(endpoint_id)
+        if payload is None:
+            return False
+        try:
+            record = PublishedEndpointConfiguration.model_validate(payload)
+            endpoint = self._endpoint_service.get_endpoint(endpoint_id).endpoint
+            if record.endpoint_id != endpoint_id or record.owner_wallet != endpoint.owner_wallet:
+                return False
+            verify_publication_signature(
+                public_key=record.owner_public_key,
+                signature=record.wallet_signature,
+                payload=record.signed_payload(),
+            )
+            current = self._endpoint_publication_service.current_publication(endpoint_id)
+            if current is not None and current.publication_id == record.publication_id:
+                return False
+            self._endpoint_publication_service.commit_prepared_configuration(
+                record,
+                record_operations=False,
+            )
+            return True
+        except (KeyError, TypeError, ValueError):
+            return False
 
     def update_endpoint(self, endpoint_id: str, command: UpdateEndpointCommand) -> dict:
         if command.endpoint_id != endpoint_id:
