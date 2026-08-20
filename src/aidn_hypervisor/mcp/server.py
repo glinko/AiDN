@@ -18,11 +18,11 @@ import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from importlib import import_module
 from pathlib import Path
 from typing import Any, TextIO
 
 from aidn_hypervisor.bundle_hash import bundle_config_hash
-from aidn_hypervisor.config import load_operator_config
 from aidn_hypervisor.endpoint_publications.service import EndpointPublicationReadinessError
 from aidn_hypervisor.endpoints.endpoint_application_service import EndpointApplicationService
 from aidn_hypervisor.mcp.persistence import (
@@ -45,6 +45,18 @@ SUPPORTED_MCP_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26")
 MCP_SERVER_VERSION = "0.2.0"
 DEFAULT_CONTROL_SESSION_TTL_SECONDS = 3600
 MIN_CONTROL_SESSION_TTL_SECONDS = 60
+
+
+def load_operator_config() -> None:
+    """Load optional operator config when this checkout provides the module."""
+
+    try:
+        module = import_module("aidn_hypervisor.config")
+    except ImportError:  # pragma: no cover - compatibility with older node checkouts
+        return
+    loader = getattr(module, "load_operator_config", None)
+    if callable(loader):
+        loader()
 
 JSONRPC_INVALID_REQUEST = -32600
 JSONRPC_METHOD_NOT_FOUND = -32601
