@@ -7,6 +7,7 @@ from uuid import uuid4
 from aidn_hypervisor.bundle_hash import bundle_config_hash
 from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig
 from aidn_hypervisor.process_manager import RuntimeHandle
+from aidn_hypervisor.resources import ResourceAdmissionError
 
 _ALLOCATION_RETRY_INTERVAL_SECONDS = 5
 
@@ -371,6 +372,9 @@ class AllocationCatalogService:
             expired_any = True
         if expired_any:
             self._host._persist_state()
+            reconcile = getattr(self._host, "reconcile_scheduler", None)
+            if callable(reconcile):
+                reconcile(trigger="allocation_expired")
 
     def public_allocation(self, allocation: dict) -> dict:
         request = allocation["request"]
@@ -430,7 +434,7 @@ class AllocationCatalogService:
         self._host._persist_state()
         return self._host.get_allocation(allocation_id)
 
-    def reconcile_pending_allocations(self) -> None:
+    def reconcile_pending_allocations(self) -> bool:
         changed = False
         for allocation in self._host._allocations.values():
             if allocation["status"] != "pending":
@@ -457,13 +461,28 @@ class AllocationCatalogService:
                 allocation["reason"] = str(owner_quota["reason"])
                 continue
 
-            reservation_id = self.reserve_allocation_residency(
-                allocation_id=str(allocation["allocation_id"]),
-                bundle=bundle,
-                runtime=runtime,
-            )
-            if runtime is None:
-                runtime = self._host.start_bundle(bundle.bundle_id)
+            reservation_id = None
+            try:
+                reservation_id = self.reserve_allocation_residency(
+                    allocation_id=str(allocation["allocation_id"]),
+                    bundle=bundle,
+                    runtime=runtime,
+                )
+                if runtime is None:
+                    runtime = self._host.start_bundle(
+                        bundle.bundle_id,
+                        reserve_resources=False,
+                    )
+            except ResourceAdmissionError:
+                if reservation_id is not None:
+                    self._host.resources.release(reservation_id)
+                allocation["reason"] = "insufficient_resources"
+                continue
+            except Exception:
+                if reservation_id is not None:
+                    self._host.resources.release(reservation_id)
+                allocation["reason"] = "runtime_start_failed"
+                continue
             allocation["bundle_id"] = bundle.bundle_id
             allocation["runtime_id"] = runtime.runtime_id
             allocation["endpoint"] = self.resolve_runtime_endpoint(bundle, runtime)
@@ -483,6 +502,7 @@ class AllocationCatalogService:
             changed = True
         if changed:
             self._host._persist_state()
+        return changed
 
     def allocation_retry_hint(
         self,

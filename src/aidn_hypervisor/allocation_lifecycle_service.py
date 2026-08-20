@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig
+from aidn_hypervisor.resources import ResourceAdmissionError
 
 
 class AllocationLifecycleService:
@@ -83,13 +84,43 @@ class AllocationLifecycleService:
             now_ts + request.lease_seconds,
             UTC,
         ).isoformat()
-        reservation_id = self._host._reserve_allocation_residency(
-            allocation_id=allocation_id,
-            bundle=bundle,
-            runtime=runtime,
-        )
-        if runtime is None:
-            runtime = self._host.start_bundle(bundle.bundle_id)
+        reservation_id = None
+        try:
+            reservation_id = self._host._reserve_allocation_residency(
+                allocation_id=allocation_id,
+                bundle=bundle,
+                runtime=runtime,
+            )
+            if runtime is None:
+                runtime = self._host.start_bundle(
+                    bundle.bundle_id,
+                    reserve_resources=False,
+                )
+        except ResourceAdmissionError as error:
+            if reservation_id is not None:
+                self._host.resources.release(reservation_id)
+            if request.policy == "wait":
+                return self.create_pending_allocation(
+                    request=request,
+                    bundle=bundle,
+                    reason="insufficient_resources",
+                )
+            retry_hint = self._host._allocation_retry_hint(
+                bundle_id=bundle.bundle_id,
+                reason="insufficient_resources",
+            )
+            raise self._host._allocation_unavailable_error(
+                reason="insufficient_resources",
+                message=str(error),
+                bundle_id=bundle.bundle_id,
+                retryable=True,
+                retry_after_seconds=retry_hint["retry_after_seconds"],
+                next_attempt_at=retry_hint["next_attempt_at"],
+            ) from error
+        except Exception:
+            if reservation_id is not None:
+                self._host.resources.release(reservation_id)
+            raise
         allocation = {
             "allocation_id": allocation_id,
             "request": request.model_dump(mode="json"),
@@ -135,6 +166,9 @@ class AllocationLifecycleService:
             details={"allocation_id": allocation_id},
         )
         self._host._persist_state()
+        reconcile = getattr(self._host, "reconcile_scheduler", None)
+        if callable(reconcile):
+            reconcile(trigger="allocation_released")
         return self.get_allocation(allocation_id)
 
     def create_pending_allocation(

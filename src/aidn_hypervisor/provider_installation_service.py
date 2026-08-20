@@ -136,8 +136,16 @@ class ProviderInstallationService:
         )
         return diagnostics.model_dump(mode="json")
 
-    def apply_provider_installation_approval(self, approval_id: str) -> dict:
-        job = self._host.provider_inventory.apply_installation_approval(approval_id)
+    def apply_provider_installation_approval(
+        self,
+        approval_id: str,
+        *,
+        wait_for_completion: bool = True,
+    ) -> dict:
+        job = self._host.provider_inventory.apply_installation_approval(
+            approval_id,
+            wait_for_completion=wait_for_completion,
+        )
         self._host._persist_state()
         return job.model_dump(mode="json")
 
@@ -148,6 +156,7 @@ class ProviderInstallationService:
         configuration: dict,
         operator_note: str | None = None,
         upgrade_acknowledged: bool = False,
+        wait_for_completion: bool = True,
     ) -> dict:
         """Install a managed provider runtime through the inventory service.
 
@@ -160,6 +169,7 @@ class ProviderInstallationService:
             configuration=configuration,
             operator_note=operator_note,
             upgrade_acknowledged=upgrade_acknowledged,
+            wait_for_completion=wait_for_completion,
         )
         self._host._persist_state()
         return job
@@ -171,12 +181,14 @@ class ProviderInstallationService:
         configuration: dict,
         operator_note: str | None = None,
         upgrade_acknowledged: bool = False,
+        wait_for_completion: bool = True,
     ) -> dict:
         job = self._host.provider_inventory.change_provider_runtime(
             plugin_id=plugin_id,
             configuration=configuration,
             operator_note=operator_note,
             upgrade_acknowledged=upgrade_acknowledged,
+            wait_for_completion=wait_for_completion,
         )
         self._host._persist_state()
         return job
@@ -482,6 +494,14 @@ class ProviderInstallationService:
             job.model_dump(mode="json")
             for job in self._host.provider_inventory.list_installation_jobs()
         ]
+
+    def get_provider_installation_job(self, job_id: str) -> dict:
+        return self._host.provider_inventory.get_installation_job(job_id).model_dump(mode="json")
+
+    def cancel_provider_installation_job(self, job_id: str) -> dict:
+        job = self._host.provider_inventory.cancel_installation_job(job_id)
+        self._host._persist_state()
+        return job.model_dump(mode="json")
 
     def plugin_host_local_ingress(self):
         return self._host.provider_inventory.plugin_host_local_ingress()

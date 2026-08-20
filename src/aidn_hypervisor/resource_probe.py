@@ -7,7 +7,7 @@ import json
 import os
 import subprocess
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -111,39 +111,52 @@ def _configured_gpu_vram() -> dict[str, int] | None:
     return {str(device): int(amount) for device, amount in payload.items()}
 
 
-def _probe_nvidia_vram() -> tuple[dict[str, int], str | None]:
+def _probe_nvidia_vram() -> tuple[dict[str, int], dict[str, int], str | None]:
+    query = [
+        "nvidia-smi",
+        "--query-gpu=index,memory.total,memory.used",
+        "--format=csv,noheader,nounits",
+    ]
     try:
         result = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=index,memory.total",
-                "--format=csv,noheader,nounits",
-            ],
+            query,
             capture_output=True,
             check=False,
             text=True,
             timeout=3,
         )
     except FileNotFoundError:
-        return {}, "nvidia-smi is not installed; NVIDIA VRAM is not reported"
+        return {}, {}, "nvidia-smi is not installed; NVIDIA VRAM is not reported"
     except (OSError, subprocess.TimeoutExpired):
-        return {}, "nvidia-smi did not complete; NVIDIA VRAM is not reported"
+        return {}, {}, "nvidia-smi did not complete; NVIDIA VRAM is not reported"
 
     if result.returncode != 0:
-        return {}, "nvidia-smi could not access a GPU; NVIDIA VRAM is not reported"
+        return {}, {}, "nvidia-smi could not access a GPU; NVIDIA VRAM is not reported"
 
     devices: dict[str, int] = {}
+    measured: dict[str, int] = {}
     for line in result.stdout.splitlines():
         parts = [part.strip() for part in line.split(",")]
-        if len(parts) != 2:
+        if len(parts) not in {2, 3}:
             continue
         try:
             index, amount = int(parts[0]), int(parts[1])
         except ValueError:
             continue
         if amount >= 0:
-            devices[f"gpu{index}"] = amount
-    return devices, None
+            device_id = f"gpu{index}"
+            devices[device_id] = amount
+            if len(parts) == 3:
+                try:
+                    used = int(parts[2])
+                except ValueError:
+                    used = -1
+                if 0 <= used <= amount:
+                    measured[device_id] = used
+    limitation = None
+    if devices and len(measured) != len(devices):
+        limitation = "NVIDIA VRAM total was measured, but one or more usage readings were unavailable"
+    return devices, measured, limitation
 
 
 @dataclass(frozen=True)
@@ -152,6 +165,7 @@ class ResourceProbeReport:
     source: str
     observed_at: str
     limitations: tuple[str, ...] = ()
+    measured_vram_mb: dict[str, int] = field(default_factory=dict)
 
     def as_payload(self) -> dict[str, Any]:
         return {
@@ -159,6 +173,7 @@ class ResourceProbeReport:
             "source": self.source,
             "observed_at": self.observed_at,
             "capacity": self.capacity.model_dump(mode="json"),
+            "measured_vram_mb": dict(self.measured_vram_mb),
             "limitations": list(self.limitations),
         }
 
@@ -168,6 +183,7 @@ class ResourceProbeReport:
             "observed_at": self.observed_at,
             "limitations": list(self.limitations),
             "gpu_reported": bool(self.capacity.gpu_devices),
+            "measured_vram_mb": dict(self.measured_vram_mb),
         }
 
 
@@ -177,8 +193,9 @@ def probe_host_resources(*, source: str = "runtime-auto-probe") -> ResourceProbe
     ram_mb = _probe_ram_mb()
 
     configured_vram = _configured_gpu_vram()
+    measured_vram_mb: dict[str, int] = {}
     if configured_vram is None:
-        vram_mb, gpu_limitation = _probe_nvidia_vram()
+        vram_mb, measured_vram_mb, gpu_limitation = _probe_nvidia_vram()
         if gpu_limitation:
             limitations.append(gpu_limitation)
     else:
@@ -200,6 +217,7 @@ def probe_host_resources(*, source: str = "runtime-auto-probe") -> ResourceProbe
         source=source,
         observed_at=datetime.now(UTC).isoformat(),
         limitations=tuple(limitations),
+        measured_vram_mb=measured_vram_mb,
     )
 
 
@@ -219,12 +237,31 @@ def read_resource_probe_report(path: str | Path) -> ResourceProbeReport:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
     if payload.get("schema_version") != RESOURCE_PROBE_SCHEMA_VERSION:
         raise ValueError("unsupported resource probe schema version")
+    raw_measured_vram = payload.get("measured_vram_mb") or {}
+    # The field was added as an optional extension to schema v1.  Treat a
+    # malformed/legacy value as absent rather than making the whole capacity
+    # report unloadable; admission then remains conservative and can expose
+    # the probe limitation in its normal metadata.
+    if not isinstance(raw_measured_vram, Mapping):
+        raw_measured_vram = {}
     return ResourceProbeReport(
         capacity=NodeCapacity.model_validate(payload["capacity"]),
         source=str(payload.get("source") or "capacity-file"),
         observed_at=str(payload.get("observed_at") or "unknown"),
         limitations=tuple(str(item) for item in payload.get("limitations", [])),
+        measured_vram_mb={
+            str(device): int(amount)
+            for device, amount in raw_measured_vram.items()
+            if _is_non_negative_int(amount)
+        },
     )
+
+
+def _is_non_negative_int(value: Any) -> bool:
+    try:
+        return int(value) >= 0
+    except (TypeError, ValueError):
+        return False
 
 
 def load_resource_probe_from_environment(

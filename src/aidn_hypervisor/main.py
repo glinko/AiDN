@@ -85,6 +85,7 @@ from aidn_hypervisor.remote_endpoints.service import RemoteEndpointService
 from aidn_hypervisor.remote_endpoints.store import RemoteEndpointStore
 from aidn_hypervisor.resource_probe import load_resource_probe_from_environment
 from aidn_hypervisor.resources import ResourceOrchestrator
+from aidn_hypervisor.runtime_port_allocator import RuntimePortAllocator
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
 from aidn_hypervisor.session_failure.service import SessionFailureHandler
@@ -747,7 +748,17 @@ def _build_default_service(
         ),
         bundles=bundles,
         plugins=plugins,
-        runtimes=ProviderProcessManager(enable_subprocesses=True),
+        runtimes=ProviderProcessManager(
+            enable_subprocesses=True,
+            log_dir=os.getenv(
+                "AIDN_RUNTIME_LOG_DIR",
+                str(Path.home() / ".local" / "share" / "aidn" / "runtimes" / "logs"),
+            ),
+            port_allocator=RuntimePortAllocator(
+                start_port=int(os.getenv("AIDN_RUNTIME_PORT_START", "8000")),
+                end_port=int(os.getenv("AIDN_RUNTIME_PORT_END", "8999")),
+            ),
+        ),
         state_store=state_store,
         bundle_registry=_default_bundle_registry(plugins),
         model_store=_build_default_model_store(state_store=state_store),

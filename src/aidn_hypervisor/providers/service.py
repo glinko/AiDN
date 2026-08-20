@@ -3,8 +3,11 @@ import json
 import os
 import secrets
 import tempfile
+import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 from datetime import UTC, datetime
+from threading import RLock
 from pathlib import Path
 from uuid import uuid4
 
@@ -117,6 +120,33 @@ class ProviderInventoryService:
         )
         self.plugin_host_connection_store = PluginHostConnectionStore(plugin_host_connections)
         self._runtime_binding_projections: dict[str, dict] = {}
+        # The broker itself remains the privilege boundary.  This bounded
+        # executor only prevents a long broker action from blocking an HTTP
+        # request; all state transitions still go through the durable job
+        # record and the same reviewed executor.
+        self._installation_job_executor = ThreadPoolExecutor(
+            max_workers=2,
+            thread_name_prefix="aidn-provider-install",
+        )
+        self._installation_job_lock = RLock()
+        self._installation_job_futures: dict[str, Future] = {}
+        self._installation_job_update_callback = None
+
+    def set_installation_job_update_callback(self, callback) -> None:
+        """Bind the owning Hypervisor persistence callback after construction."""
+
+        self._installation_job_update_callback = callback
+
+    def _save_installation_job(self, job: ProviderInstallationJob) -> None:
+        self.store.save_installation_job(job)
+        callback = self._installation_job_update_callback
+        if callback is not None:
+            try:
+                callback()
+            except Exception:
+                # The job record remains available from the inventory store;
+                # a transient snapshot failure must not kill the broker worker.
+                pass
 
     def list_plugin_manifests(self) -> list[dict]:
         return [self._plugin_manifest_payload(plugin) for plugin in self._list_plugins()]
@@ -758,6 +788,7 @@ class ProviderInventoryService:
         operator_note: str | None,
         reuse_existing_provider_instance: bool,
         upgrade_acknowledged: bool,
+        wait_for_completion: bool,
     ) -> ProviderInstallationJob:
         plan = self.build_installation_plan(
             plugin_id=plugin_id,
@@ -782,6 +813,7 @@ class ProviderInventoryService:
         return self.apply_installation_approval(
             approval.approval_id,
             reuse_existing_provider_instance=reuse_existing_provider_instance,
+            wait_for_completion=wait_for_completion,
         )
 
     def install_provider_runtime(
@@ -791,6 +823,7 @@ class ProviderInventoryService:
         configuration: dict,
         operator_note: str | None = None,
         upgrade_acknowledged: bool = False,
+        wait_for_completion: bool = True,
     ) -> dict:
         active_managed = [
             instance
@@ -809,6 +842,7 @@ class ProviderInventoryService:
             operator_note=operator_note,
             reuse_existing_provider_instance=False,
             upgrade_acknowledged=upgrade_acknowledged,
+            wait_for_completion=wait_for_completion,
         ).model_dump(mode="json")
 
     def change_provider_runtime(
@@ -818,6 +852,7 @@ class ProviderInventoryService:
         configuration: dict,
         operator_note: str | None = None,
         upgrade_acknowledged: bool = False,
+        wait_for_completion: bool = True,
     ) -> dict:
         active_managed = [
             instance
@@ -834,6 +869,7 @@ class ProviderInventoryService:
             operator_note=operator_note or "Paired Dashboard Provider runtime change",
             reuse_existing_provider_instance=True,
             upgrade_acknowledged=upgrade_acknowledged,
+            wait_for_completion=wait_for_completion,
         ).model_dump(mode="json")
 
     def remove_provider_runtime(self, *, plugin_id: str) -> dict:
@@ -902,7 +938,7 @@ class ProviderInventoryService:
                     }
                 )
             )
-        self.store.save_installation_job(
+        self._save_installation_job(
             job.model_copy(
                 update={
                     "rollback_status": "COMPLETED",
@@ -1631,6 +1667,7 @@ class ProviderInventoryService:
         approval_id: str,
         *,
         reuse_existing_provider_instance: bool = False,
+        wait_for_completion: bool = True,
     ) -> ProviderInstallationJob:
         approval = self.store.get_installation_approval(approval_id)
         if approval.status != "APPROVED":
@@ -1683,9 +1720,7 @@ class ProviderInventoryService:
             executor_id=self.installation_executor.executor_id,
             created_at=_now_iso(),
         )
-        self.store.save_installation_job(job)
-        job = job.model_copy(update={"status": "RUNNING", "started_at": _now_iso()})
-        self.store.save_installation_job(job)
+        self._save_installation_job(job)
 
         existing_managed = next(
             (
@@ -1703,14 +1738,123 @@ class ProviderInventoryService:
             if existing_managed is not None
             else f"pi-{uuid4().hex[:12]}"
         )
+        execute_kwargs = {
+            "job": job,
+            "approval": approval,
+            "plan": plan,
+            "approved_configuration": approved_configuration,
+            "manifest": manifest.model_dump(mode="json"),
+            "existing_managed": existing_managed,
+            "provider_instance_id": provider_instance_id,
+            "prefer_broker_job": not wait_for_completion,
+        }
+        if wait_for_completion:
+            return self._execute_installation_job(**execute_kwargs)
+        with self._installation_job_lock:
+            future = self._installation_job_executor.submit(
+                self._execute_installation_job,
+                **execute_kwargs,
+            )
+            # The worker takes the same lock before moving QUEUED to RUNNING,
+            # so cancellation cannot observe a half-registered future.
+            self._installation_job_futures[job.job_id] = future
+        return job
+
+    def _record_installation_progress(
+        self,
+        job: ProviderInstallationJob,
+        *,
+        step: str,
+        percent: int,
+        message: str,
+        status: str | None = None,
+        source: str = "hypervisor",
+        broker_offset: int | None = None,
+    ) -> ProviderInstallationJob:
+        """Persist one bounded progress event for a broker-backed install."""
+
+        event = {
+            "timestamp": _now_iso(),
+            "step": step[:96],
+            "percent": max(0, min(100, int(percent))),
+            "message": message[:512],
+            "source": source,
+        }
+        if broker_offset is not None:
+            event["broker_offset"] = int(broker_offset)
+        updated = job.model_copy(
+            update={
+                "status": status or job.status,
+                "progress_percent": event["percent"],
+                "current_step": event["step"],
+                "progress_events": [*job.progress_events, event][-32:],
+                "updated_at": event["timestamp"],
+            }
+        )
+        self._save_installation_job(updated)
+        return updated
+
+    def _execute_installation_job(
+        self,
+        *,
+        job: ProviderInstallationJob,
+        approval: ProviderInstallationApproval,
+        plan: InstallationPlan,
+        approved_configuration: dict,
+        manifest: dict,
+        existing_managed: ProviderInstance | None,
+        provider_instance_id: str,
+        prefer_broker_job: bool = False,
+        resume_broker_job: bool = False,
+    ) -> ProviderInstallationJob:
+        with self._installation_job_lock:
+            current = self.store.get_installation_job(job.job_id)
+            if current.status == "CANCELLED":
+                self._installation_job_futures.pop(job.job_id, None)
+                return current
+            job = self._record_installation_progress(
+                current,
+                step="broker_dispatch",
+                percent=10,
+                message="Validated request; dispatching to the reviewed provider broker.",
+                status="RUNNING",
+            ).model_copy(update={"started_at": current.started_at or _now_iso()})
+            self._save_installation_job(job)
         try:
             approval_for_executor = approval.model_copy(deep=True)
-            result = self.installation_executor.apply(
-                approval=approval_for_executor,
-                plan=plan,
-                configuration=deepcopy(approved_configuration),
-                manifest=manifest.model_dump(mode="json"),
-                provider_instance_id=provider_instance_id,
+            if resume_broker_job:
+                result = self._resume_broker_installation(
+                    job=job,
+                    approval=approval_for_executor,
+                    plan=plan,
+                    approved_configuration=approved_configuration,
+                    manifest=manifest,
+                    provider_instance_id=provider_instance_id,
+                )
+            elif prefer_broker_job and callable(
+                getattr(self.installation_executor, "submit_installation", None)
+            ):
+                result = self._submit_and_wait_broker_installation(
+                    job=job,
+                    approval=approval_for_executor,
+                    plan=plan,
+                    approved_configuration=approved_configuration,
+                    manifest=manifest,
+                    provider_instance_id=provider_instance_id,
+                )
+            else:
+                result = self.installation_executor.apply(
+                    approval=approval_for_executor,
+                    plan=plan,
+                    configuration=deepcopy(approved_configuration),
+                    manifest=manifest,
+                    provider_instance_id=provider_instance_id,
+                )
+            job = self._record_installation_progress(
+                self.store.get_installation_job(job.job_id),
+                step="broker_completed",
+                percent=75,
+                message="Provider broker completed the reviewed runtime action.",
             )
             provider_instance = ProviderInstance.model_validate(result.provider_instance)
             self._validate_applied_provider_instance(
@@ -1720,28 +1864,38 @@ class ProviderInventoryService:
                 approved_configuration=approved_configuration,
             )
             self.store.save_provider_instance(provider_instance)
-            job = job.model_copy(
-                update={
-                    "status": "SUCCEEDED",
-                    "step_results": result.step_results,
-                    "provider_instance_id": provider_instance.provider_instance_id,
-                    "rollback_status": (
-                        result.rollback_result.status
-                        if result.rollback_result is not None
-                        else "NOT_NEEDED"
-                    ),
-                    "rollback_summary": (
-                        result.rollback_result.summary
-                        if result.rollback_result is not None
-                        else None
-                    ),
-                    "rollback_step_results": (
-                        result.rollback_result.step_results
-                        if result.rollback_result is not None
-                        else []
-                    ),
-                    "completed_at": _now_iso(),
-                }
+            latest = self.store.get_installation_job(job.job_id)
+            job = self._record_installation_progress(
+                latest.model_copy(
+                    update={
+                        "status": "SUCCEEDED",
+                        "step_results": result.step_results,
+                        "provider_instance_id": provider_instance.provider_instance_id,
+                        "rollback_status": (
+                            result.rollback_result.status
+                            if result.rollback_result is not None
+                            else "NOT_NEEDED"
+                        ),
+                        "rollback_summary": (
+                            result.rollback_result.summary
+                            if result.rollback_result is not None
+                            else None
+                        ),
+                        "rollback_step_results": (
+                            result.rollback_result.step_results
+                            if result.rollback_result is not None
+                            else []
+                        ),
+                        "progress_percent": 100,
+                        "current_step": "completed",
+                        "completed_at": _now_iso(),
+                        "updated_at": _now_iso(),
+                    }
+                ),
+                step="completed",
+                percent=100,
+                message="Provider runtime installation completed successfully.",
+                status="SUCCEEDED",
             )
         except Exception as exc:
             rollback_started_at = _now_iso()
@@ -1749,7 +1903,7 @@ class ProviderInventoryService:
                 approval=approval,
                 plan=plan,
                 configuration=deepcopy(approved_configuration),
-                manifest=manifest.model_dump(mode="json"),
+                manifest=manifest,
                 provider_instance_id=provider_instance_id,
             )
             if existing_managed is None:
@@ -1766,21 +1920,323 @@ class ProviderInventoryService:
                         }
                     }
                 )
-            job = job.model_copy(
+            latest = self.store.get_installation_job(job.job_id)
+            job = self._record_installation_progress(
+                latest.model_copy(
+                    update={
+                        "status": "FAILED",
+                        "rollback_status": rollback_result.status,
+                        "rollback_summary": rollback_result.summary,
+                        "rollback_step_results": rollback_result.step_results,
+                        "rollback_started_at": rollback_started_at,
+                        "rollback_completed_at": _now_iso(),
+                        "error_code": exc.__class__.__name__,
+                        "error_message": str(exc)[:1024],
+                        "progress_percent": 100,
+                        "current_step": "failed",
+                        "completed_at": _now_iso(),
+                        "updated_at": _now_iso(),
+                    }
+                ),
+                step="failed",
+                percent=100,
+                message="Provider runtime installation failed and rollback was attempted.",
+                status="FAILED",
+            )
+        self._save_installation_job(job)
+        self._installation_job_futures.pop(job.job_id, None)
+        return job
+
+    def _submit_and_wait_broker_installation(
+        self,
+        *,
+        job: ProviderInstallationJob,
+        approval: ProviderInstallationApproval,
+        plan: InstallationPlan,
+        approved_configuration: dict,
+        manifest: dict,
+        provider_instance_id: str,
+    ):
+        submit = getattr(self.installation_executor, "submit_installation", None)
+        if not callable(submit):
+            raise ValueError("provider installation executor does not support broker jobs")
+        response = submit(
+            approval=approval,
+            plan=plan,
+            configuration=deepcopy(approved_configuration),
+            manifest=manifest,
+            provider_instance_id=provider_instance_id,
+            client_job_id=f"aidn:{job.job_id}",
+        )
+        broker_job = response.get("job") if isinstance(response, dict) else None
+        if not isinstance(broker_job, dict):
+            raise ValueError("provider runtime broker submit response is missing job state")
+        broker_job_id = broker_job.get("broker_job_id")
+        if not isinstance(broker_job_id, str) or not broker_job_id.strip():
+            raise ValueError("provider runtime broker submit response is missing job ID")
+        updated = self.store.get_installation_job(job.job_id).model_copy(
+            update={
+                "provider_instance_id": provider_instance_id,
+                "broker_job_id": broker_job_id,
+                "broker_status": broker_job.get("status"),
+                "broker_event_offset": 0,
+            }
+        )
+        self._save_installation_job(updated)
+        return self._poll_broker_installation(
+            job=updated,
+            approval=approval,
+            plan=plan,
+            approved_configuration=approved_configuration,
+            manifest=manifest,
+            provider_instance_id=provider_instance_id,
+        )
+
+    def _resume_broker_installation(
+        self,
+        *,
+        job: ProviderInstallationJob,
+        approval: ProviderInstallationApproval,
+        plan: InstallationPlan,
+        approved_configuration: dict,
+        manifest: dict,
+        provider_instance_id: str,
+    ):
+        if not job.broker_job_id:
+            raise ValueError("provider installation job has no durable broker job ID")
+        return self._poll_broker_installation(
+            job=job,
+            approval=approval,
+            plan=plan,
+            approved_configuration=approved_configuration,
+            manifest=manifest,
+            provider_instance_id=provider_instance_id,
+        )
+
+    def _poll_broker_installation(
+        self,
+        *,
+        job: ProviderInstallationJob,
+        approval: ProviderInstallationApproval,
+        plan: InstallationPlan,
+        approved_configuration: dict,
+        manifest: dict,
+        provider_instance_id: str,
+    ):
+        get_job = getattr(self.installation_executor, "get_installation_job", None)
+        if not callable(get_job):
+            raise ValueError("provider installation executor does not support broker status")
+        broker_job_id = job.broker_job_id
+        if not broker_job_id:
+            raise ValueError("provider runtime broker job ID is missing")
+        cancel = getattr(self.installation_executor, "cancel_installation_job", None)
+        finalize = getattr(self.installation_executor, "finalize_installation_job", None)
+        if not callable(finalize):
+            raise ValueError("provider installation executor does not support broker finalization")
+
+        offset = job.broker_event_offset
+        cancel_sent = False
+        deadline = time.monotonic() + 3665.0
+        while True:
+            if time.monotonic() > deadline:
+                raise TimeoutError("provider runtime broker job polling timed out")
+            response = get_job(broker_job_id=broker_job_id, after_offset=offset)
+            if not isinstance(response, dict):
+                raise ValueError("provider runtime broker returned an invalid status response")
+            broker_job = response.get("job")
+            if not isinstance(broker_job, dict):
+                raise ValueError("provider runtime broker status response is missing job state")
+            broker_status = broker_job.get("status")
+            if broker_status not in {"QUEUED", "RUNNING", "SUCCEEDED", "FAILED", "CANCELLED"}:
+                raise ValueError("provider runtime broker returned an invalid job status")
+
+            truncated_before = int(broker_job.get("events_truncated_before", 0) or 0)
+            if truncated_before and offset + 1 < truncated_before:
+                # The bounded broker event journal has discarded older events.
+                # Advance to the first retained offset explicitly so a restart
+                # cannot silently replay or skip an unknown range.
+                offset = truncated_before - 1
+                current = self.store.get_installation_job(job.job_id)
+                job = self._record_installation_progress(
+                    current,
+                    step="broker_replay_gap",
+                    percent=current.progress_percent,
+                    message=(
+                        "Broker event history was compacted; resumed from the first "
+                        "retained event."
+                    ),
+                    source="broker",
+                    broker_offset=offset,
+                ).model_copy(update={"broker_event_offset": offset})
+                self._save_installation_job(job)
+
+            events = response.get("events")
+            if not isinstance(events, list):
+                events = broker_job.get("events", [])
+            for event in events:
+                if not isinstance(event, dict):
+                    continue
+                try:
+                    event_offset = int(event.get("offset", 0))
+                    percent = int(event.get("progress_percent", broker_job.get("progress_percent", 0)))
+                except (TypeError, ValueError):
+                    continue
+                if event_offset <= offset:
+                    continue
+                current = self.store.get_installation_job(job.job_id)
+                event_status = str(event.get("status") or broker_status)
+                progress_status = "RUNNING" if event_status not in {"SUCCEEDED", "FAILED", "CANCELLED"} else current.status
+                job = self._record_installation_progress(
+                    current,
+                    step=f"broker_{event_status.lower()}",
+                    percent=percent,
+                    message=str(event.get("message") or "Broker status updated."),
+                    status=progress_status,
+                    source="broker",
+                    broker_offset=event_offset,
+                ).model_copy(
+                    update={
+                        "broker_job_id": broker_job_id,
+                        "broker_status": event_status,
+                        "broker_event_offset": event_offset,
+                        "provider_instance_id": provider_instance_id,
+                    }
+                )
+                self._save_installation_job(job)
+                offset = event_offset
+
+            current = self.store.get_installation_job(job.job_id)
+            job = current.model_copy(
                 update={
-                    "status": "FAILED",
-                    "rollback_status": rollback_result.status,
-                    "rollback_summary": rollback_result.summary,
-                    "rollback_step_results": rollback_result.step_results,
-                    "rollback_started_at": rollback_started_at,
-                    "rollback_completed_at": _now_iso(),
-                    "error_code": exc.__class__.__name__,
-                    "error_message": str(exc),
-                    "completed_at": _now_iso(),
+                    "broker_job_id": broker_job_id,
+                    "broker_status": broker_status,
+                    "broker_event_offset": offset,
+                    "provider_instance_id": provider_instance_id,
                 }
             )
-        self.store.save_installation_job(job)
-        return job
+            self._save_installation_job(job)
+
+            if job.cancel_requested and broker_status not in {"SUCCEEDED", "FAILED", "CANCELLED"}:
+                if not cancel_sent and callable(cancel):
+                    cancel(broker_job_id=broker_job_id)
+                    cancel_sent = True
+            if broker_status in {"SUCCEEDED", "FAILED", "CANCELLED"}:
+                if broker_status != "SUCCEEDED":
+                    result = broker_job.get("result")
+                    summary = result.get("summary") if isinstance(result, dict) else None
+                    details = result.get("details") if isinstance(result, dict) else None
+                    raise ValueError(
+                        "Provider runtime broker job did not complete installation: "
+                        f"{summary or broker_status}; details={details or {}}"
+                    )
+                return finalize(
+                    broker_response=response,
+                    approval=approval,
+                    plan=plan,
+                    configuration=deepcopy(approved_configuration),
+                    manifest=manifest,
+                    provider_instance_id=provider_instance_id,
+                )
+            time.sleep(0.25)
+
+    def reconcile_installation_jobs(self) -> None:
+        """Reattach non-terminal jobs to the durable broker after a restart."""
+
+        get_job = getattr(self.installation_executor, "get_installation_job", None)
+        for persisted in self.store.list_installation_jobs():
+            if persisted.status in {"SUCCEEDED", "FAILED", "CANCELLED"}:
+                continue
+            if not persisted.broker_job_id or not callable(get_job):
+                reconciled = persisted.model_copy(
+                    update={
+                        "status": "FAILED",
+                        "error_code": "hypervisor_restarted",
+                        "error_message": (
+                            "Hypervisor restarted before the installation could be "
+                            "reconciled with the provider runtime broker."
+                        ),
+                        "progress_percent": 100,
+                        "current_step": "restart_reconciled",
+                        "completed_at": _now_iso(),
+                        "updated_at": _now_iso(),
+                    }
+                )
+                self._save_installation_job(
+                    self._record_installation_progress(
+                        reconciled,
+                        step="restart_reconciled",
+                        percent=100,
+                        message="Installation marked failed after Hypervisor restart without a durable broker job.",
+                        status="FAILED",
+                    )
+                )
+                continue
+            with self._installation_job_lock:
+                if persisted.job_id in self._installation_job_futures:
+                    continue
+            try:
+                approval = self.store.get_installation_approval(persisted.approval_id)
+                plugin = self._get_plugin(approval.plugin_id)
+                manifest = ProviderPluginManifest.model_validate(plugin.plugin_manifest())
+                configuration = deepcopy(approval.configuration)
+                plan = InstallationPlan.model_validate(
+                    self.build_installation_plan(
+                        plugin_id=approval.plugin_id,
+                        configuration=configuration,
+                    )
+                )
+                provider_instance_id = persisted.provider_instance_id or f"pi-{uuid4().hex[:12]}"
+                existing_managed = next(
+                    (
+                        instance
+                        for instance in self.store.list_provider_instances()
+                        if instance.plugin_id == approval.plugin_id
+                        and instance.connection_mode == "managed"
+                        and instance.operational_state != "removed"
+                        and (
+                            instance.provider_instance_id == provider_instance_id
+                            or persisted.provider_instance_id is None
+                        )
+                    ),
+                    None,
+                )
+            except Exception as exc:
+                failed = persisted.model_copy(
+                    update={
+                        "status": "FAILED",
+                        "error_code": "restart_reconciliation_error",
+                        "error_message": str(exc)[:1024],
+                        "progress_percent": 100,
+                        "current_step": "restart_reconciled",
+                        "completed_at": _now_iso(),
+                        "updated_at": _now_iso(),
+                    }
+                )
+                self._save_installation_job(
+                    self._record_installation_progress(
+                        failed,
+                        step="restart_reconciled",
+                        percent=100,
+                        message="Installation reconciliation failed before broker polling could resume.",
+                        status="FAILED",
+                    )
+                )
+                continue
+            execute_kwargs = {
+                "job": persisted,
+                "approval": approval,
+                "plan": plan,
+                "approved_configuration": configuration,
+                "manifest": manifest.model_dump(mode="json"),
+                "existing_managed": existing_managed,
+                "provider_instance_id": provider_instance_id,
+                "resume_broker_job": True,
+            }
+            with self._installation_job_lock:
+                self._installation_job_futures[persisted.job_id] = self._installation_job_executor.submit(
+                    self._execute_installation_job,
+                    **execute_kwargs,
+                )
 
     def rollback_installation_job(self, job_id: str) -> ProviderInstallationJob:
         job = self.store.get_installation_job(job_id)
@@ -1799,7 +2255,7 @@ class ProviderInventoryService:
         plan = InstallationPlan.model_validate(plan_dict)
 
         job = job.model_copy(update={"rollback_started_at": _now_iso()})
-        self.store.save_installation_job(job)
+        self._save_installation_job(job)
 
         rollback_result = self._rollback_execution(
             approval=approval,
@@ -1821,11 +2277,70 @@ class ProviderInventoryService:
                 "rollback_completed_at": _now_iso(),
             }
         )
-        self.store.save_installation_job(job)
+        self._save_installation_job(job)
         return job
 
     def list_installation_jobs(self) -> list[ProviderInstallationJob]:
         return self.store.list_installation_jobs()
+
+    def get_installation_job(self, job_id: str) -> ProviderInstallationJob:
+        return self.store.get_installation_job(job_id)
+
+    def cancel_installation_job(self, job_id: str) -> ProviderInstallationJob:
+        """Request cooperative cancellation at a broker action boundary.
+
+        A running root-owned action is never killed from the HTTP layer. The
+        request is persisted and surfaced to the operator; queued work is
+        canceled before dispatch whenever the worker has not started yet.
+        """
+
+        with self._installation_job_lock:
+            job = self.store.get_installation_job(job_id)
+            if job.status in {"SUCCEEDED", "FAILED", "CANCELLED"}:
+                return job
+            future = self._installation_job_futures.get(job_id)
+            if job.status == "QUEUED" and (future is None or future.cancel()):
+                canceled = self._record_installation_progress(
+                    job.model_copy(update={"cancel_requested": True}),
+                    step="cancelled",
+                    percent=100,
+                    message="Installation canceled before broker dispatch.",
+                    status="CANCELLED",
+                )
+                canceled = canceled.model_copy(
+                    update={"completed_at": _now_iso(), "updated_at": _now_iso()}
+                )
+                self._save_installation_job(canceled)
+                self._installation_job_futures.pop(job_id, None)
+                return canceled
+            if job.broker_job_id:
+                cancel = getattr(self.installation_executor, "cancel_installation_job", None)
+                if callable(cancel):
+                    broker_response = cancel(broker_job_id=job.broker_job_id)
+                    broker_job = (
+                        broker_response.get("job")
+                        if isinstance(broker_response, dict)
+                        else None
+                    )
+                    if isinstance(broker_job, dict):
+                        job = job.model_copy(
+                            update={
+                                "cancel_requested": True,
+                                "broker_status": broker_job.get("status"),
+                                "broker_event_offset": int(
+                                    broker_job.get("event_offset", job.broker_event_offset)
+                                ),
+                            }
+                        )
+            return self._record_installation_progress(
+                job.model_copy(update={"cancel_requested": True}),
+                step="cancel_requested",
+                percent=job.progress_percent,
+                message=(
+                    "Cancellation requested; the active broker action will finish "
+                    "before the job reaches a terminal state."
+                ),
+            )
 
     def _diagnostic_readiness_status(
         self,

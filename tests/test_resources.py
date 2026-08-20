@@ -83,3 +83,33 @@ def test_capacity_refresh_exposes_measurement_source() -> None:
     )
 
     assert orchestrator.summary()["probe"] == {"source": "operator-refresh"}
+
+
+def test_measured_gpu_usage_reduces_allocatable_vram_without_double_counting_leases() -> None:
+    orchestrator = ResourceOrchestrator(
+        NodeCapacity(cpu_cores=8, ram_mb=16384, gpu_devices=["gpu0"], vram_mb={"gpu0": 24576}),
+        probe={"measured_vram_mb": {"gpu0": 22138}},
+    )
+
+    assert orchestrator.admission_report(cpu=0, ram_mb=0, vram_mb=3000)["allowed"] is False
+    assert orchestrator.summary()["free"]["vram_mb"] == 2438
+
+    orchestrator.reserve("runtime:r4", cpu=0, ram_mb=0, vram_mb=1000)
+    assert orchestrator.summary()["free"]["vram_mb"] == 2438
+
+
+def test_forecast_is_side_effect_free_and_lists_active_leases() -> None:
+    orchestrator = ResourceOrchestrator(
+        NodeCapacity(cpu_cores=8, ram_mb=4096, gpu_devices=["gpu0"], vram_mb={"gpu0": 4096})
+    )
+    orchestrator.reserve("runtime:a", cpu=2.0, ram_mb=1024, vram_mb=1024)
+
+    forecast = orchestrator.forecast(cpu=3.0, ram_mb=1024, vram_mb=4096)
+
+    assert forecast["decision"] == "RESOURCE_WAIT"
+    assert forecast["retryable"] is True
+    assert forecast["shortfall"]["vram_mb"] == 1024
+    assert forecast["leases"] == [
+        {"reservation_id": "runtime:a", "cpu": 2.0, "ram_mb": 1024, "vram_mb": 1024}
+    ]
+    assert orchestrator.summary()["reserved"]["vram_mb"] == 1024

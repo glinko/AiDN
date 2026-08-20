@@ -279,6 +279,16 @@ With `AIDN_MCP_CONTROL_SESSION_STATELESS=true`, the bound Control Session has
 `expires_at: null`; the bearer credential is the revocation boundary. The MCP
 transport session remains stateful and is recreated after a Hypervisor restart.
 
+For resource-sensitive activation, grant `RESOURCES:READ` and
+`SCHEDULER:READ`. The agent can then inspect
+`aidn.resource_broker.leases`, `aidn.resource_broker.forecast`,
+`aidn.scheduler.status`, and `aidn.scheduler.candidates` before it starts a
+Bundle. These read tools never reserve capacity or replace operator policy.
+If the operator also grants `SCHEDULER:WRITE`, the agent may request a
+plan/apply `aidn.scheduler.reconcile` pass after a queue/resource change. The
+tool only wakes the local scheduler; Resource Broker admission, idle-runtime
+eviction policy, and all existing approvals remain authoritative.
+
 Hermes can consume this endpoint as a Streamable HTTP MCP server. Its
 `mcp_servers` entry belongs on the Hermes host, and must contain the real Agent
 token out of band; never commit it to this repository:

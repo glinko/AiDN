@@ -185,6 +185,82 @@ def test_mcp_initialize_and_tools_are_scope_filtered() -> None:
     assert "aidn.bundle.activate" not in names
 
 
+def test_mcp_resource_broker_and_scheduler_read_models_are_scope_visible() -> None:
+    server = _server("RESOURCES:READ", "SCHEDULER:READ")
+    _initialize(server)
+
+    response = server.handle_message(
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}}
+    )
+    names = {item["name"] for item in response["result"]["tools"]}
+    assert {
+        "aidn.resources.status",
+        "aidn.resources.forecast",
+        "aidn.resources.leases",
+        "aidn.resource_broker.status",
+        "aidn.resource_broker.forecast",
+        "aidn.scheduler.status",
+        "aidn.scheduler.queues",
+        "aidn.scheduler.candidates",
+    } <= names
+
+    forecast = _call(server, "aidn.resources.forecast", {"vram_mb": 9000})
+    assert forecast["structuredContent"]["decision"] == "RESOURCE_WAIT"
+    assert forecast["structuredContent"]["shortfall"]["vram_mb"] == 808
+
+    leases = _call(server, "aidn.resources.leases")
+    assert leases["structuredContent"]["items"] == []
+    scheduler = _call(server, "aidn.scheduler.status")
+    assert scheduler["structuredContent"]["queue"]["queued_tasks"] == 0
+    assert _call(server, "aidn.resource_broker.explain_denial", {"vram_mb": 9000})[
+        "structuredContent"
+    ]["decision"] == "RESOURCE_WAIT"
+
+    resources = server.handle_message(
+        {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "resources/read",
+            "params": {"uri": "aidn://scheduler/candidates"},
+        }
+    )
+    assert resources["result"]["contents"][0]["mimeType"] == "application/json"
+
+
+def test_mcp_scheduler_reconcile_is_plan_apply_and_scope_gated() -> None:
+    server = _server("SCHEDULER:WRITE")
+    _initialize(server)
+
+    listed = server.handle_message(
+        {"jsonrpc": "2.0", "id": 4, "method": "tools/list", "params": {}}
+    )
+    assert "aidn.scheduler.reconcile" in {
+        item["name"] for item in listed["result"]["tools"]
+    }
+
+    request = {
+        "mode": "plan",
+        "request_id": "request-reconcile",
+        "idempotency_key": "idem-reconcile",
+        "trigger": "agent-test",
+        "max_cycles": 4,
+    }
+    plan = _call(server, "aidn.scheduler.reconcile", request)["structuredContent"]
+    result = _call(
+        server,
+        "aidn.scheduler.reconcile",
+        {
+            **request,
+            "mode": "apply",
+            "plan_hash": plan["plan_hash"],
+        },
+    )["structuredContent"]
+
+    assert result["status"] == "stable"
+    assert result["trigger"] == "agent-test"
+    assert result["plan"]["plan_hash"] == plan["plan_hash"]
+
+
 def test_mcp_initialize_accepts_hermes_latest_handshake_version() -> None:
     server = _server("CAPABILITIES:READ")
     response = server.handle_message(

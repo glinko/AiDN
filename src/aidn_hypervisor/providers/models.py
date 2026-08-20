@@ -123,6 +123,13 @@ ProviderInstallationRollbackStatus = Literal[
 ]
 ProviderRuntimeAction = Literal["install", "start", "status", "stop", "remove"]
 ProviderRuntimeBrokerStatus = Literal["SUCCEEDED", "FAILED", "CANCELLED"]
+ProviderRuntimeBrokerJobStatus = Literal[
+    "QUEUED",
+    "RUNNING",
+    "SUCCEEDED",
+    "FAILED",
+    "CANCELLED",
+]
 
 
 def _require_non_empty(value: str) -> str:
@@ -682,6 +689,17 @@ class ProviderInstallationJob(BaseModel):
     completed_at: str | None = None
     rollback_started_at: str | None = None
     rollback_completed_at: str | None = None
+    progress_percent: int = Field(default=0, ge=0, le=100)
+    current_step: str | None = None
+    progress_events: list[dict] = Field(default_factory=list, max_length=32)
+    cancel_requested: bool = False
+    updated_at: str | None = None
+    # The broker execution identity is separate from the Hypervisor job.  It
+    # lets a restarted Hypervisor resume polling an already-submitted root
+    # action without submitting a duplicate install.
+    broker_job_id: str | None = None
+    broker_status: ProviderRuntimeBrokerJobStatus | None = None
+    broker_event_offset: int = Field(default=0, ge=0)
 
     @field_validator(
         "job_id",
@@ -806,6 +824,49 @@ class ProviderRuntimeBrokerResult(BaseModel):
     @field_validator("summary")
     @classmethod
     def _summary_not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+
+class ProviderRuntimeBrokerEvent(BaseModel):
+    """One replay-safe, monotonically numbered broker event."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    offset: int = Field(ge=1)
+    event_id: str
+    status: ProviderRuntimeBrokerJobStatus
+    progress_percent: int = Field(default=0, ge=0, le=100)
+    message: str
+    timestamp: str
+
+    @field_validator("event_id", "message", "timestamp")
+    @classmethod
+    def _event_text_not_blank(cls, value: str) -> str:
+        return _require_non_empty(value)
+
+
+class ProviderRuntimeBrokerJob(BaseModel):
+    """Durable root-broker job projection returned to the Hypervisor."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    broker_job_id: str
+    client_job_id: str | None = None
+    request_hash: str
+    status: ProviderRuntimeBrokerJobStatus
+    progress_percent: int = Field(default=0, ge=0, le=100)
+    event_offset: int = Field(default=0, ge=0)
+    events_truncated_before: int = Field(default=0, ge=0)
+    events: list[ProviderRuntimeBrokerEvent] = Field(default_factory=list, max_length=64)
+    result: ProviderRuntimeBrokerResult | None = None
+    cancel_requested: bool = False
+    timeout_seconds: int = Field(default=3600, ge=1, le=3600)
+    created_at: str
+    updated_at: str
+
+    @field_validator("broker_job_id", "request_hash", "created_at", "updated_at")
+    @classmethod
+    def _job_text_not_blank(cls, value: str) -> str:
         return _require_non_empty(value)
 
 

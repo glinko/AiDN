@@ -105,18 +105,43 @@ AGENT_PERMISSION_CATALOG: tuple[McpAgentPermission, ...] = (
     McpAgentPermission(
         "RESOURCES:READ",
         "Resource status",
-        "Read CPU, RAM, and VRAM reservation state.",
+        "Read CPU, RAM, and VRAM state, leases, and admission forecasts.",
         "Read",
         "low",
-        ("aidn.resources.status",),
+        (
+            "aidn.resources.status",
+            "aidn.resources.forecast",
+            "aidn.resources.leases",
+            "aidn.resource_broker.status",
+            "aidn.resource_broker.forecast",
+            "aidn.resource_broker.leases",
+            "aidn.resource_broker.explain_denial",
+        ),
     ),
     McpAgentPermission(
         "SCHEDULER:READ",
         "Scheduler policy",
-        "Read routing and approval policy.",
+        "Read routing/approval policy and fit-aware scheduler candidates.",
         "Read",
         "low",
-        ("aidn.policy.get", "aidn.scheduler.get_policy"),
+        (
+            "aidn.policy.get",
+            "aidn.scheduler.get_policy",
+            "aidn.scheduler.status",
+            "aidn.scheduler.queues",
+            "aidn.scheduler.candidates",
+        ),
+    ),
+    McpAgentPermission(
+        "SCHEDULER:WRITE",
+        "Scheduler reconciliation",
+        (
+            "Request a global policy-respecting scheduler reconciliation. "
+            "The Resource Broker still controls admission and runtime safety."
+        ),
+        "Actions",
+        "medium",
+        ("aidn.scheduler.reconcile",),
     ),
     McpAgentPermission(
         "WALLET:READ",

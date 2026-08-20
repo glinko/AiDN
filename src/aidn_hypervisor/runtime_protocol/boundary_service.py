@@ -15,6 +15,9 @@ if TYPE_CHECKING:
 from aidn_hypervisor.admission_planning_service import AdmissionPlanningService
 from aidn_hypervisor.bundle_runtime_policy_service import BundleRuntimePolicyService
 from aidn_hypervisor.runtime_execution_service import RuntimeExecutionService
+from aidn_hypervisor.scheduler_reconciliation_service import (
+    SchedulerReconciliationService,
+)
 
 
 class RuntimeProtocolBoundaryService:
@@ -238,12 +241,40 @@ class RuntimeProtocolBoundaryService:
             self._hv._bundle_runtime_policy_service = facade
         return facade
 
+    def _scheduler_reconciliation_facade(self) -> SchedulerReconciliationService:
+        facade = getattr(self._hv, "_scheduler_reconciliation_service", None)
+        if facade is None:
+            facade = SchedulerReconciliationService(self._hv)
+            self._hv._scheduler_reconciliation_service = facade
+        return facade
+
     # ------------------------------------------------------------------
     # Admission telemetry
     # ------------------------------------------------------------------
 
     def admission_telemetry(self) -> list[dict[str, int | str]]:
         return self._admission_planning_facade().admission_telemetry()
+
+    def scheduler_candidates(self, *, limit: int = 200) -> list[dict]:
+        return self._admission_planning_facade().scheduler_candidates(limit=limit)
+
+    def scheduler_status(self, *, candidate_limit: int = 200) -> dict:
+        return self._admission_planning_facade().scheduler_status(
+            candidate_limit=candidate_limit
+        )
+
+    def reconcile_scheduler(
+        self,
+        *,
+        trigger: str = "manual",
+        max_cycles: int = SchedulerReconciliationService._DEFAULT_MAX_CYCLES,
+    ) -> dict:
+        """Run the global fit-aware scheduler until it reaches a stable state."""
+
+        return self._scheduler_reconciliation_facade().reconcile(
+            trigger=trigger,
+            max_cycles=max_cycles,
+        )
 
     # ------------------------------------------------------------------
     # Runtime active task count

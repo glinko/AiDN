@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from aidn_hypervisor.domain.models import BundleConfig, TaskRequest
 from aidn_hypervisor.process_manager import RuntimeHandle
+from aidn_hypervisor.resources import ResourceAdmissionError
 from aidn_hypervisor.runtime_parameter_policy import apply_runtime_parameter_policy
 
 
@@ -143,7 +144,13 @@ class TaskExecutionService:
                     )
 
                 self._host.queue.transition_status(task_id, "starting")
-                runtime = self._host.start_bundle(bundle.bundle_id)
+                # The task path already holds a transient startup reservation
+                # and performs its own fit/eviction check.  The lifecycle gate
+                # must not count that reservation twice.
+                runtime = self._host.start_bundle(
+                    bundle.bundle_id,
+                    reserve_resources=False,
+                )
                 started_runtime = True
                 if startup_cpu or startup_ram or startup_vram:
                     self._host.resources.release(startup_reservation_id)
@@ -212,6 +219,32 @@ class TaskExecutionService:
                 task=task.request,
             )
             return True
+        except ResourceAdmissionError as error:
+            # The fit check above is advisory: another admission can win the
+            # broker lock before this task reserves its lease.  Capacity
+            # contention is retryable and must remain visible as
+            # RESOURCE_WAIT, never as a terminal provider/runtime failure.
+            self._host.queue.transition_status(task_id, "queued")
+            if started_runtime and not entered_running and runtime is not None:
+                try:
+                    self._host._stop_runtime_for_bundle(bundle)
+                except Exception:
+                    # The original admission decision is still the useful
+                    # result; a later runtime reconciliation will clean up a
+                    # partially started process if needed.
+                    pass
+            self._host.record_event(
+                event_type="task.resource_wait",
+                message=str(error),
+                task_id=task_id,
+                bundle_id=bundle.bundle_id,
+                runtime_id=runtime.runtime_id if runtime is not None else None,
+                details={
+                    "code": error.code,
+                    "admission": dict(error.details),
+                },
+            )
+            return False
         except Exception as error:
             self._host.queue.transition_status(task_id, "failed")
             if runtime is not None:

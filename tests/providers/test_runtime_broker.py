@@ -24,6 +24,17 @@ class _Runner:
         return self.result
 
 
+class _ControlRunner(_Runner):
+    def __init__(self, result: RuntimeCommandResult, control_response: dict) -> None:
+        super().__init__(result)
+        self.control_response = control_response
+        self.control_calls: list[dict] = []
+
+    def run_control(self, request: dict, *, timeout_seconds: int = 30) -> dict:
+        self.control_calls.append({"request": request, "timeout_seconds": timeout_seconds})
+        return self.control_response
+
+
 def _invocation(**overrides) -> ProviderRuntimeInvocation:
     payload = {
         "approval_id": "pia-1",
@@ -115,6 +126,44 @@ def test_runtime_broker_bounds_timeout_and_output() -> None:
     assert result.status == "FAILED"
     assert len(result.details["stdout"]) == 64 * 1024
     assert len(result.details["stderr"]) == 64 * 1024
+
+
+def test_runtime_broker_submits_status_and_cancel_through_control_boundary() -> None:
+    runner = _ControlRunner(
+        RuntimeCommandResult(returncode=0),
+        {
+            "job": {
+                "broker_job_id": "brj-1",
+                "status": "QUEUED",
+                "event_offset": 1,
+                "events": [],
+            },
+            "events": [],
+            "next_offset": 2,
+        },
+    )
+    broker = AllowlistedProviderRuntimeBroker(
+        dispatcher_path=Path("tools/aidn-provider-runtime-ubuntu.sh").resolve(),
+        runner=runner,
+        require_linux=False,
+    )
+
+    submitted = broker.submit(
+        invocation=_invocation(),
+        client_job_id="aidn:pij-1",
+    )
+    status = broker.get_job(broker_job_id="brj-1", after_offset=1)
+    canceled = broker.cancel(broker_job_id="brj-1")
+
+    assert submitted["job"]["broker_job_id"] == "brj-1"
+    assert status["next_offset"] == 2
+    assert canceled["job"]["status"] == "QUEUED"
+    assert [call["request"]["operation"] for call in runner.control_calls] == [
+        "submit",
+        "status",
+        "cancel",
+    ]
+    assert runner.control_calls[0]["request"]["client_job_id"] == "aidn:pij-1"
 
 
 def test_unix_socket_runner_round_trips_one_bounded_request(tmp_path: Path) -> None:

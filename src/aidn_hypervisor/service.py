@@ -3,6 +3,7 @@ import json
 import time
 from copy import deepcopy
 from datetime import UTC, datetime
+from threading import RLock
 
 from aidn_hypervisor.admission_planning_service import AdmissionPlanningService
 from aidn_hypervisor.allocation_catalog_service import AllocationCatalogService
@@ -162,6 +163,10 @@ class HypervisorService:
         canonical_wallet_identity_provider=None,
         canonical_wallet_sequence_provider=None,
     ) -> None:
+        # Provider broker workers and managed-process callbacks may persist
+        # concurrently with an API request.  Serialize snapshot writes so a
+        # slower worker cannot overwrite a newer durable job/runtime state.
+        self._persistence_lock = RLock()
         self.queue = queue
         self.scheduler = scheduler
         self.resources = resources
@@ -290,10 +295,18 @@ class HypervisorService:
         self._provider_inventory_application_service = (
             ProviderInventoryApplicationService(self)
         )
+        self._scheduler_reconciliation_service = None
 
         self._settlement_application_service = SettlementApplicationService(self)
         self.operator_read_models = OperatorReadModelService(self)
         self._events: list[JournalEvent] = []
+        bind_installation_job_callback = getattr(
+            self.provider_inventory,
+            "set_installation_job_update_callback",
+            None,
+        )
+        if callable(bind_installation_job_callback):
+            bind_installation_job_callback(self._persist_state)
         self._runtime_boundary = RuntimeProtocolBoundaryService(self)
         # Managed child processes can change state without an API request.
         # Let the process manager persist those transitions so another shared
@@ -304,7 +317,7 @@ class HypervisorService:
             None,
         )
         if callable(bind_runtime_callback):
-            bind_runtime_callback(self._persist_state)
+            bind_runtime_callback(self._on_runtime_state_change)
 
     def bind_consensus_finality_source(self, consensus_finality_source) -> None:
         """Bind one verified finality source to the Hypervisor and Registry."""
@@ -1547,9 +1560,15 @@ class HypervisorService:
             selected_secret_handles=selected_secret_handles,
         )
 
-    def apply_provider_installation_approval(self, approval_id: str) -> dict:
+    def apply_provider_installation_approval(
+        self,
+        approval_id: str,
+        *,
+        wait_for_completion: bool = True,
+    ) -> dict:
         return self._provider_installation_facade().apply_provider_installation_approval(
-            approval_id
+            approval_id,
+            wait_for_completion=wait_for_completion,
         )
 
     def install_provider_runtime(
@@ -1559,12 +1578,14 @@ class HypervisorService:
         configuration: dict,
         operator_note: str | None = None,
         upgrade_acknowledged: bool = False,
+        wait_for_completion: bool = True,
     ) -> dict:
         return self._provider_installation_facade().install_provider_runtime(
             plugin_id=plugin_id,
             configuration=configuration,
             operator_note=operator_note,
             upgrade_acknowledged=upgrade_acknowledged,
+            wait_for_completion=wait_for_completion,
         )
 
     def change_provider_runtime(
@@ -1574,12 +1595,14 @@ class HypervisorService:
         configuration: dict,
         operator_note: str | None = None,
         upgrade_acknowledged: bool = False,
+        wait_for_completion: bool = True,
     ) -> dict:
         return self._provider_installation_facade().change_provider_runtime(
             plugin_id=plugin_id,
             configuration=configuration,
             operator_note=operator_note,
             upgrade_acknowledged=upgrade_acknowledged,
+            wait_for_completion=wait_for_completion,
         )
 
     def remove_provider_runtime(self, *, plugin_id: str) -> dict:
@@ -1691,6 +1714,12 @@ class HypervisorService:
 
     def list_provider_installation_jobs(self) -> list[dict]:
         return self._provider_installation_facade().list_provider_installation_jobs()
+
+    def get_provider_installation_job(self, job_id: str) -> dict:
+        return self._provider_installation_facade().get_provider_installation_job(job_id)
+
+    def cancel_provider_installation_job(self, job_id: str) -> dict:
+        return self._provider_installation_facade().cancel_provider_installation_job(job_id)
 
     def plugin_host_local_ingress(self):
         """Return the install-scoped Plugin Host control ingress for local transports."""
@@ -2005,16 +2034,22 @@ class HypervisorService:
         return self._runtime_boundary._bundle_runtime_policy_facade().retry_bundle(bundle_id)
 
     def set_bundle_enabled(self, bundle_id: str, enabled: bool) -> dict[str, str | bool]:
-        return self._runtime_boundary._bundle_runtime_policy_facade().set_bundle_enabled(
+        result = self._runtime_boundary._bundle_runtime_policy_facade().set_bundle_enabled(
             bundle_id,
             enabled,
         )
+        self.reconcile_scheduler(trigger="bundle_enabled" if enabled else "bundle_disabled")
+        return result
 
     def drain_runtime(self, runtime_id: str) -> dict[str, str | bool]:
-        return self._runtime_boundary.drain_runtime(runtime_id)
+        result = self._runtime_boundary.drain_runtime(runtime_id)
+        self.reconcile_scheduler(trigger="operator_runtime_drain")
+        return result
 
     def force_stop_runtime(self, runtime_id: str) -> dict[str, str]:
-        return self._runtime_boundary.force_stop_runtime(runtime_id)
+        result = self._runtime_boundary.force_stop_runtime(runtime_id)
+        self.reconcile_scheduler(trigger="operator_runtime_stop")
+        return result
 
     def restart_runtime(self, runtime_id: str) -> dict[str, str]:
         return self._runtime_boundary.restart_runtime(runtime_id)
@@ -2022,8 +2057,19 @@ class HypervisorService:
     def cancel_task(self, task_id: str):
         return self._task_lifecycle_facade().cancel_task(task_id)
 
-    def start_bundle(self, bundle_id: str) -> RuntimeHandle:
-        return self._runtime_boundary._bundle_runtime_policy_facade().start_bundle(bundle_id)
+    def start_bundle(
+        self,
+        bundle_id: str,
+        *,
+        reserve_resources: bool = True,
+    ) -> RuntimeHandle:
+        runtime = self._runtime_boundary._bundle_runtime_policy_facade().start_bundle(
+            bundle_id,
+            reserve_resources=reserve_resources,
+        )
+        if reserve_resources:
+            self.reconcile_scheduler(trigger="operator_runtime_start")
+        return runtime
 
     def stop_bundle(self, bundle_id: str) -> dict[str, str]:
         return self._runtime_boundary._bundle_runtime_policy_facade().stop_bundle(bundle_id)
@@ -2044,14 +2090,45 @@ class HypervisorService:
             force=force,
         )
 
+    def runtime_readiness(self, runtime_id: str, *, force: bool = True) -> dict:
+        """Return the canonical process/provider readiness projection."""
+
+        return self._runtime_boundary._bundle_runtime_policy_facade().runtime_readiness(
+            runtime_id,
+            force=force,
+        )
+
     def process_pending(self) -> dict[str, int]:
         return self._task_lifecycle_facade().process_pending()
+
+    def reconcile_scheduler(
+        self,
+        *,
+        trigger: str = "manual",
+        max_cycles: int = 128,
+    ) -> dict:
+        """Re-evaluate all eligible endpoint queues and runtime placements."""
+
+        return self._runtime_boundary.reconcile_scheduler(
+            trigger=trigger,
+            max_cycles=max_cycles,
+        )
 
     def queue_summary(self) -> dict[str, int]:
         return self._task_lifecycle_facade().queue_summary()
 
     def queue_diagnostics(self) -> list[dict[str, str]]:
         return self._runtime_boundary._admission_planning_facade().queue_diagnostics()
+
+    def scheduler_candidates(self, *, limit: int = 200) -> list[dict]:
+        """Return the read-only fit-aware candidate projection."""
+
+        return self._runtime_boundary.scheduler_candidates(limit=limit)
+
+    def scheduler_status(self, *, candidate_limit: int = 200) -> dict:
+        """Return the read-only Resource Broker/Scheduler status projection."""
+
+        return self._runtime_boundary.scheduler_status(candidate_limit=candidate_limit)
 
     def _get_bundle(self, bundle_id: str) -> BundleConfig:
         return self._runtime_boundary._bundle_runtime_policy_facade().get_bundle(bundle_id)
@@ -2210,8 +2287,8 @@ class HypervisorService:
             reason=reason,
         )
 
-    def _reconcile_pending_allocations(self) -> None:
-        self._allocation_catalog_facade().reconcile_pending_allocations()
+    def _reconcile_pending_allocations(self) -> bool:
+        return self._allocation_catalog_facade().reconcile_pending_allocations()
 
     def _allocation_retry_hint(
         self,
@@ -2576,17 +2653,34 @@ class HypervisorService:
     def _replace_runtimes(self, runtimes: list[RuntimeHandle]) -> None:
         self._runtime_boundary._replace_runtimes(runtimes)
 
+    def _on_runtime_state_change(self, runtime: RuntimeHandle) -> None:
+        """Persist process exits and wake the global scheduler after release."""
+
+        self._persist_state(runtime)
+        if runtime.status != "stopped":
+            return
+        # A watcher runs on a daemon thread.  Scheduler failures must never
+        # escape into that thread; the next API/MCP reconciliation remains a
+        # safe retry path if an external provider is still settling.
+        try:
+            self.reconcile_scheduler(trigger="runtime_exit")
+        except Exception:
+            return
+
     def _persist_state(self, _runtime: RuntimeHandle | None = None) -> None:
         """Persist the current snapshot.
 
         ``ProviderProcessManager`` invokes the callback with the runtime that
-        changed.  The snapshot is still taken from the service as a whole, so
-        the argument is intentionally ignored; accepting it keeps background
-        process-exit persistence on the same callback contract as the manager.
+        changed.  A failed child must release its residency reservation before
+        the snapshot is written; otherwise a dead runtime can keep VRAM/RAM
+        reserved forever and block the next activation.
         """
+        if _runtime is not None and _runtime.status == "stopped" and _runtime.bundle_id:
+            self._release_runtime_reservation(_runtime.bundle_id)
         if self.state_store is None:
             return
-        self.state_store.save(self.snapshot_state())
+        with self._persistence_lock:
+            self.state_store.save(self.snapshot_state())
 
     def _provider_installation_facade(self) -> ProviderInstallationService:
         facade = getattr(self, "_provider_installation_service", None)

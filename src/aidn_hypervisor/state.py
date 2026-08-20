@@ -120,6 +120,11 @@ class RuntimeSnapshot(BaseModel):
     health_status: str = "unknown"
     last_error: str | None = None
     metadata: dict[str, str] = Field(default_factory=dict)
+    readiness_status: str = "UNKNOWN"
+    readiness_code: str | None = None
+    readiness_message: str | None = None
+    readiness_checked_at: str | None = None
+    readiness_diagnostic: dict = Field(default_factory=dict)
 
 
 class BundleStateSnapshot(BaseModel):

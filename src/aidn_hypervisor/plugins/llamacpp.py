@@ -250,6 +250,14 @@ class LlamaCppPlugin(ProviderPlugin):
 
     def estimate_resources(self, task, bundle_config, runtime_state) -> dict:
         profile = bundle_config.resource_profile
+        steady_vram_mb = profile.steady_vram_mb
+        # A legacy bundle may have an empty resource profile even though its
+        # GGUF model is present locally.  Starting such a bundle blindly is
+        # unsafe: llama.cpp defaults to full GPU offload.  Treat the model file
+        # size plus a bounded workspace allowance as the conservative admission
+        # requirement until an operator supplies a measured profile.
+        if steady_vram_mb == 0 and not runtime_state:
+            steady_vram_mb = self._infer_full_gpu_vram_mb(bundle_config)
         startup_transient = {}
         if runtime_state is None:
             startup_transient = {
@@ -262,7 +270,7 @@ class LlamaCppPlugin(ProviderPlugin):
             "runtime_resident": {
                 "cpu": profile.steady_cpu,
                 "ram_mb": profile.steady_ram_mb,
-                "vram_mb": profile.steady_vram_mb,
+                "vram_mb": steady_vram_mb,
             },
             "request_active": {
                 "cpu": profile.per_request_cpu,
@@ -271,6 +279,23 @@ class LlamaCppPlugin(ProviderPlugin):
             },
             "concurrency_limit": 1,
         }
+
+    @staticmethod
+    def _infer_full_gpu_vram_mb(bundle_config) -> int:
+        policy = bundle_config.runtime_parameter_policy
+        if policy.get("gpu_layers") is not None:
+            return 0
+        model_id = str(bundle_config.model_id or "").strip()
+        if not model_id:
+            return 0
+        try:
+            model_path = Path(model_id).expanduser()
+            if not model_path.is_file():
+                return 0
+            model_mb = max(1, (model_path.stat().st_size + (1024 * 1024) - 1) // (1024 * 1024))
+        except OSError:
+            return 0
+        return int(model_mb + max(512, round(model_mb * 0.05)))
 
     def build_launch_spec(self, bundle_config) -> dict:
         self.validate_bundle(bundle_config)

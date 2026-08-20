@@ -221,6 +221,8 @@ class SyncProviderPluginDirectoryFromPeerRequest(BaseModel):
 class ApplyProviderInstallationApprovalRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    wait_for_completion: bool = True
+
 
 class RollbackProviderInstallationJobRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -984,6 +986,21 @@ def build_api_router(
             "items": service._runtime_boundary.admission_telemetry(),
         }
 
+    @router.get("/diagnostics/scheduler")
+    async def scheduler_diagnostics() -> dict:
+        """Return the fit-aware scheduler read model without mutating queues."""
+
+        return service.scheduler_status()
+
+    @router.post("/diagnostics/scheduler/reconcile")
+    async def reconcile_scheduler(trigger: str = "operator") -> dict:
+        """Request a policy-respecting global scheduler reconciliation."""
+
+        try:
+            return service.reconcile_scheduler(trigger=trigger)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
     @router.get("/bundles")
     async def list_bundles() -> list[dict]:
         service.refresh_runtime_health()
@@ -1076,6 +1093,23 @@ def build_api_router(
                 for event in service.runtime_history(runtime.runtime_id)
             ],
         }
+
+    @router.get("/runtimes/{runtime_id}/readiness")
+    async def get_runtime_readiness(runtime_id: str) -> dict:
+        """Reconcile and expose one runtime's live provider readiness.
+
+        The legacy ``/runtimes`` projections remain stable for existing
+        clients.  This endpoint is the explicit contract for operators and
+        agents that need to distinguish a live process from a ready API.
+        """
+
+        try:
+            return service.runtime_readiness(runtime_id, force=True)
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown runtime: {runtime_id}",
+            ) from error
 
     @router.post("/bundles/{bundle_id}/start")
     async def start_bundle(bundle_id: str) -> dict:
@@ -1676,9 +1710,11 @@ def build_api_router(
         approval_id: str,
         payload: ApplyProviderInstallationApprovalRequest,
     ) -> dict:
-        del payload
         try:
-            return service.apply_provider_installation_approval(approval_id)
+            return service.apply_provider_installation_approval(
+                approval_id,
+                wait_for_completion=payload.wait_for_completion,
+            )
         except KeyError as error:
             raise HTTPException(
                 status_code=404,
@@ -1690,6 +1726,28 @@ def build_api_router(
     @router.get("/operators/provider-installation-jobs")
     async def list_provider_installation_jobs() -> dict:
         return {"items": service.list_provider_installation_jobs()}
+
+    @router.get("/operators/provider-installation-jobs/{job_id}")
+    async def get_provider_installation_job(job_id: str) -> dict:
+        try:
+            return service.get_provider_installation_job(job_id)
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown installation job: {error.args[0]}",
+            ) from error
+
+    @router.post("/operators/provider-installation-jobs/{job_id}/cancel")
+    async def cancel_provider_installation_job(job_id: str) -> dict:
+        try:
+            return service.cancel_installation_job(job_id)
+        except KeyError as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown installation job: {error.args[0]}",
+            ) from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.get("/operators/provider-installation-artifacts")
     async def list_provider_installation_artifacts() -> dict:
@@ -3482,6 +3540,29 @@ def build_api_router(
         if service.resources is None:
             return _empty_resource_summary()
         return service.resources.summary()
+
+    @router.get("/resources/leases")
+    async def resource_leases() -> dict:
+        if service.resources is None:
+            return {"available": False, "items": []}
+        return {"available": True, "items": service.resources.lease_snapshot()}
+
+    @router.get("/resources/forecast")
+    async def resource_forecast(
+        cpu: float = 0.0,
+        ram_mb: int = 0,
+        vram_mb: int = 0,
+    ) -> dict:
+        if service.resources is None:
+            return {"available": False}
+        try:
+            return service.resources.forecast(
+                cpu=cpu,
+                ram_mb=ram_mb,
+                vram_mb=vram_mb,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
 
     @router.get("/plugins")
     async def list_plugins() -> list[dict]:

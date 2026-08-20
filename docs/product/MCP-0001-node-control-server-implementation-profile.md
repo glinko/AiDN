@@ -69,7 +69,7 @@ Implemented tools are filtered by the active Control Session:
 - capabilities, policy, host inspection, node status and health;
 - network status and peers;
 - Provider and model inventory;
-- Bundle and Endpoint inventory;
+- Bundle and Endpoint inventory, Endpoint draft creation and publication;
 - resources, scheduler policy, wallet summary and delegated budget;
 - local MCP audit query;
 - Bundle activation and retirement through plan/apply.
@@ -97,11 +97,14 @@ hash-linked local audit event.
 
 ## Mutation Contract
 
-The first mutation slice exposes:
+The current mutation surface exposes:
 
 - `aidn.provider.attach` for an already reachable endpoint;
 - `aidn.bundle.activate`;
 - `aidn.bundle.retire`.
+- `aidn.endpoint.create` and `aidn.endpoint.publish` for the endpoint-first
+  draft/publication path, using the same configuration-hash and operator
+  policy boundaries as the Dashboard.
 
 Both require:
 
@@ -124,8 +127,8 @@ credentials. It requires `PROVIDER:WRITE` and an explicit operator approval.
 
 The current implementation does not expose wallet transfers, private keys,
 arbitrary shell execution, consensus bypass, validation bypass, Provider
-Plugin installation, model deployment, public Endpoint publication, or network
-join operations.
+Plugin installation, model deployment, validation requests, or network join
+operations.
 
 ## Remote Gateway and Emergency Stop
 
@@ -187,6 +190,45 @@ local hash chain and persisted atomically in `mcp-control-state.json` beside
 the configured Hypervisor state file. The MCP file is operator-local state; it
 is not included in the Ledger snapshot or consensus app-hash.
 
+## RFC-0072 Event and Hook Extension
+
+MCP-0001 remains the agent-to-Hypervisor control and authority boundary.
+RFC-0072 defines the complementary Hypervisor-to-agent event plane: canonical
+event envelopes, scoped Hooks, MCP live notifications, durable inbox delivery,
+acknowledgments, retries, dead letters, and event-driven approval/job
+notifications. A Hook never grants permission to invoke a mutation tool; every
+resulting action continues through this profile's Control Session, scope,
+policy, budget, and approval checks.
+
+The RFC-0072 Hook and Event tools are a separate implementation slice. They
+must not be advertised as implemented MCP capabilities until the Event Bus,
+durable Inbox, redaction, replay, and authorization tests are present.
+
+## RFC-0073 Resource Broker and Scheduler Extension
+
+RFC-0073 defines the local Resource Broker as the final authority for Runtime
+admission. MCP inspection and forecast tools may expose devices, allocatable
+capacity, Leases, queue candidates, denials, and explainable scheduling
+decisions. Manual reconciliation, drain, stop, pin, and unpin actions remain
+subject to this profile's Control Session, scopes, operator policy, budget, and
+approval checks.
+
+An Agent is not the scheduler. Resource admission, Lease atomicity, owner
+priority, and fail-closed restart reconciliation must continue to work when no
+Agent or LLM is connected.
+
+The first RFC-0073 surface is implemented: `RESOURCES:READ`
+credentials can call `aidn.resources.status`,
+`aidn.resource_broker.forecast`, `aidn.resource_broker.leases`, and
+`aidn.resource_broker.explain_denial`; `SCHEDULER:READ` credentials can call
+`aidn.scheduler.status`, `aidn.scheduler.queues`, and
+`aidn.scheduler.candidates`. These projections never reserve capacity or
+bypass operator policy. A separately granted `SCHEDULER:WRITE` scope exposes
+the plan/apply `aidn.scheduler.reconcile` control; it only requests the local
+fixed-point loop and cannot override Resource Broker admission or approval
+policy. Runtime drain/stop/pin/unpin controls remain deferred until the full
+Lease and Runtime state machine is in place.
+
 ## Deferred Slices
 
 The following remain unsupported until their authority boundaries are defined
@@ -195,7 +237,6 @@ and tested:
 - QUIC transport and public-network gateway hardening;
 - host preparation and clean-host installation;
 - Provider Plugin installation and model deployment;
-- Endpoint publication and market actions;
 - Validation requests;
 - Session open and Settlement actions;
 - wallet transfer and signing workflows;

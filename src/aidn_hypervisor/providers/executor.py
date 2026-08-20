@@ -554,8 +554,116 @@ class AllowlistedProviderRuntimeInstallationExecutor(RecordedProviderInstallatio
             action="install",
         )
         broker_result = self._broker.invoke(invocation=invocation)
+        return self._execution_result_from_broker_result(
+            approval=approval,
+            plan=plan,
+            configuration=configuration,
+            manifest=manifest,
+            provider_instance_id=provider_instance_id,
+            invocation=invocation,
+            broker_result=broker_result,
+        )
+
+    def submit_installation(
+        self,
+        *,
+        approval: ProviderInstallationApproval,
+        plan: InstallationPlan,
+        configuration: dict,
+        manifest: dict,
+        provider_instance_id: str,
+        client_job_id: str,
+    ) -> dict:
+        """Submit installation to a broker that supports durable job control."""
+
+        submit = getattr(self._broker, "submit", None)
+        if not callable(submit):
+            raise ValueError(
+                "provider runtime broker does not expose durable job submission"
+            )
+        invocation = self.build_invocation(
+            approval=approval,
+            plan=plan,
+            configuration=configuration,
+            manifest=manifest,
+            action="install",
+        )
+        response = submit(invocation=invocation, client_job_id=client_job_id)
+        if not isinstance(response, dict):
+            raise ValueError("provider runtime broker returned an invalid job response")
+        return {**response, "invocation": invocation.model_dump(mode="json")}
+
+    def get_installation_job(self, *, broker_job_id: str, after_offset: int = 0) -> dict:
+        get_job = getattr(self._broker, "get_job", None)
+        if not callable(get_job):
+            raise ValueError(
+                "provider runtime broker does not expose durable job status"
+            )
+        response = get_job(broker_job_id=broker_job_id, after_offset=after_offset)
+        if not isinstance(response, dict):
+            raise ValueError("provider runtime broker returned an invalid job status")
+        return response
+
+    def cancel_installation_job(self, *, broker_job_id: str) -> dict:
+        cancel = getattr(self._broker, "cancel", None)
+        if not callable(cancel):
+            raise ValueError(
+                "provider runtime broker does not expose durable job cancellation"
+            )
+        response = cancel(broker_job_id=broker_job_id)
+        if not isinstance(response, dict):
+            raise ValueError("provider runtime broker returned an invalid cancel response")
+        return response
+
+    def finalize_installation_job(
+        self,
+        *,
+        broker_response: dict,
+        approval: ProviderInstallationApproval,
+        plan: InstallationPlan,
+        configuration: dict,
+        manifest: dict,
+        provider_instance_id: str,
+    ) -> ProviderInstallationExecutionResult:
+        job = broker_response.get("job")
+        if not isinstance(job, dict):
+            raise ValueError("provider runtime broker job response is missing job state")
+        broker_result_payload = job.get("result")
+        if not isinstance(broker_result_payload, dict):
+            raise ValueError("provider runtime broker job has no terminal result")
+        broker_result = ProviderRuntimeBrokerResult.model_validate(broker_result_payload)
+        invocation = self.build_invocation(
+            approval=approval,
+            plan=plan,
+            configuration=configuration,
+            manifest=manifest,
+            action="install",
+        )
+        return self._execution_result_from_broker_result(
+            approval=approval,
+            plan=plan,
+            configuration=configuration,
+            manifest=manifest,
+            provider_instance_id=provider_instance_id,
+            invocation=invocation,
+            broker_result=broker_result,
+        )
+
+    def _execution_result_from_broker_result(
+        self,
+        *,
+        approval: ProviderInstallationApproval,
+        plan: InstallationPlan,
+        configuration: dict,
+        manifest: dict,
+        provider_instance_id: str,
+        invocation: ProviderRuntimeInvocation,
+        broker_result: ProviderRuntimeBrokerResult,
+    ) -> ProviderInstallationExecutionResult:
         if broker_result.status != "SUCCEEDED":
-            broker_details = broker_result.details if isinstance(broker_result.details, dict) else {}
+            broker_details = (
+                broker_result.details if isinstance(broker_result.details, dict) else {}
+            )
             returncode = broker_details.get("returncode")
             stderr = broker_details.get("stderr")
             diagnostic = ""

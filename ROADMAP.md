@@ -1,6 +1,6 @@
 # AiDN Roadmap
 
-Last updated: `2026-08-14`
+Last updated: `2026-08-20`
 
 This is the main public roadmap for the repository.
 
@@ -34,26 +34,191 @@ Started in this slice:
 
 Next implementation increments:
 
-- [ ] Wire the specialized allowlisted runtime-installation executor to a
-  root-owned privileged broker. It must authenticate local callers, stream
-  durable job progress, support cancellation/status, and never expose generic
-  shell execution.
-- [ ] Add the Provider catalog dashboard flow: select a reviewed Provider,
-  run preflight, approve permissions, press one primary `Install` action, and
-  see progress/readiness. Model configuration remains a secondary follow-up.
+- [x] Wire the specialized allowlisted runtime-installation executor to a
+  root-owned privileged broker. The Ubuntu bootstrap installs a UID-restricted
+  Unix-socket broker, revalidates the dispatcher/provider/action/option
+  allowlist, authenticates the local caller, and never exposes generic shell
+  execution. Durable progress, cancellation, and replay-safe job orchestration
+  are covered by the broker-job slice below.
+- [x] Add the compact Provider catalog dashboard flow: select a reviewed
+  Provider, separate installed and available runtimes, review configuration,
+  and use one primary `Install` action with Change/Remove for installed
+  runtimes. Model configuration and downloads remain a secondary step.
+- [x] Connect the Provider catalog to durable broker jobs: persist bounded
+  progress events, expose status/cancellation, and keep the API responsive while
+  a runtime is installing or changing. Cancellation is cooperative at the
+  broker action boundary; broker-side streaming, replay-safe offsets, and
+  restart reconciliation are implemented in the runtime broker slice below.
+- [x] Add an explicit runtime-readiness API that distinguishes process
+  lifecycle from live Provider health, persists a bounded diagnostic, and
+  reports managed-process exits as failed readiness.
 - [ ] Complete authored Marketplace publication UX: explicit publish/hash
   confirmation, published/failed states, browser XSS acceptance, and public
   card coverage. Storage, sanitization, publication binding, preview API, and
   the initial React editor are implemented.
 - [x] Extend the existing one-line Ubuntu bootstrap with post-install wallet
   create/import/skip, dashboard pairing, agent-enrollment guidance, health
-  verification, and a secret-free completion summary. Fresh-VM and interrupted
-  rerun acceptance remain open.
+  verification, and a secret-free completion summary.
+- [ ] Complete fresh-VM, interrupted-rerun, existing-identity reuse, and
+  uninstall/recovery acceptance on Ubuntu 22.04 and 24.04.
 
-Safety gate: the existing Provider approval/apply path intentionally does not
-execute package managers, downloads, containers, or shell processes. The new
-dashboard must not present installation as functional until the specialized
-executor and its privilege boundary are implemented and tested.
+Safety gate: the generic Provider approval/apply path remains non-host-mutating
+and intentionally does not execute package managers, downloads, containers, or
+shell processes. Host mutation is available only through the reviewed,
+allowlisted broker; the dashboard must treat an install as complete only after
+the broker job reaches a terminal state and runtime readiness is verified.
+
+## 2026-08-20 Runtime Readiness, API, And Provider Broker
+
+The first operational slice is now implemented on `main`. It keeps the old
+synchronous Provider install contract compatible while making readiness and
+long-running broker work observable to the dashboard and agents.
+
+- [x] Expose `GET /runtimes/{runtime_id}/readiness` with separate process,
+  Provider-health, and readiness states, a bounded diagnostic, timestamped
+  probes, and managed-process exit reconciliation.
+- [x] Add asynchronous Provider install/change jobs behind
+  `wait_for_completion=false`, durable bounded progress events, job lookup, and
+  cooperative cancellation endpoints.
+- [x] Persist job progress and readiness fields through snapshot/restore and
+  preserve the root-owned allowlisted broker as the only host-mutation path.
+- [x] Document the operator/API contract in
+  [runtime readiness and Provider broker](./docs/development/runtime-readiness-and-provider-broker.md).
+- [x] Replace the in-process worker handoff with durable broker-side job
+  identifiers, idempotent request hashes, replay-safe event offsets, restart
+  reconciliation for non-terminal jobs, and cooperative cancellation hooks.
+- [ ] Project readiness and job progress into the MCP read model and dashboard
+  widgets without reintroducing stale cached runtime state.
+
+## 2026-08-20 RFC-0072 Hypervisor Event And Agent Hook Protocol
+
+[RFC-0072](./docs/product/RFC-0072-hypervisor-event-and-agent-hook-protocol.md)
+is now the normative contract for Hypervisor-to-agent event delivery. MCP
+remains the agent-to-Hypervisor authority boundary; Hooks only deliver
+authorized observations and never grant action permission.
+
+The implementation is intentionally staged behind the existing runtime broker
+and MCP Control Session work:
+
+- [x] Add the Draft RFC-0072 normative document, including the canonical Event
+  Envelope, event identity and sequence rules, data classes, Hook ownership,
+  delivery modes, retry/acknowledgment semantics, privacy boundaries, and
+  automation-loop invariants.
+- [ ] Implement one internal Event Bus and a canonical event normalizer with
+  monotonic sequences, event hashes, correlation/causation IDs, and redaction
+  profiles.
+- [ ] Add the durable Event Store and per-agent Inbox with cursors, retention,
+  at-least-once delivery, deduplication, acknowledgments, bounded retries, and
+  dead-letter inspection/replay.
+- [ ] Add MCP Hook and Event tools/resources from RFC-0072, with scope and
+  operator-policy checks; refresh the catalog without requiring an agent
+  session to be manually recreated after every permission change.
+- [ ] Emit the first Node, Provider, Model, Bundle, Endpoint, Validation,
+  Resource, Job, Approval, Wallet, and Budget events from authoritative state
+  transitions rather than polling snapshots.
+- [ ] Project Hook health, event stream, Agent Sessions, and Dead Letters into
+  Advanced Mode; expose Basic Mode presets for Provider failure, budget
+  thresholds, and local-priority recovery.
+- [ ] Add coalescing, backpressure, threshold hysteresis, automation-depth
+  limits, and delivery metrics before enabling autonomous recovery workflows.
+- [ ] Defer signed webhooks, runtime wake-up adapters, cross-Hypervisor event
+  routing, and the fleet-level Agent Event Broker to the RFC-0072 Phase 2+
+  slices.
+
+## 2026-08-20 RFC-0073 Resource Broker, Admission Control, And Runtime Scheduler
+
+[RFC-0073](./docs/product/RFC-0073-resource-broker-admission-control-and-runtime-scheduler.md)
+is now the normative contract for local resource admission and Runtime
+scheduling. It makes VRAM a hard resource, treats context and concurrency as
+resource commitments, keeps Endpoint queues independent, and requires global
+reconciliation whenever allocatable capacity changes.
+
+The implementation follows RFC-0072 events and remains authoritative inside
+the Hypervisor; an Agent may inspect or influence policy, but it is never the
+admission decision-maker.
+
+- [x] Add the Draft RFC-0073 normative document with Resource Profiles,
+  confidence levels, effective requirements, per-device accounting, Lease
+  lifecycle, Runtime states, queue semantics, eviction, fairness, owner
+  priority, persistence, explainability, and failure-safety invariants.
+- [x] Add the first runtime-admission vertical slice: direct Bundle activation
+  now checks the current Resource Broker fit before spawning a child, holds a
+  runtime residency reservation, and releases it when the process exits or is
+  stopped. Resource denials are typed and include required/free/shortfall
+  details; task/allocation paths avoid double-counting their transient lease.
+  Allocation lease races now remain retryable `RESOURCE_WAIT` states, and
+  pending allocations are rechecked after lease release/expiry.
+- [x] Add collision-safe local listener allocation for managed runtimes. The
+  allocator prefers the configured port, probes the real socket, rewrites the
+  launch command and endpoint metadata when a port is busy, keeps the lease
+  while a runtime is warm/idle, and releases it on stop/failure. Per-runtime
+  logs and a stable `runtime_port_conflict` readiness diagnostic expose bind
+  failures instead of dropping stderr.
+- [x] Add the first read-only Resource Broker and scheduler projections:
+  stable lease snapshots, side-effect-free admission forecasts, and a
+  fit-aware candidate/status view that represents every independent Endpoint
+  queue and explains `RESOURCE_WAIT` versus runnable capacity.
+- [x] Add the first executable global reconciliation loop. Queue submission,
+  cancellation, allocation lease release/expiry, operator runtime stops, and
+  managed-process exits now rebuild all independent queue heads; a non-fitting
+  head cannot block a fitting peer, pending allocations are retried, and
+  eligible warm-idle runtimes are evicted before a second global pass.
+- [x] Expose policy-respecting manual reconciliation through
+  `POST /diagnostics/scheduler/reconcile` and the plan/apply MCP tool
+  `aidn.scheduler.reconcile` under the explicit `SCHEDULER:WRITE` scope.
+- [ ] Implement the Hardware Monitor and Resource Broker read model for CPU,
+  RAM, per-GPU VRAM, storage, external processes, safety headroom, and
+  allocatable capacity.
+- [ ] Add atomic Resource Lease management for cold Runtime activation,
+  provisional admission, expiration/revocation, restart reconciliation, and
+  fail-closed admission while resource truth is uncertain.
+- [ ] Add Runtime Instance Manager states (COLD, STARTING, WARM_IDLE,
+  WARM_ACTIVE, BUSY, EVICTION_CANDIDATE, DRAINING, STOPPING, STOPPED, FAILED)
+  and connect them to the existing Provider/Bundle lifecycle.
+- [ ] Add independent Endpoint queues plus the global fit-aware Admission
+  Scheduler. Recompute the complete Candidate Set after every material
+  resource, Request, Lease, Runtime, Bundle, Endpoint, or owner-state change.
+- [ ] Add warm-runtime retention, policy-controlled eviction, drain/preemption
+  classes, churn protection, wait-time aging, fairness, and local-owner
+  reclamation.
+- [ ] Add conservative Provider resource estimators for model weights, KV cache,
+  context, concurrency, batch, workspace, overhead, fragmentation, and OOM
+  feedback. Treat admission denial as RESOURCE_WAIT rather than Runtime failure.
+- [ ] Add RFC-0072 resource events (lease, pressure, reconciliation,
+  activation-waiting, eviction, capacity, and estimate-failure) and ensure
+  normal scheduling never depends on Agent availability.
+- [ ] Complete MCP inspection/forecast/explain tools: resource broker
+  devices/explain-denial and scheduler explain-decision, plus Runtime
+  drain/stop/pin/unpin. Status, leases, forecast, candidates, and the safe
+  reconciliation control are implemented; the remaining mutation/read-model
+  surfaces stay gated for a later slice.
+- [ ] Add Advanced Mode Resources, GPUs, Leases, Runtime Instances, Queues,
+  Scheduler, and Reconciliation views with P50/P95 queue-wait and admission
+  metrics.
+- [ ] Defer optimal bin packing, learned/predictive scheduling, distributed
+  resource pooling, live model migration, cross-node checkpoint migration,
+  and advanced economic optimization.
+
+## 2026-08-20 Public Website And Web App Status
+
+The first WEB-0001 implementation already exists at `web/website` as a
+separate Vite/React application. It includes the public product story, local-
+first network explanation, Network/Endpoint read surface, Run a Node path,
+Build/Docs routes, responsive dark/light design, and the bounded Faucet flow.
+It remains separate from `web/operator-dashboard`, as required by WEB-0001.
+
+The next website increments are integration work, not a redesign:
+
+- [x] Ship the visual/content foundation and demo mode with an explicit
+  illustrative-data warning.
+- [ ] Connect the Website API boundary to a verified network indexer/read model
+  and expose freshness/provenance for every aggregate metric.
+- [ ] Complete public Endpoint Explorer search/detail cards from published,
+  validated advertisements only.
+- [ ] Connect Faucet status/challenge/claim/reconcile routes to the external
+  Faucet service with production rate limits, audit, and bounded error states.
+- [ ] Add reviewed release/download metadata, deployment status, SEO and
+  production hosting acceptance.
 
 ## 2026-08-14 ECO-0007 Activation Scope Extension And Maturity Completion
 
@@ -435,7 +600,15 @@ The distributed registry is a target architecture, not the first milestone.
 
 ## Current Stage
 
-Status: `M1-M10 complete, M8 target architecture`
+Status: `M1-M7 controlled MVP complete; M8 target architecture; M9-M10 controlled MVP complete`
+
+The repository is ahead of the original 2026-08-14 checklist. The current
+`main` branch includes the controlled CometBFT/ABCI network, State Sync and
+registry replication surfaces, the local-agent inference gateway, long-context
+llama.cpp runtime support, stateless MCP Control Sessions, dynamic MCP catalog
+refresh, and MCP Endpoint create/publish tools. The remaining release claim
+is intentionally narrower: public networking (G4), independent operator
+evidence (G6), and final evidence publication (G7) are still open.
 
 Current implementation slice:
 - [x] Ubuntu operator bootstrap now provisions the pinned CometBFT toolchain,
@@ -573,6 +746,16 @@ Product alignment summary:
 - registry replication is now documented in `RFC-0061`, so future Full Registry eligibility, anti-entropy, completeness proofs, challenge evidence, and repair synchronization can build on one deterministic storage and retrieval model instead of scattered service-local heuristics;
 - snapshot and fast State Sync are now documented in `RFC-0062`, so future node bootstrap, corruption recovery, trusted checkpoint handling, and portable state restoration can build on one verification-first protocol instead of ad hoc database-copy assumptions;
 - validation, marketplace, remote execution, and paid sessions should stay explicit operator actions layered on top of that core flow, not replace it.
+- RFC-0072 now defines the Hypervisor-to-agent event and Hook plane that
+  complements MCP-0001. Its durable Inbox, MCP_LIVE delivery, Event ID
+  deduplication, acknowledgment, retry, redaction, and approval/job events are
+  normative, while implementation remains tracked in the dedicated RFC-0072
+  roadmap slice above.
+- RFC-0073 now defines the local Resource Broker and Runtime Scheduler
+  authority. VRAM admission, atomic Leases, independent Endpoint queues,
+  global reconciliation, warm-runtime eviction, owner priority, and scheduler
+  explainability are normative; the implementation remains tracked in the
+  dedicated RFC-0073 roadmap slice above.
 - RFC-0042 v0.3 makes the Network Dispatcher the next infrastructure layer: the
   first implementation slice covers transport-independent envelopes, domain and
   payload validation, Route Generation, bounded admission, local delivery,
@@ -1159,16 +1342,20 @@ Exit criteria:
 
 Goal: move from local-first protocol state to finalized canonical network state ordered by CometBFT and interpreted by the AiDN Ledger State Machine.
 
-Status: `Target architecture`
+Status: `Controlled MVP complete; public production acceptance remains open`
 
 Checkpoints:
-- [ ] Deterministic Ledger Operation envelope with `operation_id`, protocol version, wallet sender, and sender sequence
-- [ ] AiDN ABCI application boundary for admission, proposal validation, finalization, and state commitment
-- [ ] Consensus Service as an optional Hypervisor service with local configuration and keys
-- [ ] Finalized state commitment and snapshot synchronization model
-- [ ] Consensus Validator role, stake, and validator-set activation boundaries
-- [ ] Non-validator submission, inclusion monitoring, and safe resubmission flow
-- [ ] Epoch-task integration through explicit finalized Ledger Operations
+- [x] Deterministic Ledger Operation envelope with `operation_id`, protocol version, wallet sender, and sender sequence
+- [x] AiDN ABCI application boundary for admission, proposal validation, finalization, and state commitment
+- [x] Consensus Service as an optional Hypervisor service with local configuration and keys
+- [x] Finalized state commitment and snapshot synchronization model
+- [x] Consensus Validator role, stake, and validator-set activation boundaries
+- [x] Non-validator submission, inclusion monitoring, and safe resubmission flow
+- [x] Epoch-task integration through explicit finalized Ledger Operations
+
+Public validator diversity, public RPC/P2P, and production authority evidence
+are release-gate work tracked under G4/G6/G7 below rather than missing M7
+implementation work.
 
 Exit criteria:
 - canonical protocol state is derived only from finalized ordered operations rather than local mutation alone;

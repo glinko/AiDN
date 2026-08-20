@@ -2,6 +2,7 @@ import base64
 import hashlib
 import io
 import json
+import time
 import zipfile
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -1291,6 +1292,23 @@ def test_runtimes_endpoint_returns_runtime_handles() -> None:
     ]
 
 
+def test_runtime_readiness_endpoint_reconciles_provider_health() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/runtimes/rt-1/readiness")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["runtime_id"] == "rt-1"
+    assert body["bundle_id"] == "whisper-a"
+    assert body["runtime_status"] == "running"
+    assert body["health_status"] == "healthy"
+    assert body["readiness"]["status"] == "READY"
+    assert body["readiness"]["code"] == "provider_healthy"
+    assert body["readiness"]["checked_at"]
+    assert body["readiness"]["diagnostic"]["healthy"] is True
+
+
 def test_runtime_detail_endpoint_returns_runtime_with_history() -> None:
     service = _service(with_runtime=False, use_process_manager=True)
     runtime = service.start_bundle("whisper-a")
@@ -1345,6 +1363,31 @@ def test_resources_endpoint_returns_total_reserved_and_free_capacity() -> None:
         "reserved": {"cpu": 1.5, "ram_mb": 2048, "vram_mb": 1024},
         "free": {"cpu": 6.5, "ram_mb": 14336, "vram_mb": 7168},
     }
+
+
+def test_resource_broker_read_endpoints_explain_forecast_and_leases() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    forecast = client.get("/resources/forecast", params={"vram_mb": 8000})
+    assert forecast.status_code == 200
+    assert forecast.json()["decision"] == "RESOURCE_WAIT"
+    assert forecast.json()["shortfall"]["vram_mb"] == 832
+
+    leases = client.get("/resources/leases")
+    assert leases.status_code == 200
+    assert leases.json()["items"][0]["reservation_id"] == "runtime-whisper-a"
+
+    scheduler = client.get("/diagnostics/scheduler")
+    assert scheduler.status_code == 200
+    assert scheduler.json()["queue"]["queued_tasks"] == 0
+
+    reconcile = client.post(
+        "/diagnostics/scheduler/reconcile",
+        params={"trigger": "api-test"},
+    )
+    assert reconcile.status_code == 200
+    assert reconcile.json()["status"] == "stable"
+    assert reconcile.json()["trigger"] == "api-test"
 
 
 def test_plugins_endpoint_returns_installed_plugin_descriptions() -> None:
@@ -5208,6 +5251,49 @@ def test_provider_installation_approval_and_apply_routes() -> None:
     approvals_response = client.get("/operators/provider-installation-approvals")
     assert approvals_response.status_code == 200
     assert approvals_response.json()["items"][0]["approval_id"] == approval["approval_id"]
+
+
+def test_provider_installation_async_route_persists_progress_events() -> None:
+    service = _service()
+    client = TestClient(build_app(service=service))
+
+    approval_response = client.post(
+        "/operators/provider-plugins/fake-managed/installation-approvals",
+        json={
+            "configuration": {
+                "display_name": "Local Fake",
+                "base_url": "http://127.0.0.1:9999",
+            },
+            "approved_permissions": ["network.private"],
+        },
+    )
+    assert approval_response.status_code == 200
+    approval_id = approval_response.json()["approval_id"]
+
+    apply_response = client.post(
+        f"/operators/provider-installation-approvals/{approval_id}/apply",
+        json={"wait_for_completion": False},
+    )
+
+    assert apply_response.status_code == 200
+    job = apply_response.json()
+    assert job["status"] in {"QUEUED", "RUNNING", "SUCCEEDED"}
+    job_id = job["job_id"]
+
+    latest = job
+    for _ in range(100):
+        latest = client.get(f"/operators/provider-installation-jobs/{job_id}").json()
+        if latest["status"] == "SUCCEEDED":
+            break
+        time.sleep(0.01)
+
+    assert latest["status"] == "SUCCEEDED"
+    assert latest["progress_percent"] == 100
+    assert [event["step"] for event in latest["progress_events"]] == [
+        "broker_dispatch",
+        "broker_completed",
+        "completed",
+    ]
 
 
 def test_provider_installation_job_rollback_route() -> None:

@@ -297,6 +297,12 @@ Continue only when node health is healthy and the intended operation has a
 clear resource, Provider and Endpoint relationship. A successful dashboard
 readiness check is useful context, but it does not grant the Agent new scope.
 
+For resource-sensitive work, also read `aidn.resource_broker.leases`,
+`aidn.scheduler.status`, and `aidn.scheduler.candidates` before attempting a
+Bundle activation. A `RESOURCE_WAIT` candidate is a queueing decision, not a
+Provider failure; use its required/free/shortfall projection instead of
+blindly retrying activation.
+
 ## Agent Permission Boundary
 
 Each Dashboard credential has an explicit allow-listed MCP permission set.

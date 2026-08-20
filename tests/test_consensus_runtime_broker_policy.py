@@ -43,3 +43,67 @@ def test_root_broker_accepts_only_consensus_install_flags() -> None:
     assert broker._validate_argv(argv, dispatcher=dispatcher) == argv
     with pytest.raises(ValueError, match="not allowlisted"):
         broker._validate_argv(argv + ["--command", "rm"], dispatcher=dispatcher)
+
+
+def test_root_broker_job_store_deduplicates_and_replays_offsets(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("the production broker uses POSIX pwd/socket APIs")
+    broker = _broker_module()
+    store = broker._BrokerJobStore(tmp_path / "jobs.json")
+
+    first, created = store.create_or_get(
+        client_job_id="aidn:pij-1",
+        request_hash="sha256:request",
+        timeout_seconds=30,
+    )
+    duplicate, duplicate_created = store.create_or_get(
+        client_job_id="aidn:pij-1",
+        request_hash="sha256:request",
+        timeout_seconds=30,
+    )
+
+    assert created is True
+    assert duplicate_created is False
+    assert duplicate["broker_job_id"] == first["broker_job_id"]
+    with pytest.raises(ValueError, match="reused"):
+        store.create_or_get(
+            client_job_id="aidn:pij-1",
+            request_hash="sha256:different",
+            timeout_seconds=30,
+        )
+
+    store.update(
+        first["broker_job_id"],
+        status="RUNNING",
+        progress_percent=10,
+        message="started",
+    )
+    replay = store.get(first["broker_job_id"], after_offset=1)
+    assert [event["offset"] for event in replay["events"]] == [2]
+    assert replay["event_offset"] + 1 == 3
+
+
+def test_root_broker_job_store_marks_inflight_jobs_failed_after_restart(tmp_path: Path) -> None:
+    if os.name == "nt":
+        pytest.skip("the production broker uses POSIX pwd/socket APIs")
+    broker = _broker_module()
+    state_path = tmp_path / "jobs.json"
+    store = broker._BrokerJobStore(state_path)
+    job, _created = store.create_or_get(
+        client_job_id="aidn:pij-2",
+        request_hash="sha256:request",
+        timeout_seconds=30,
+    )
+    store.update(
+        job["broker_job_id"],
+        status="RUNNING",
+        progress_percent=10,
+        message="started",
+    )
+
+    restarted = broker._BrokerJobStore(state_path)
+    recovered = restarted.get(job["broker_job_id"])
+
+    assert recovered["status"] == "FAILED"
+    assert recovered["result"]["details"]["code"] == "broker_restarted"
+    assert recovered["events"][-1]["status"] == "FAILED"

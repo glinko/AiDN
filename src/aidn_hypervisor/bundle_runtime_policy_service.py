@@ -1,15 +1,49 @@
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime
 from threading import RLock
 
 from aidn_hypervisor.bundle_hash import bundle_config_hash
 from aidn_hypervisor.domain.models import BundleConfig, TaskRequest
 from aidn_hypervisor.process_manager import RuntimeHandle
+from aidn_hypervisor.resources import ResourceAdmissionError
 
 _ACTIVE_EXECUTION_STATUSES = {"admitted", "starting", "running"}
 _ACTIVE_RUNTIME_STATUSES = {"starting", "running", "draining"}
 _RUNTIME_HEALTH_PROBE_INTERVAL_SECONDS = 5.0
+
+
+def _now_iso() -> str:
+    return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _bounded_readiness_diagnostic(value: object) -> dict:
+    """Keep provider diagnostics useful without persisting unbounded output."""
+
+    if not isinstance(value, dict):
+        return {"healthy": bool(value)}
+    allowed = {
+        "healthy",
+        "code",
+        "message",
+        "endpoint",
+        "probe_url",
+        "hint",
+        "status_code",
+        "log_tail",
+        "log_path",
+    }
+    result: dict = {}
+    for key in allowed:
+        if key not in value:
+            continue
+        item = value[key]
+        if isinstance(item, str):
+            result[key] = item[:512]
+        elif isinstance(item, (bool, int, float)) or item is None:
+            result[key] = item
+    return result
 
 
 class BundleRuntimePolicyService:
@@ -250,7 +284,7 @@ class BundleRuntimePolicyService:
             "status": "restarted",
         }
 
-    def start_bundle(self, bundle_id: str) -> RuntimeHandle:
+    def start_bundle(self, bundle_id: str, *, reserve_resources: bool = True) -> RuntimeHandle:
         bundle = self.get_bundle(bundle_id)
         if not bundle.enabled:
             raise ValueError(f"Bundle is disabled: {bundle_id}")
@@ -262,40 +296,78 @@ class BundleRuntimePolicyService:
         launch_spec["bundle_id"] = bundle.bundle_id
         launch_spec["launch_mode"] = bundle.launch_mode
 
-        if hasattr(self._host.runtimes, "start_runtime"):
-            runtime = self._host.runtimes.start_runtime(launch_spec)
+        residency_reserved = False
+        if reserve_resources and self._host.resources is not None:
+            estimate = plugin.estimate_resources(
+                TaskRequest(
+                    task_type="runtime_activation",
+                    payload={},
+                    constraints={"bundle_id": bundle.bundle_id},
+                ),
+                bundle,
+                None,
+            )
+            startup = estimate.get("startup_transient", {})
+            resident = estimate.get("runtime_resident", {})
+            needed = {
+                "cpu": startup.get("cpu", 0.0) + resident.get("cpu", 0.0),
+                "ram_mb": startup.get("ram_mb", 0) + resident.get("ram_mb", 0),
+                "vram_mb": startup.get("vram_mb", 0) + resident.get("vram_mb", 0),
+            }
+            report = self._host.resources.admission_report(**needed)
+            if not report["allowed"]:
+                raise ResourceAdmissionError(
+                    "runtime activation denied: resources are not available",
+                    details={"bundle_id": bundle.bundle_id, **report},
+                )
+            resident_values = {
+                "cpu": resident.get("cpu", 0.0),
+                "ram_mb": resident.get("ram_mb", 0),
+                "vram_mb": resident.get("vram_mb", 0),
+            }
+            if any(resident_values.values()):
+                self.reserve_runtime_residency(bundle.bundle_id, **resident_values)
+                residency_reserved = True
+
+        try:
+            if hasattr(self._host.runtimes, "start_runtime"):
+                runtime = self._host.runtimes.start_runtime(launch_spec)
+                self._host.record_event(
+                    event_type="runtime.started",
+                    message="runtime started",
+                    bundle_id=bundle.bundle_id,
+                    runtime_id=runtime.runtime_id,
+                )
+                # A managed command can exit between ``start_runtime`` returning
+                # and this initial snapshot write.  Reconcile once here so the
+                # first durable projection cannot overwrite a watcher-updated
+                # ``stopped`` state with the old ``starting`` value.
+                sync_process_state = getattr(self._host.runtimes, "sync_process_state", None)
+                if callable(sync_process_state):
+                    sync_process_state()
+                self._host._persist_state()
+                return runtime
+
+            handle = RuntimeHandle(
+                runtime_id=f"rt-{len(self._host.runtimes) + 1}",
+                command=launch_spec["command"],
+                status="starting",
+                bundle_id=bundle.bundle_id,
+                metadata=dict(launch_spec.get("metadata", {})),
+            )
+            self._host.runtimes.append(handle)
             self._host.record_event(
                 event_type="runtime.started",
                 message="runtime started",
                 bundle_id=bundle.bundle_id,
-                runtime_id=runtime.runtime_id,
+                runtime_id=handle.runtime_id,
             )
-            # A managed command can exit between ``start_runtime`` returning
-            # and this initial snapshot write.  Reconcile once here so the
-            # first durable projection cannot overwrite a watcher-updated
-            # ``stopped`` state with the old ``starting`` value.
-            sync_process_state = getattr(self._host.runtimes, "sync_process_state", None)
-            if callable(sync_process_state):
-                sync_process_state()
             self._host._persist_state()
-            return runtime
-
-        handle = RuntimeHandle(
-            runtime_id=f"rt-{len(self._host.runtimes) + 1}",
-            command=launch_spec["command"],
-            status="starting",
-            bundle_id=bundle.bundle_id,
-            metadata=dict(launch_spec.get("metadata", {})),
-        )
-        self._host.runtimes.append(handle)
-        self._host.record_event(
-            event_type="runtime.started",
-            message="runtime started",
-            bundle_id=bundle.bundle_id,
-            runtime_id=handle.runtime_id,
-        )
-        self._host._persist_state()
-        return handle
+            return handle
+        except Exception:
+            if residency_reserved:
+                self.release_runtime_reservation(bundle.bundle_id)
+            raise
 
     def stop_bundle(self, bundle_id: str) -> dict[str, str]:
         bundle = self.get_bundle(bundle_id)
@@ -367,6 +439,33 @@ class BundleRuntimePolicyService:
                 # not a stale health probe.  Keep it visible until the
                 # cooldown expires or an explicit retry/reset clears it.
                 if self.bundle_in_cooldown(runtime.bundle_id or ""):
+                    previous = (
+                        runtime.health_status,
+                        runtime.readiness_status,
+                        runtime.readiness_code,
+                        runtime.readiness_message,
+                        runtime.readiness_checked_at,
+                        runtime.readiness_diagnostic,
+                    )
+                    runtime.health_status = "cooldown"
+                    runtime.readiness_status = "NOT_READY"
+                    runtime.readiness_code = "provider_cooldown"
+                    runtime.readiness_message = "provider runtime is in cooldown"
+                    if previous[2] != "provider_cooldown":
+                        runtime.readiness_checked_at = _now_iso()
+                    runtime.readiness_diagnostic = {
+                        "healthy": False,
+                        "code": "provider_cooldown",
+                        "message": runtime.readiness_message,
+                    }
+                    changed = changed or previous != (
+                        runtime.health_status,
+                        runtime.readiness_status,
+                        runtime.readiness_code,
+                        runtime.readiness_message,
+                        runtime.readiness_checked_at,
+                        runtime.readiness_diagnostic,
+                    )
                     continue
                 last_probe = self._health_probe_at.get(runtime.runtime_id)
                 if (
@@ -379,11 +478,29 @@ class BundleRuntimePolicyService:
                 try:
                     bundle = self.get_bundle(runtime.bundle_id or "")
                     plugin = self._host._get_plugin(bundle.plugin_id)
-                    diagnostic = plugin.health_check_diagnostic(runtime)
-                    healthy = bool(diagnostic.get("healthy"))
-                    diagnostic_message = diagnostic.get("message")
-                    diagnostic_code = diagnostic.get("code")
+                    candidate = plugin.health_check_diagnostic(runtime)
+                    diagnostic = (
+                        candidate
+                        if isinstance(candidate, dict)
+                        else {"healthy": bool(candidate)}
+                    )
+                    healthy = bool(
+                        diagnostic.get("healthy")
+                        if isinstance(candidate, dict)
+                        else candidate
+                    )
+                    diagnostic_message = (
+                        diagnostic.get("message") if isinstance(candidate, dict) else None
+                    )
+                    diagnostic_code = (
+                        diagnostic.get("code") if isinstance(candidate, dict) else None
+                    )
                 except Exception as error:  # pragma: no cover - plugin boundary
+                    diagnostic = {
+                        "healthy": False,
+                        "code": "provider_health_check_failed",
+                        "message": str(error),
+                    }
                     healthy = False
                     diagnostic_message = str(error)
                     diagnostic_code = "provider_health_check_failed"
@@ -393,12 +510,26 @@ class BundleRuntimePolicyService:
                     runtime.status,
                     runtime.health_status,
                     runtime.last_error,
+                    runtime.readiness_status,
+                    runtime.readiness_code,
+                    runtime.readiness_message,
+                    runtime.readiness_checked_at,
+                    runtime.readiness_diagnostic,
                 )
+                checked_at = _now_iso()
+                readiness_diagnostic = _bounded_readiness_diagnostic(diagnostic)
                 if healthy:
                     if runtime.status == "starting":
                         runtime.status = "running"
                     runtime.health_status = "healthy"
                     runtime.last_error = None
+                    runtime.readiness_status = "READY"
+                    runtime.readiness_code = str(
+                        diagnostic_code or "provider_ready"
+                    )
+                    runtime.readiness_message = str(
+                        diagnostic_message or "provider runtime is ready"
+                    )[:512]
                 else:
                     runtime.health_status = "unhealthy"
                     runtime.last_error = str(
@@ -406,15 +537,59 @@ class BundleRuntimePolicyService:
                         or diagnostic_code
                         or f"Runtime health check failed: {runtime.bundle_id}"
                     )
+                    runtime.readiness_status = "NOT_READY"
+                    runtime.readiness_code = str(
+                        diagnostic_code or "provider_not_ready"
+                    )
+                    runtime.readiness_message = runtime.last_error[:512]
+                runtime.readiness_checked_at = checked_at
+                runtime.readiness_diagnostic = readiness_diagnostic
                 changed = changed or previous != (
                     runtime.status,
                     runtime.health_status,
                     runtime.last_error,
+                    runtime.readiness_status,
+                    runtime.readiness_code,
+                    runtime.readiness_message,
+                    runtime.readiness_checked_at,
+                    runtime.readiness_diagnostic,
                 )
 
             if changed:
                 self._host._persist_state()
             return runtimes
+
+    def runtime_readiness(self, runtime_id: str, *, force: bool = True) -> dict:
+        """Return one canonical, freshly reconciled runtime readiness record."""
+
+        self.refresh_runtime_health(force=force)
+        runtime = self.get_runtime(runtime_id)
+        if runtime.status == "stopped" and runtime.readiness_status == "READY":
+            runtime.readiness_status = "STOPPED"
+            runtime.readiness_code = "runtime_stopped"
+            runtime.readiness_message = "runtime is stopped"
+            runtime.readiness_checked_at = _now_iso()
+            runtime.readiness_diagnostic = {
+                "healthy": False,
+                "code": "runtime_stopped",
+                "message": runtime.readiness_message,
+            }
+        return {
+            "runtime_id": runtime.runtime_id,
+            "bundle_id": runtime.bundle_id,
+            "runtime_status": runtime.status,
+            "health_status": runtime.health_status,
+            "readiness": {
+                "status": runtime.readiness_status,
+                "code": runtime.readiness_code,
+                "message": runtime.readiness_message,
+                "checked_at": runtime.readiness_checked_at,
+                "diagnostic": dict(runtime.readiness_diagnostic),
+            },
+            "endpoint": runtime.metadata.get("endpoint"),
+            "model_id": runtime.metadata.get("model_id"),
+            "last_error": runtime.last_error,
+        }
 
     def get_bundle(self, bundle_id: str) -> BundleConfig:
         for bundle in self._host.bundles:

@@ -909,9 +909,11 @@ class McpControlPlane:
             )
             return self.failure(error, audit_event_id=audit_event["audit_event_id"])
         except (KeyError, ValueError) as error:
+            error_details = getattr(error, "details", None)
             domain_error = McpDomainError(
                 self._map_domain_error(name, error),
                 str(error),
+                details=error_details if isinstance(error_details, dict) else None,
             )
             audit_event = self.audit.append(
                 event_type="MCP_TOOL_FAILED",
@@ -1036,6 +1038,22 @@ class McpControlPlane:
 
     def _build_tools(self) -> dict[str, McpTool]:
         read_schema = {"type": "object", "additionalProperties": False}
+        forecast_schema = {
+            "type": "object",
+            "properties": {
+                "cpu": {"type": "number", "minimum": 0},
+                "ram_mb": {"type": "integer", "minimum": 0},
+                "vram_mb": {"type": "integer", "minimum": 0},
+            },
+            "additionalProperties": False,
+        }
+        scheduler_limit_schema = {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+            },
+            "additionalProperties": False,
+        }
         return {
             "aidn.capabilities.get": McpTool(
                 "aidn.capabilities.get",
@@ -1246,6 +1264,65 @@ class McpControlPlane:
                 "READ_ONLY",
                 lambda _args: self._resource_status(),
             ),
+            "aidn.resources.forecast": McpTool(
+                "aidn.resources.forecast",
+                "Explain whether a new CPU, RAM, and VRAM lease fits without reserving it.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "cpu": {"type": "number", "minimum": 0},
+                        "ram_mb": {"type": "integer", "minimum": 0},
+                        "vram_mb": {"type": "integer", "minimum": 0},
+                    },
+                    "additionalProperties": False,
+                },
+                ("RESOURCES:READ",),
+                "READ_ONLY",
+                lambda args: self._resource_forecast(args),
+            ),
+            "aidn.resources.leases": McpTool(
+                "aidn.resources.leases",
+                "List active Resource Broker leases and their reserved capacity.",
+                read_schema,
+                ("RESOURCES:READ",),
+                "READ_ONLY",
+                lambda _args: self._resource_leases(),
+            ),
+            # RFC-0073 names the same read surface Resource Broker.  Keep the
+            # shorter resources.* names for existing clients and expose these
+            # canonical aliases so agents can follow the RFC verbatim.
+            "aidn.resource_broker.status": McpTool(
+                "aidn.resource_broker.status",
+                "Return current Resource Broker capacity and reservation state.",
+                read_schema,
+                ("RESOURCES:READ",),
+                "READ_ONLY",
+                lambda _args: self._resource_status(),
+            ),
+            "aidn.resource_broker.forecast": McpTool(
+                "aidn.resource_broker.forecast",
+                "Forecast whether a new Resource Broker lease fits without reserving it.",
+                forecast_schema,
+                ("RESOURCES:READ",),
+                "READ_ONLY",
+                lambda args: self._resource_forecast(args),
+            ),
+            "aidn.resource_broker.leases": McpTool(
+                "aidn.resource_broker.leases",
+                "List active Resource Broker leases.",
+                read_schema,
+                ("RESOURCES:READ",),
+                "READ_ONLY",
+                lambda _args: self._resource_leases(),
+            ),
+            "aidn.resource_broker.explain_denial": McpTool(
+                "aidn.resource_broker.explain_denial",
+                "Explain a Resource Broker admission denial using required/free/shortfall values.",
+                forecast_schema,
+                ("RESOURCES:READ",),
+                "READ_ONLY",
+                lambda args: self._resource_forecast(args),
+            ),
             "aidn.scheduler.get_policy": McpTool(
                 "aidn.scheduler.get_policy",
                 "Return local request routing policy.",
@@ -1253,6 +1330,60 @@ class McpControlPlane:
                 ("SCHEDULER:READ",),
                 "READ_ONLY",
                 lambda _args: self.service.operator_requests_policy(),
+            ),
+            "aidn.scheduler.status": McpTool(
+                "aidn.scheduler.status",
+                "Return queue, Resource Broker, and fit-aware scheduler status.",
+                read_schema,
+                ("SCHEDULER:READ",),
+                "READ_ONLY",
+                lambda _args: self._scheduler_status(),
+            ),
+            "aidn.scheduler.queues": McpTool(
+                "aidn.scheduler.queues",
+                "List independent scheduler queues and their current head candidates.",
+                read_schema,
+                ("SCHEDULER:READ",),
+                "READ_ONLY",
+                lambda _args: self._scheduler_queues(),
+            ),
+            "aidn.scheduler.candidates": McpTool(
+                "aidn.scheduler.candidates",
+                "List the current head candidate from every independent queue with admission reasons.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+                    },
+                    "additionalProperties": False,
+                },
+                ("SCHEDULER:READ",),
+                "READ_ONLY",
+                lambda args: self._scheduler_candidates(args),
+            ),
+            "aidn.scheduler.reconcile": McpTool(
+                "aidn.scheduler.reconcile",
+                (
+                    "Plan or request a global scheduler reconciliation. "
+                    "Admission, leases, and eviction policy remain authoritative."
+                ),
+                {
+                    "type": "object",
+                    "properties": {
+                        "trigger": {"type": "string", "minLength": 1, "maxLength": 96},
+                        "max_cycles": {"type": "integer", "minimum": 1, "maximum": 1024},
+                        "mode": {"enum": ["plan", "apply"]},
+                        "request_id": {"type": "string", "minLength": 1},
+                        "idempotency_key": {"type": "string", "minLength": 1},
+                        "plan_hash": {"type": "string"},
+                    },
+                    "required": ["mode", "request_id", "idempotency_key"],
+                    "additionalProperties": False,
+                },
+                ("SCHEDULER:WRITE",),
+                "SAFE_MUTATION",
+                lambda args: self._reconcile_scheduler(args),
+                mutating=True,
             ),
             "aidn.wallet.summary": McpTool(
                 "aidn.wallet.summary",
@@ -1471,12 +1602,54 @@ class McpControlPlane:
                 "RESOURCES:READ",
                 lambda _uri: self._resource_status(),
             ),
+            "aidn://resources/leases": McpResource(
+                "aidn://resources/leases",
+                "Resource leases",
+                "Active Resource Broker leases.",
+                "RESOURCES:READ",
+                lambda _uri: self._resource_leases(),
+            ),
+            "aidn://resource-broker/status": McpResource(
+                "aidn://resource-broker/status",
+                "Resource Broker status",
+                "Current Resource Broker capacity and reservations.",
+                "RESOURCES:READ",
+                lambda _uri: self._resource_status(),
+            ),
+            "aidn://resource-broker/leases": McpResource(
+                "aidn://resource-broker/leases",
+                "Resource Broker leases",
+                "Active Resource Broker leases.",
+                "RESOURCES:READ",
+                lambda _uri: self._resource_leases(),
+            ),
             "aidn://scheduler/policy": McpResource(
                 "aidn://scheduler/policy",
                 "Scheduler policy",
                 "Local scheduler policy.",
                 "SCHEDULER:READ",
                 lambda _uri: self.service.operator_requests_policy(),
+            ),
+            "aidn://scheduler/status": McpResource(
+                "aidn://scheduler/status",
+                "Scheduler status",
+                "Queue, Resource Broker, and fit-aware scheduler status.",
+                "SCHEDULER:READ",
+                lambda _uri: self._scheduler_status(),
+            ),
+            "aidn://scheduler/candidates": McpResource(
+                "aidn://scheduler/candidates",
+                "Scheduler candidates",
+                "Current head candidate from every independent queue.",
+                "SCHEDULER:READ",
+                lambda _uri: {"items": self.service.scheduler_candidates()},
+            ),
+            "aidn://scheduler/queues": McpResource(
+                "aidn://scheduler/queues",
+                "Scheduler queues",
+                "Independent scheduler queues and their current heads.",
+                "SCHEDULER:READ",
+                lambda _uri: self._scheduler_queues(),
             ),
             "aidn://wallet/summary": McpResource(
                 "aidn://wallet/summary",
@@ -1984,6 +2157,79 @@ class McpControlPlane:
     def _resource_status(self) -> dict[str, Any]:
         resources = self.service.resources
         return resources.summary() if resources is not None else {"available": False}
+
+    def _resource_forecast(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        resources = self.service.resources
+        if resources is None:
+            return {"available": False}
+        cpu = arguments.get("cpu", 0.0)
+        ram_mb = arguments.get("ram_mb", 0)
+        vram_mb = arguments.get("vram_mb", 0)
+        if isinstance(cpu, bool) or not isinstance(cpu, (int, float)):
+            raise McpDomainError("MCP_INVALID_ARGUMENTS", "cpu must be a non-negative number")
+        if isinstance(ram_mb, bool) or not isinstance(ram_mb, int) or ram_mb < 0:
+            raise McpDomainError("MCP_INVALID_ARGUMENTS", "ram_mb must be a non-negative integer")
+        if isinstance(vram_mb, bool) or not isinstance(vram_mb, int) or vram_mb < 0:
+            raise McpDomainError("MCP_INVALID_ARGUMENTS", "vram_mb must be a non-negative integer")
+        if cpu < 0:
+            raise McpDomainError("MCP_INVALID_ARGUMENTS", "cpu must be a non-negative number")
+        return resources.forecast(cpu=float(cpu), ram_mb=ram_mb, vram_mb=vram_mb)
+
+    def _resource_leases(self) -> dict[str, Any]:
+        resources = self.service.resources
+        return {
+            "items": resources.lease_snapshot() if resources is not None else [],
+            "available": resources is not None,
+        }
+
+    def _scheduler_status(self) -> dict[str, Any]:
+        return self.service.scheduler_status()
+
+    def _scheduler_candidates(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        limit = arguments.get("limit", 200)
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+            raise McpDomainError(
+                "MCP_INVALID_ARGUMENTS",
+                "limit must be an integer between 1 and 500",
+            )
+        return {"items": self.service.scheduler_candidates(limit=limit), "limit": limit}
+
+    def _scheduler_queues(self) -> dict[str, Any]:
+        items = []
+        for candidate in self.service.scheduler_candidates():
+            items.append(
+                {
+                    "queue_key": candidate["queue_key"],
+                    "endpoint_id": candidate.get("endpoint_id"),
+                    "bundle_id": candidate.get("bundle_id"),
+                    "depth": candidate["queue_depth"],
+                    "head_task_id": candidate["task_id"],
+                    "head_status": candidate["status"],
+                }
+            )
+        return {"items": items}
+
+    def _reconcile_scheduler(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        trigger = arguments.get("trigger", "mcp")
+        if not isinstance(trigger, str) or not trigger.strip():
+            raise McpDomainError(
+                "MCP_INVALID_ARGUMENTS",
+                "trigger must be a non-empty string",
+            )
+        max_cycles = arguments.get("max_cycles", 128)
+        if (
+            isinstance(max_cycles, bool)
+            or not isinstance(max_cycles, int)
+            or not 1 <= max_cycles <= 1024
+        ):
+            raise McpDomainError(
+                "MCP_INVALID_ARGUMENTS",
+                "max_cycles must be an integer between 1 and 1024",
+            )
+        return self.service.reconcile_scheduler(
+            trigger=trigger,
+            max_cycles=max_cycles,
+        )
 
     def _wallet_summary(self) -> dict[str, Any]:
         return {

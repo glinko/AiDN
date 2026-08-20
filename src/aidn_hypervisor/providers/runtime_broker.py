@@ -30,6 +30,10 @@ class ProviderRuntimeCommandRunner(Protocol):
     def run(self, *, argv: list[str], timeout_seconds: int) -> RuntimeCommandResult:
         ...
 
+    def run_control(self, request: dict, *, timeout_seconds: int = 30) -> dict:
+        """Exchange one bounded broker job-control request."""
+        ...
+
 
 class AllowlistedProviderRuntimeBroker:
     """Build and optionally execute only the reviewed dispatcher argv."""
@@ -123,6 +127,56 @@ class AllowlistedProviderRuntimeBroker:
             },
         )
 
+    def submit(
+        self,
+        *,
+        invocation: ProviderRuntimeInvocation,
+        client_job_id: str,
+        timeout_seconds: int = 3600,
+    ) -> dict:
+        """Submit one idempotent action to a durable root-broker job queue."""
+
+        return self._control(
+            {
+                "operation": "submit",
+                "argv": self.build_argv(invocation=invocation),
+                "timeout_seconds": timeout_seconds,
+                "client_job_id": client_job_id,
+            }
+        )
+
+    def get_job(self, *, broker_job_id: str, after_offset: int = 0) -> dict:
+        """Read a broker job and only events after the supplied replay offset."""
+
+        return self._control(
+            {
+                "operation": "status",
+                "broker_job_id": broker_job_id,
+                "after_offset": after_offset,
+            }
+        )
+
+    def cancel(self, *, broker_job_id: str) -> dict:
+        """Request cooperative cancellation of a broker job."""
+
+        return self._control(
+            {
+                "operation": "cancel",
+                "broker_job_id": broker_job_id,
+            }
+        )
+
+    def _control(self, request: dict) -> dict:
+        run_control = getattr(self.runner, "run_control", None)
+        if not callable(run_control):
+            raise ValueError(
+                "provider runtime broker does not expose durable job control"
+            )
+        response = run_control(request)
+        if not isinstance(response, dict):
+            raise ValueError("provider runtime broker returned an invalid control response")
+        return response
+
     @staticmethod
     def _append_if_present(
         argv: list[str], arguments: dict[str, str], key: str, option: str
@@ -168,22 +222,56 @@ class UnixSocketProviderRuntimeCommandRunner:
         self.socket_path = str(socket_path)
 
     def run(self, *, argv: list[str], timeout_seconds: int) -> RuntimeCommandResult:
+        try:
+            response = self._exchange(
+                {"argv": argv, "timeout_seconds": timeout_seconds},
+                timeout_seconds=timeout_seconds + 5,
+            )
+        except ValueError as error:
+            return RuntimeCommandResult(
+                returncode=126 if "too large" in str(error) else 127,
+                stderr=str(error)[:512],
+            )
+        try:
+            returncode = response["returncode"]
+            stdout = response.get("stdout", "")
+            stderr = response.get("stderr", "")
+            if not isinstance(returncode, int):
+                raise ValueError("broker returncode must be an integer")
+            if not isinstance(stdout, str) or not isinstance(stderr, str):
+                raise ValueError("broker output fields must be strings")
+        except (ValueError, TypeError, KeyError) as error:
+            return RuntimeCommandResult(
+                returncode=126,
+                stderr=f"invalid provider runtime broker response: {error}",
+            )
+        return RuntimeCommandResult(
+            returncode=returncode,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+    def run_control(self, request: dict, *, timeout_seconds: int = 30) -> dict:
+        """Exchange one bounded submit/status/cancel request with the broker."""
+
+        response = self._exchange(request, timeout_seconds=timeout_seconds)
+        if not isinstance(response, dict):
+            raise ValueError("provider runtime broker control response is not an object")
+        if response.get("error"):
+            raise ValueError(str(response["error"])[:512])
+        return response
+
+    def _exchange(self, payload: dict, *, timeout_seconds: int) -> dict:
         request = json.dumps(
-            {
-                "argv": argv,
-                "timeout_seconds": timeout_seconds,
-            },
+            payload,
             ensure_ascii=True,
             separators=(",", ":"),
         ).encode("utf-8") + b"\n"
         if len(request) > self._MAX_FRAME_BYTES:
-            return RuntimeCommandResult(
-                returncode=126,
-                stderr="provider runtime broker request is too large",
-            )
+            raise ValueError("provider runtime broker request is too large")
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-                client.settimeout(timeout_seconds + 5)
+                client.settimeout(timeout_seconds)
                 address = (
                     "\x00" + self.socket_path[1:]
                     if self.socket_path.startswith("@")
@@ -200,33 +288,15 @@ class UnixSocketProviderRuntimeCommandRunner:
                         break
                     total += len(chunk)
                     if total > self._MAX_FRAME_BYTES:
-                        return RuntimeCommandResult(
-                            returncode=126,
-                            stderr="provider runtime broker response is too large",
-                        )
+                        raise ValueError("provider runtime broker response is too large")
                     chunks.append(chunk)
         except (OSError, TimeoutError) as error:
-            return RuntimeCommandResult(
-                returncode=127,
-                stderr=f"provider runtime broker unavailable: {error}",
-            )
+            raise ValueError(f"provider runtime broker unavailable: {error}") from error
 
         try:
             response = json.loads(b"".join(chunks).decode("utf-8"))
-            returncode = response["returncode"]
-            stdout = response.get("stdout", "")
-            stderr = response.get("stderr", "")
-            if not isinstance(returncode, int):
-                raise ValueError("broker returncode must be an integer")
-            if not isinstance(stdout, str) or not isinstance(stderr, str):
-                raise ValueError("broker output fields must be strings")
+            if not isinstance(response, dict):
+                raise ValueError("broker response must be a JSON object")
         except (ValueError, TypeError, json.JSONDecodeError, UnicodeDecodeError) as error:
-            return RuntimeCommandResult(
-                returncode=126,
-                stderr=f"invalid provider runtime broker response: {error}",
-            )
-        return RuntimeCommandResult(
-            returncode=returncode,
-            stdout=stdout,
-            stderr=stderr,
-        )
+            raise ValueError(f"invalid provider runtime broker response: {error}") from error
+        return response

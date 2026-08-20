@@ -107,6 +107,7 @@ class ProviderRuntimeInstallRequest(BaseModel):
     configuration: dict[str, Any] = Field(default_factory=dict)
     operator_note: str | None = Field(default=None, max_length=500)
     upgrade_acknowledged: bool = False
+    wait_for_completion: bool = True
 
 
 class WalletBootstrapCreateRequest(BaseModel):
@@ -1417,6 +1418,7 @@ def build_operator_access_router(
                 configuration=payload.configuration,
                 operator_note=payload.operator_note or "Paired Dashboard one-click runtime installation",
                 upgrade_acknowledged=payload.upgrade_acknowledged,
+                wait_for_completion=payload.wait_for_completion,
             )
         except (KeyError, ValueError) as error:
             return operation_error(error)
@@ -1448,6 +1450,7 @@ def build_operator_access_router(
                     configuration=payload.configuration,
                     operator_note=payload.operator_note,
                     upgrade_acknowledged=payload.upgrade_acknowledged,
+                    wait_for_completion=payload.wait_for_completion,
                 )
             elif action == "change":
                 result = hypervisor_service.change_provider_runtime(
@@ -1455,6 +1458,7 @@ def build_operator_access_router(
                     configuration=payload.configuration,
                     operator_note=payload.operator_note,
                     upgrade_acknowledged=payload.upgrade_acknowledged,
+                    wait_for_completion=payload.wait_for_completion,
                 )
             elif action == "remove":
                 result = hypervisor_service.remove_provider_runtime(plugin_id=plugin_id)

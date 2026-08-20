@@ -127,6 +127,11 @@ class SnapshotStateService:
                     health_status=runtime.health_status,
                     last_error=runtime.last_error,
                     metadata=dict(runtime.metadata),
+                    readiness_status=runtime.readiness_status,
+                    readiness_code=runtime.readiness_code,
+                    readiness_message=runtime.readiness_message,
+                    readiness_checked_at=runtime.readiness_checked_at,
+                    readiness_diagnostic=dict(runtime.readiness_diagnostic),
                 )
                 for runtime in self._host.list_runtimes()
             ],
@@ -460,6 +465,13 @@ class SnapshotStateService:
             package_store=self._host._plugin_package_store,
             plugin_host_connections=[item.model_dump(mode="json") for item in snapshot.plugin_host_connections],
         )
+        bind_installation_job_callback = getattr(
+            self._host.provider_inventory,
+            "set_installation_job_update_callback",
+            None,
+        )
+        if callable(bind_installation_job_callback):
+            bind_installation_job_callback(self._host._persist_state)
         for release in snapshot.plugin_releases:
             self._host.provider_inventory.store.save_plugin_release(release)
         for installed_plugin in snapshot.installed_plugins:
@@ -487,6 +499,13 @@ class SnapshotStateService:
             self._host.provider_inventory.store.save_installation_approval(approval)
         for job in snapshot.provider_installation_jobs:
             self._host.provider_inventory.store.save_installation_job(job)
+        reconcile_installation_jobs = getattr(
+            self._host.provider_inventory,
+            "reconcile_installation_jobs",
+            None,
+        )
+        if callable(reconcile_installation_jobs):
+            reconcile_installation_jobs()
         self._host.runtime_protocol_store.restore(snapshot)
         self._restore_wallet_sequences(snapshot)
 
@@ -581,6 +600,11 @@ class SnapshotStateService:
                 health_status=runtime.health_status,
                 last_error=runtime.last_error,
                 metadata=dict(runtime.metadata),
+                readiness_status=runtime.readiness_status,
+                readiness_code=runtime.readiness_code,
+                readiness_message=runtime.readiness_message,
+                readiness_checked_at=runtime.readiness_checked_at,
+                readiness_diagnostic=dict(runtime.readiness_diagnostic),
             )
             if self._host._bundle_in_cooldown(runtime.bundle_id):
                 recovered_runtime.health_status = "cooldown"

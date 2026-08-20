@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import zipfile
+import time
 from pathlib import Path
 
 import pytest
@@ -1274,6 +1275,117 @@ def test_allowlisted_runtime_executor_fails_closed_on_broker_failure() -> None:
             manifest=manifest,
             provider_instance_id="pi-ollama-runtime",
         )
+
+
+class _DurableStubProviderRuntimeBroker(_StubProviderRuntimeBroker):
+    def __init__(self) -> None:
+        super().__init__()
+        self.poll_count = 0
+        self.job = None
+
+    def submit(self, *, invocation, client_job_id: str, timeout_seconds: int = 3600) -> dict:
+        self.invocations.append(invocation)
+        self.job = {
+            "broker_job_id": "brj-durable-test",
+            "client_job_id": client_job_id,
+            "request_hash": "sha256:durable-test",
+            "status": "QUEUED",
+            "progress_percent": 0,
+            "event_offset": 1,
+            "events": [],
+            "events_truncated_before": 0,
+            "result": None,
+            "cancel_requested": False,
+            "timeout_seconds": timeout_seconds,
+            "created_at": "2026-07-15T12:00:00Z",
+            "updated_at": "2026-07-15T12:00:00Z",
+        }
+        return {"job": dict(self.job), "events": [], "next_offset": 2}
+
+    def get_job(self, *, broker_job_id: str, after_offset: int = 0) -> dict:
+        assert broker_job_id == "brj-durable-test"
+        self.poll_count += 1
+        if self.poll_count == 1:
+            status = "RUNNING"
+            event = {
+                "offset": 2,
+                "event_id": "brj-durable-test:2",
+                "status": status,
+                "progress_percent": 50,
+                "message": "runtime install in progress",
+                "timestamp": "2026-07-15T12:00:01Z",
+            }
+            self.job.update(
+                status=status,
+                progress_percent=50,
+                event_offset=2,
+                events=[event],
+                updated_at=event["timestamp"],
+            )
+        else:
+            status = "SUCCEEDED"
+            event = {
+                "offset": 3,
+                "event_id": "brj-durable-test:3",
+                "status": status,
+                "progress_percent": 100,
+                "message": "runtime install complete",
+                "timestamp": "2026-07-15T12:00:02Z",
+            }
+            self.job.update(
+                status=status,
+                progress_percent=100,
+                event_offset=3,
+                events=[event],
+                result={
+                    "status": "SUCCEEDED",
+                    "summary": "runtime broker completed",
+                    "details": {"broker": "durable-test"},
+                    "events": [],
+                },
+                updated_at=event["timestamp"],
+            )
+        events = [event] if event["offset"] > after_offset else []
+        return {"job": dict(self.job), "events": events, "next_offset": self.job["event_offset"] + 1}
+
+    def cancel(self, *, broker_job_id: str) -> dict:
+        assert broker_job_id == "brj-durable-test"
+        self.job["cancel_requested"] = True
+        return {"job": dict(self.job), "events": [], "next_offset": self.job["event_offset"] + 1}
+
+
+def test_provider_inventory_async_runtime_uses_durable_broker_job() -> None:
+    registry = PluginRegistry()
+    registry.register(OllamaPlugin())
+    broker = _DurableStubProviderRuntimeBroker()
+    service = ProviderInventoryService(
+        plugins=registry,
+        store=InMemoryProviderInventoryStore(),
+        installation_executor=AllowlistedProviderRuntimeInstallationExecutor(broker),
+    )
+
+    job_payload = service.install_provider_runtime(
+        plugin_id="ollama",
+        configuration={
+            "display_name": "Local Ollama",
+            "endpoint": "http://127.0.0.1:11434",
+            "runtime_version": "0.32.12",
+        },
+        wait_for_completion=False,
+    )
+    job_id = job_payload["job_id"]
+    latest = service.get_installation_job(job_id)
+    for _ in range(100):
+        if latest.status == "SUCCEEDED":
+            break
+        time.sleep(0.01)
+        latest = service.get_installation_job(job_id)
+
+    assert latest.status == "SUCCEEDED"
+    assert latest.broker_job_id == "brj-durable-test"
+    assert latest.broker_status == "SUCCEEDED"
+    assert latest.broker_event_offset == 3
+    assert any(event.get("source") == "broker" for event in latest.progress_events)
 
 
 def test_provider_inventory_managed_runtime_lifecycle_is_typed_and_idempotent() -> None:

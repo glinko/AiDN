@@ -1,6 +1,6 @@
 # WEB-0001 Website Implementation Plan
 
-Status: `Implementation-ready draft`
+Status: `Implemented foundation; integration backlog`
 
 Version: `0.1`
 
@@ -10,15 +10,24 @@ Target browser contract: [WEB-0001 Website API OpenAPI](../product/WEB-0001-webs
 
 ## 1. Goal
 
-Build the official AiDN Public Website and bounded Web App as a new application without coupling it to the Hypervisor Dashboard. The first release must provide truthful public content, a verified network read surface, a server-mediated Faucet flow, a read-only Endpoint Explorer, task-oriented documentation entry points, and a reviewed path to Hypervisor installation.
+Harden the existing official AiDN Public Website and bounded Web App without
+coupling it to the Hypervisor Dashboard. The visual/content foundation and
+demo-mode user journeys are already implemented; the remaining work is to
+replace illustrative adapters with verified Network/Faucet integrations and
+complete production acceptance.
 
 This plan maps `WEB-0001` to the current repository. It is not authority to change protocol behavior or weaken the Faucet proof model.
 
 ## 2. Current repository reality
 
-As of this plan:
+As of `2026-08-20`:
 
-- no public website application exists;
+- `web/website` is the implemented standalone Vite/React public website and
+  Web App foundation;
+- it includes Home, How It Works, Network, Run a Node, Build, Docs, Faucet,
+  Explorer and responsive dark/light navigation surfaces;
+- it uses a website-owned `/api/site/v1` adapter boundary and explicitly marks
+  demo/illustrative data; production freshness/provenance is still pending;
 - `web/operator-dashboard` is the node-local React Dashboard and remains separate;
 - the supported Ubuntu installer is `tools/aidn-operator-bootstrap-ubuntu.sh`;
 - the current public installation documentation is `docs/development/operator-release-package.md`;
@@ -28,13 +37,17 @@ As of this plan:
 - current Wallet IDs are `wallet-<12 hex>`, derived from `ed25519:<64 hex>` public keys;
 - Registry nodes and discovery are available from Hypervisor routes such as `/registry/nodes` and `/registry/discovery`;
 - local `/api/v1/endpoints` inventory is not by itself a canonical network-wide Explorer;
-- no dedicated public aggregate Network Summary contract exists yet.
+- no production Website Backend/indexer is connected to the public aggregate
+  Network Summary contract yet.
 
-The website therefore needs a server-side adapter layer and a network indexer/read model. The browser must not call arbitrary Hypervisors or the protected Faucet directly.
+The next website work is therefore integration and release hardening. The
+browser must not call arbitrary Hypervisors or the protected Faucet directly.
 
-## 3. Target repository layout
+## 3. Target integration layout
 
-Create a standalone application at `web/website`:
+The current implementation lives at `web/website`. The following target
+layout remains the contract for a future server/BFF split; it is not a request
+to replace the working Vite/React application with Next.js:
 
 ```text
 web/website/
@@ -105,7 +118,7 @@ Do not import application code from `web/operator-dashboard`. Shared visual prim
 
 ## 4. Frontend architecture
 
-Reference stack:
+Reference stack for a future BFF split:
 
 - Next.js App Router;
 - React and strict TypeScript;
@@ -116,6 +129,9 @@ Reference stack:
 - Zod for every external response boundary;
 - Recharts only for charts backed by real time-series data;
 - MDX or typed content modules for public content.
+
+Current shipped foundation: Vite, React 19, TypeScript, Lucide, Manrope and
+IBM Plex Mono, with the API boundary and demo data adapter described above.
 
 Rules:
 
@@ -413,17 +429,18 @@ Every factual capability claim includes a source link in content metadata. The s
 
 ## 10. Page-by-page build order
 
-### Phase 0 — foundation
+### Phase 0 — foundation (`complete`)
 
-- scaffold `web/website`;
-- configure strict TypeScript, lint, format, unit test, and Playwright;
-- implement tokens, theme, typography, layout, navigation, footer, error boundary, analytics facade, metadata, robots, and sitemap;
-- add environment schema with fail-fast server validation;
-- add CI build and test jobs.
+- standalone `web/website` scaffold and package scripts;
+- strict TypeScript, production build and source lint/typecheck entry points;
+- tokens, dark/light theme, typography, layout, navigation, footer, metadata,
+  error/empty states and reduced-motion behavior;
+- demo-mode warning and bounded API adapter boundary.
 
-Exit gate: empty route shells render responsively in dark/light mode and pass accessibility smoke tests.
+Exit gate: satisfied for the current foundation; production hosting and full
+browser automation remain release-hardening work.
 
-### Phase 1 — truthful public content
+### Phase 1 — truthful public content (`complete`)
 
 - Home;
 - How It Works;
@@ -434,9 +451,10 @@ Exit gate: empty route shells render responsively in dark/light mode and pass ac
 - Docs entry;
 - Download/release adapter.
 
-Exit gate: a user can reach the reviewed immutable installer and task-oriented docs without Network or Faucet dependencies.
+Exit gate: satisfied in the shipped demo foundation; release metadata and
+production links still require the integration adapter.
 
-### Phase 2 — Network summary and status
+### Phase 2 — Network summary and status (`in progress`)
 
 - implement indexer ingestion and provenance;
 - implement `/api/site/v1/network/summary`;
@@ -445,7 +463,7 @@ Exit gate: a user can reach the reviewed immutable installer and task-oriented d
 
 Exit gate: every rendered metric has source/freshness metadata and missing metrics render `Not reported`.
 
-### Phase 3 — read-only Explorer
+### Phase 3 — read-only Explorer (`foundation shipped; integration in progress`)
 
 - implement indexed Endpoint search and details;
 - implement URL-owned filters and pagination;
@@ -454,7 +472,7 @@ Exit gate: every rendered metric has source/freshness metadata and missing metri
 
 Exit gate: no result field is inferred from display text and no write action exists.
 
-### Phase 4 — Faucet
+### Phase 4 — Faucet (`foundation shipped; production integration in progress`)
 
 - implement server-only Faucet facade and credential handling;
 - implement Wallet/public-key validation;
@@ -466,7 +484,7 @@ Exit gate: no result field is inferred from display text and no write action exi
 
 Exit gate: one exact request can move through challenge, proof, claim, pending finality, and reconciliation without duplicate transfer creation.
 
-### Phase 5 — release hardening
+### Phase 5 — release hardening (`open`)
 
 - SEO and social assets;
 - Web Vitals budgets;
@@ -610,11 +628,11 @@ A route is done only when it has:
 
 ## 16. Initial implementation tickets
 
-1. Scaffold `web/website` and CI.
-2. Implement design tokens, layout, themes, navigation, footer, and route metadata.
-3. Add typed content system and Home.
-4. Add How It Works, Build, Agents, Research, and Docs entry.
-5. Add immutable release adapter, Run a Node, and Download.
+1. ~~Scaffold `web/website` and CI.~~ Complete in the current foundation.
+2. ~~Implement design tokens, layout, themes, navigation, footer, and route metadata.~~ Complete.
+3. ~~Add typed content system and Home.~~ Complete in the current content module.
+4. ~~Add How It Works, Build, Agents, Research, and Docs entry.~~ Complete in the current route foundation.
+5. ~~Add immutable release adapter, Run a Node, and Download.~~ Foundation complete; verified release feed remains open.
 6. Define and test Website Network schemas.
 7. Implement Network indexer storage and ingestion.
 8. Implement Network summary and status pages.

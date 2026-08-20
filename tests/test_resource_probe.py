@@ -50,6 +50,31 @@ def test_probe_report_round_trip_uses_restricted_json_file(tmp_path: Path) -> No
     assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == 1
 
 
+def test_probe_report_ignores_malformed_optional_measured_vram(tmp_path: Path) -> None:
+    path = tmp_path / "resource-capacity.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "source": "legacy-probe",
+                "observed_at": "2026-08-08T00:00:00+00:00",
+                "capacity": {
+                    "cpu_cores": 4,
+                    "ram_mb": 8192,
+                    "gpu_devices": ["gpu0"],
+                    "vram_mb": {"gpu0": 4096},
+                },
+                "measured_vram_mb": ["not-a-device-map"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    restored = read_resource_probe_report(path)
+
+    assert restored.measured_vram_mb == {}
+
+
 def test_invalid_capacity_file_falls_back_to_runtime_probe(
     tmp_path: Path, monkeypatch
 ) -> None:

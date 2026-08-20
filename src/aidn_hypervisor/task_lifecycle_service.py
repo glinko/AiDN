@@ -90,32 +90,11 @@ class TaskLifecycleService:
         return cancelled_task
 
     def process_pending(self) -> dict[str, int]:
-        if self._host.resources is None or not self._host._has_plugins():
-            summary = self.queue_summary()
-            self._host._persist_state()
-            return summary
-
-        while True:
-            progressed = False
-            admission_plan = self._host._pending_task_plan()
-            self._host._runtime_boundary._record_admission_events(admission_plan)
-            for item in admission_plan:
-                task_id = str(item["task_id"])
-                task_before = self._host.queue.get(task_id)
-                if task_before.status != "queued":
-                    continue
-                previous_status = task_before.status
-                try:
-                    result = self._host._attempt_task(task_id)
-                    current_status = self._host.queue.get(task_id).status
-                    if result or current_status != previous_status:
-                        progressed = True
-                except Exception:
-                    if self._host.queue.get(task_id).status != previous_status:
-                        progressed = True
-                    continue
-            if not progressed:
-                break
+        # Keep this method as the stable public lifecycle facade while routing
+        # actual work through the global reconciliation boundary.  The new
+        # scheduler re-reads every independent endpoint queue after each
+        # admission, runtime stop, or resource release.
+        self._host._runtime_boundary.reconcile_scheduler(trigger="queue_change")
         summary = self.queue_summary()
         self._host._persist_state()
         return summary
