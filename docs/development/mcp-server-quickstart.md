@@ -55,9 +55,11 @@ request even if an older `protocol_version` value is present in its YAML
 configuration. Do not keep retrying or rewrite the request to work around
 that hint: the server accepts the Hermes handshake directly.
 
-The HTTP endpoint is POST-only, so a `405` response to `GET /mcp` or
-`HEAD /mcp` is expected. Test the actual JSON-RPC handshake instead. A valid
-remote connection is one `initialize` request followed by one
+The HTTP endpoint accepts authenticated `GET`/`HEAD` probes as well as JSON-RPC
+`POST`. A probe is diagnostic only: it does not create a session or execute a
+tool. `HEAD /mcp` returns `204` and `GET /mcp` returns the current server and
+refresh instructions. Test the actual JSON-RPC handshake for a working
+connection. A valid remote connection is one `initialize` request followed by one
 `notifications/initialized` notification; the response includes an
 `Mcp-Session-Id` header for subsequent calls.
 
@@ -101,6 +103,35 @@ If Hermes reports `Unsupported MCP protocol version: 2025-11-25`, stop the
 loop and check the node deployment rather than repeating `initialize`. Three
 failed handshakes are enough to diagnose a transport or version problem; do
 not spend the model context on repeated identical MCP calls.
+
+### Live permission and tool-catalog refresh
+
+The operator may add or remove scopes on an active Agent credential through the
+Dashboard. Scope changes are deliberately live: the gateway re-resolves the
+bearer credential on every request and refreshes the scoped control view. The
+Hermes gateway does not need to restart and the existing `Mcp-Session-Id`
+remains valid.
+
+After an operator changes permissions, the Agent should make this bounded
+checkpoint:
+
+1. call `aidn.mcp.session_status` (or `aidn.capabilities.get`);
+2. compare `tool_catalog.revision` with its cached value;
+3. call the JSON-RPC `tools/list` method when the revision changes and replace
+   the cached catalog;
+4. only then call a newly granted tool.
+
+`initialize` advertises `tools.listChanged`; the explicit revision is the
+reliable refresh signal for the current HTTP transport. An attempted call to a
+tool that is not in the cached catalog returns structured
+`MCP_UNSUPPORTED_TOOL` details pointing to `tools/list`, rather than requiring
+an indefinite retry loop.
+
+Credential revocation and token rotation are different from a scope update:
+they intentionally close the transport session. In that case discard the
+`Mcp-Session-Id`, run a new `initialize` handshake with the replacement token,
+send `notifications/initialized`, and call `tools/list`. A node/service restart
+also requires that normal handshake, but permission changes alone do not.
 
 Keep the workflow bounded when an Agent is driving MCP:
 

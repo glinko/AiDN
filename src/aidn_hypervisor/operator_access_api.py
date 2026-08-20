@@ -1212,8 +1212,10 @@ def build_operator_access_router(
             )
         except ValueError:
             return JSONResponse(status_code=422, content={"error": {"code": "MCP_CREDENTIAL_SCOPE_INVALID"}})
-        if invalidate_credential_sessions is not None:
-            invalidate_credential_sessions(credential_id)
+        # Scope changes are intentionally live.  The remote MCP gateway
+        # re-resolves the bearer credential on every request and refreshes the
+        # scoped control view, so clients do not need to restart their gateway
+        # or lose the transport session just to discover a new permission.
         return JSONResponse(status_code=200, content=_credential_payload(updated))
 
     @router.post("/credentials/{credential_id}/rotate", status_code=201)

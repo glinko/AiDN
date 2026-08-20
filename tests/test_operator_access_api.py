@@ -442,7 +442,10 @@ def test_paired_operator_can_list_and_update_only_known_agent_permissions(tmp_pa
     assert updated.status_code == 200
     assert updated.json()["scopes"] == ["BUNDLE:ACTIVATE", "NODE:READ"]
     assert updated.json()["auto_approved_scopes"] == ["BUNDLE:ACTIVATE"]
-    assert invalidated == [credential_id]
+    # Scope updates are live and deliberately keep the transport session. The
+    # gateway re-resolves the bearer credential on the next request, so only
+    # revoke/rotate operations should invalidate sessions.
+    assert invalidated == []
     assert client.put(
         f"/operators/dashboard/access/credentials/{credential_id}/scopes",
         json={"scopes": ["*"]},

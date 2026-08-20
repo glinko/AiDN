@@ -196,12 +196,12 @@ def test_revocation_rejects_credential_and_closes_transport_sessions(tmp_path) -
     assert client.post("/mcp", headers=_headers(issued.token or ""), json={}).status_code == 401
 
 
-def test_credential_scopes_filter_tools_and_take_effect_after_session_reconnect(tmp_path) -> None:
+def test_credential_scopes_refresh_on_active_session_without_gateway_restart(tmp_path) -> None:
     credentials = McpCredentialStore(
         secret_manager=FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
     )
     issued = credentials.create_credential(label="read-only agent", scopes=("NODE:READ",))
-    client, gateway = _client_with_credentials(tmp_path, credentials)
+    client, _gateway = _client_with_credentials(tmp_path, credentials)
     session_id = _initialize(client, issued.token or "")
 
     listed = client.post(
@@ -210,7 +210,7 @@ def test_credential_scopes_filter_tools_and_take_effect_after_session_reconnect(
         json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
     )
     names = {tool["name"] for tool in listed.json()["result"]["tools"]}
-    assert names == {"aidn.capabilities.get", "aidn.node.status", "aidn.node.health"}
+    assert names == {"aidn.capabilities.get", "aidn.mcp.session_status", "aidn.node.status", "aidn.node.health"}
     assert "aidn.bundle.activate" not in names
     capabilities_response = client.post(
         "/mcp",
@@ -226,39 +226,53 @@ def test_credential_scopes_filter_tools_and_take_effect_after_session_reconnect(
     capabilities = capabilities_response.json()["result"]["structuredContent"]
     assert "aidn.bundle.activate" not in capabilities["implemented_tools"]
 
-    credentials.update_scopes(issued.credential_id, scopes=("NODE:READ", "BUNDLE:ACTIVATE"))
-    gateway.invalidate_credential_sessions(issued.credential_id)
-    closed = client.post(
-        "/mcp",
-        headers=_headers(issued.token or "", session_id=session_id),
-        json={"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}},
-    )
-    assert closed.status_code == 404
+    initial_revision = listed.json()["result"]["_meta"]["tool_catalog"]["revision"]
 
-    refreshed_session = _initialize(client, issued.token or "")
+    credentials.update_scopes(issued.credential_id, scopes=("NODE:READ", "BUNDLE:ACTIVATE"))
     refreshed = client.post(
         "/mcp",
-        headers=_headers(issued.token or "", session_id=refreshed_session),
+        headers=_headers(issued.token or "", session_id=session_id),
         json={"jsonrpc": "2.0", "id": 4, "method": "tools/list", "params": {}},
     )
+    assert refreshed.status_code == 200
     refreshed_names = {tool["name"] for tool in refreshed.json()["result"]["tools"]}
     assert "aidn.bundle.activate" in refreshed_names
+    assert refreshed.json()["result"]["_meta"]["tool_catalog"]["revision"] != initial_revision
     policy = _tool_call(
-        client, refreshed_session, "aidn.capabilities.get", {}, token=issued.token or ""
+        client, session_id, "aidn.capabilities.get", {}, token=issued.token or ""
     )["structuredContent"]["control_session"]["approval_policy"]
     assert policy["bundle_activate"] == "OPERATOR_CONFIRMATION"
+
+    status = _tool_call(client, session_id, "aidn.mcp.session_status", {}, token=issued.token or "")
+    assert status["structuredContent"]["refresh"]["gateway_restart_required"] is False
+    assert status["structuredContent"]["tool_catalog"]["count"] == len(refreshed_names)
 
     credentials.update_scopes(
         issued.credential_id,
         scopes=("NODE:READ", "BUNDLE:ACTIVATE"),
         auto_approved_scopes=("BUNDLE:ACTIVATE",),
     )
-    gateway.invalidate_credential_sessions(issued.credential_id)
-    automatic_session = _initialize(client, issued.token or "")
     policy = _tool_call(
-        client, automatic_session, "aidn.capabilities.get", {}, token=issued.token or ""
+        client, session_id, "aidn.capabilities.get", {}, token=issued.token or ""
     )["structuredContent"]["control_session"]["approval_policy"]
     assert policy["bundle_activate"] == "AUTO"
+
+
+def test_authenticated_mcp_probe_explains_refresh_without_json_rpc(tmp_path) -> None:
+    client, _gateway = _client(tmp_path, scopes=("CAPABILITIES:READ",))
+
+    head = client.head("/mcp", headers=_headers())
+    assert head.status_code == 204
+    assert head.headers["X-AiDN-MCP-Status"] == "ready"
+    assert head.headers["X-AiDN-MCP-Reconnect"] == "initialize"
+    assert head.headers["X-AiDN-MCP-Tool-Catalog-Revision"].startswith("sha256:")
+
+    probe = client.get("/mcp", headers=_headers())
+    assert probe.status_code == 200
+    payload = probe.json()
+    assert payload["transport"]["gateway_restart_required"] is False
+    assert payload["transport"]["tool_refresh"].startswith("POST tools/list")
+    assert payload["tool_catalog"]["revision"] == probe.headers["X-AiDN-MCP-Tool-Catalog-Revision"]
 
 
 def test_credential_effective_policy_is_consistent_across_mcp_reads(tmp_path) -> None:

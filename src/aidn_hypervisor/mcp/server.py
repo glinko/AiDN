@@ -77,6 +77,12 @@ def _hash_payload(payload: Any) -> str:
     return "sha256:" + hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
 
 
+def _tool_catalog_revision(definitions: list[dict[str, Any]]) -> str:
+    """Return a stable revision for the effective, scope-filtered tool list."""
+
+    return _hash_payload(definitions)
+
+
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -822,6 +828,7 @@ class McpControlPlane:
     def capabilities(self) -> dict[str, Any]:
         self.session.require_active()
         approval_policy = dict(self.session.approval_policy)
+        catalog = self.tool_catalog_metadata()
         return {
             "spec_version": "MCP-0001/0.1",
             "server_version": MCP_SERVER_VERSION,
@@ -835,6 +842,8 @@ class McpControlPlane:
             "effective_approval_policy": approval_policy,
             "implemented_tools": sorted(self._tools),
             "implemented_resources": sorted(self._resources),
+            "tool_catalog_revision": catalog["revision"],
+            "tool_catalog": catalog,
             "deferred_tool_families": [
                 "aidn.host.prepare",
                 "aidn.node.install",
@@ -862,6 +871,11 @@ class McpControlPlane:
             raise McpDomainError(
                 "MCP_UNSUPPORTED_TOOL",
                 f"Unsupported MCP tool: {name}",
+                details={
+                    "refresh_tools": True,
+                    "tool_catalog_changed": True,
+                    "next_action": "Call tools/list and replace the cached tool catalog before retrying.",
+                },
             )
         if arguments is None:
             arguments = {}
@@ -990,6 +1004,36 @@ class McpControlPlane:
             "isError": True,
         }
 
+    def tool_catalog_metadata(self) -> dict[str, Any]:
+        """Describe the currently effective tool catalog without exposing secrets."""
+
+        definitions = self.tool_definitions()
+        return {
+            "revision": _tool_catalog_revision(definitions),
+            "count": len(definitions),
+            "refresh_required": False,
+            "transport_reconnect_required": False,
+            "next_action": "Call tools/list when the catalog revision changes.",
+        }
+
+    def mcp_session_status(self) -> dict[str, Any]:
+        """Give an Agent an explicit, non-destructive MCP refresh checkpoint."""
+
+        return {
+            "server_version": MCP_SERVER_VERSION,
+            "protocol_version": MCP_PROTOCOL_VERSION,
+            "control_session": self.session.public(),
+            "tool_catalog": self.tool_catalog_metadata(),
+            "refresh": {
+                "scope_changes_apply_to_active_session": True,
+                "gateway_restart_required": False,
+                "after_scope_change": [
+                    "Call aidn.capabilities.get",
+                    "Call tools/list if tool_catalog_revision changed",
+                ],
+            },
+        }
+
     def _build_tools(self) -> dict[str, McpTool]:
         read_schema = {"type": "object", "additionalProperties": False}
         return {
@@ -1000,6 +1044,14 @@ class McpControlPlane:
                 (),
                 "READ_ONLY",
                 lambda _args: self.capabilities(),
+            ),
+            "aidn.mcp.session_status": McpTool(
+                "aidn.mcp.session_status",
+                "Report MCP session, permission refresh, and effective tool-catalog status.",
+                read_schema,
+                (),
+                "READ_ONLY",
+                lambda _args: self.mcp_session_status(),
             ),
             "aidn.policy.get": McpTool(
                 "aidn.policy.get",
@@ -2023,18 +2075,29 @@ class McpJsonRpcServer:
             return {
                 "protocolVersion": self.client_protocol_version,
                 "capabilities": {
-                    "tools": {"listChanged": False},
+                    "tools": {"listChanged": True},
                     "resources": {"subscribe": False, "listChanged": False},
                 },
                 "serverInfo": {"name": "aidn-node-control", "version": MCP_SERVER_VERSION},
-                "instructions": "Use aidn.capabilities.get before mutating operations; plan before apply.",
+                "instructions": (
+                    "Permission changes are applied to the active MCP transport session. "
+                    "Call aidn.capabilities.get or aidn.mcp.session_status after a scope change; "
+                    "call tools/list when tool_catalog_revision changes. "
+                    "If MCP_REMOTE_SESSION_NOT_FOUND is returned, "
+                    "discard Mcp-Session-Id, initialize again, send notifications/initialized, "
+                    "then call tools/list. Do not restart the gateway. "
+                    "Use plan before apply for mutations."
+                ),
             }
         if method == "ping":
             return {}
         if not self.initialized:
             raise McpDomainError("MCP_NOT_INITIALIZED", "The MCP session is not initialized")
         if method == "tools/list":
-            return {"tools": self.control.tool_definitions()}
+            return {
+                "tools": self.control.tool_definitions(),
+                "_meta": {"tool_catalog": self.control.tool_catalog_metadata()},
+            }
         if method == "tools/call":
             name = params.get("name")
             if not isinstance(name, str):

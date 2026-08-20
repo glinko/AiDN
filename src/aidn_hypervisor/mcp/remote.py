@@ -32,6 +32,8 @@ from fastapi.responses import JSONResponse, Response
 from aidn_hypervisor.config import load_operator_config
 from aidn_hypervisor.mcp.permissions import approval_policy_for_agent
 from aidn_hypervisor.mcp.server import (
+    MCP_PROTOCOL_VERSION,
+    MCP_SERVER_VERSION,
     McpControlPlane,
     McpDomainError,
     McpJsonRpcServer,
@@ -76,6 +78,17 @@ class _ScopedMcpControlPlane:
         self._credential = credential
         self._control_session_id = f"{control.session.control_session_id}:credential:{credential.credential_id}"
 
+    def refresh_credential(self, credential: McpAuthenticatedCredential) -> None:
+        """Apply the latest credential scopes without replacing the MCP transport."""
+
+        if credential.credential_id != self._credential.credential_id:
+            raise McpDomainError(
+                "MCP_REMOTE_CREDENTIAL_CHANGED",
+                "The bearer token is bound to a different credential than this MCP session",
+                details={"reconnect_required": True},
+            )
+        self._credential = credential
+
     def _view(self) -> McpControlPlane:
         base_session = self._control.session
         view = copy(self._control)
@@ -115,6 +128,9 @@ class _ScopedMcpControlPlane:
     def resource_definitions(self) -> list[dict[str, Any]]:
         return self._view().resource_definitions()
 
+    def tool_catalog_metadata(self) -> dict[str, Any]:
+        return self._view().tool_catalog_metadata()
+
     def capabilities(self) -> dict[str, Any]:
         view = self._view()
         payload = view.capabilities()
@@ -123,6 +139,8 @@ class _ScopedMcpControlPlane:
         # from a global implementation inventory.
         payload["implemented_tools"] = [item["name"] for item in view.tool_definitions()]
         payload["implemented_resources"] = [item["uri"] for item in view.resource_definitions()]
+        payload["tool_catalog_revision"] = view.tool_catalog_metadata()["revision"]
+        payload["tool_catalog"] = view.tool_catalog_metadata()
         return payload
 
     def call_tool(self, name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
@@ -501,6 +519,49 @@ class McpRemoteGateway:
             ),
         )
 
+    async def handle_agent_probe(self, request: Request) -> Response:
+        """Provide an authenticated, non-MCP probe for clients diagnosing reconnects."""
+
+        if not self.enabled:
+            return JSONResponse(status_code=404, content=_json_error("MCP_REMOTE_DISABLED", "Remote MCP is disabled"))
+        if self.require_tls and request.url.scheme != "https":
+            return self._tls_required_response()
+        credential = self._agent_credential(request)
+        if credential is None:
+            return self._unauthorized()
+        if self._origin_is_rejected(request):
+            return self._forbidden_origin()
+        renewal_error = self._renew_control_session(source="agent")
+        if renewal_error is not None:
+            return renewal_error
+        catalog = _ScopedMcpControlPlane(self.control, credential).tool_catalog_metadata()
+        headers = {
+            "Cache-Control": "no-store",
+            "X-AiDN-MCP-Status": "ready",
+            "X-AiDN-MCP-Server-Version": MCP_SERVER_VERSION,
+            "X-AiDN-MCP-Reconnect": "initialize",
+            "X-AiDN-MCP-Tool-Catalog-Revision": catalog["revision"],
+        }
+        if request.method == "HEAD":
+            return Response(status_code=204, headers=headers)
+        return JSONResponse(
+            status_code=200,
+            headers=headers,
+            content={
+                "status": "ready",
+                "server_version": MCP_SERVER_VERSION,
+                "protocol_version": MCP_PROTOCOL_VERSION,
+                "credential": {"state": "active", "scope_count": len(credential.scopes)},
+                "tool_catalog": catalog,
+                "transport": {
+                    "initialize": "POST /mcp without Mcp-Session-Id",
+                    "initialized": "POST notifications/initialized with returned Mcp-Session-Id",
+                    "tool_refresh": "POST tools/list when tool_catalog_revision changes",
+                    "gateway_restart_required": False,
+                },
+            },
+        )
+
     def _renew_control_session(self, *, source: str) -> JSONResponse | None:
         try:
             self.control.renew_control_session(source=source)
@@ -618,9 +679,26 @@ class McpRemoteGateway:
         if transport_session is None:
             return JSONResponse(
                 status_code=404,
-                content=_json_error("MCP_REMOTE_SESSION_NOT_FOUND", "MCP transport session was not found"),
+                headers={"Mcp-Reconnect": "required", "Cache-Control": "no-store"},
+                content=_json_error(
+                    "MCP_REMOTE_SESSION_NOT_FOUND",
+                    "MCP transport session was not found; start a new MCP initialize handshake",
+                    details={
+                        "retryable": True,
+                        "reconnect_required": True,
+                        "next_action": [
+                            "Discard Mcp-Session-Id",
+                            "POST initialize with the same bearer token",
+                            "POST notifications/initialized",
+                            "POST tools/list",
+                        ],
+                    },
+                ),
             )
         _bound_credential_id, server = transport_session
+        refresh_credential = getattr(server.control, "refresh_credential", None)
+        if callable(refresh_credential):
+            refresh_credential(credential)
         response = server.handle_message(payload)
         if response is None:
             return self._response(None, session_id=session_id, status_code=202)
@@ -700,6 +778,11 @@ def build_mcp_remote_router(gateway: McpRemoteGateway, *, prefix: str = "/mcp") 
 
     normalized_prefix = "/" + prefix.strip("/")
     router = APIRouter()
+    # Keep a lightweight authenticated probe on the same boundary.  MCP
+    # clients can use it to distinguish an expired/revoked transport from a
+    # healthy server without sending a JSON-RPC request or restarting their
+    # gateway.
+    router.add_api_route(normalized_prefix, gateway.handle_agent_probe, methods=["GET", "HEAD"])
     router.add_api_route(normalized_prefix, gateway.handle_agent, methods=["POST", "DELETE"])
     if gateway.operator_enabled:
         router.add_api_route(
