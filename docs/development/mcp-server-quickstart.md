@@ -122,8 +122,11 @@ checkpoint:
 4. only then call a newly granted tool.
 
 `initialize` advertises `tools.listChanged`; the explicit revision is the
-reliable refresh signal for the current HTTP transport. An attempted call to a
-tool that is not in the cached catalog returns structured
+reliable refresh signal for the current HTTP transport. The lightweight MCP
+`ping` response also exposes the current revision in `result._meta` as
+`tool_catalog_revision`, so a long-lived client can poll it without pulling
+the full tool list. An attempted call to a tool that is not in the cached
+catalog returns structured
 `MCP_UNSUPPORTED_TOOL` details pointing to `tools/list`, rather than requiring
 an indefinite retry loop.
 

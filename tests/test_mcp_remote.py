@@ -173,7 +173,7 @@ def test_remote_gateway_accepts_hermes_latest_handshake_version(tmp_path) -> Non
         json={"jsonrpc": "2.0", "id": 2, "method": "ping"},
     )
     assert response.status_code == 200
-    assert response.json()["result"]["tool_catalog_revision"].startswith("sha256:")
+    assert response.json()["result"]["_meta"]["tool_catalog_revision"].startswith("sha256:")
 
 
 def test_revocation_rejects_credential_and_closes_transport_sessions(tmp_path) -> None:
