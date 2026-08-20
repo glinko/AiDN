@@ -127,6 +127,13 @@ tool that is not in the cached catalog returns structured
 `MCP_UNSUPPORTED_TOOL` details pointing to `tools/list`, rather than requiring
 an indefinite retry loop.
 
+If a node upgrade leaves a long-lived Hermes Telegram session showing the old
+tool set, send `/reload-mcp` in that chat. Hermes treats this as an in-band
+MCP-only reload: it reconnects the configured server and rebuilds the current
+session's tool snapshot without restarting the gateway process or discarding
+the conversation. A full `systemctl --user restart hermes-gateway.service`
+is only a last-resort recovery for a gateway process that is itself unhealthy.
+
 Credential revocation and token rotation are different from a scope update:
 they intentionally close the transport session. In that case discard the
 `Mcp-Session-Id`, run a new `initialize` handshake with the replacement token,

@@ -2090,7 +2090,13 @@ class McpJsonRpcServer:
                 ),
             }
         if method == "ping":
-            return {}
+            # Keep the standard liveness response backwards-compatible while
+            # exposing a read-only catalog marker. Long-lived clients can
+            # compare this revision with their last tools/list snapshot and
+            # refresh after a node upgrade or live scope change.
+            return {
+                "tool_catalog_revision": self.control.tool_catalog_metadata()["revision"],
+            }
         if not self.initialized:
             raise McpDomainError("MCP_NOT_INITIALIZED", "The MCP session is not initialized")
         if method == "tools/list":
