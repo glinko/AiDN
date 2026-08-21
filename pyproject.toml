@@ -29,6 +29,7 @@ network = ["aioquic>=1.1.0"]
 [tool.pytest.ini_options]
 # Tests import the dashboard preview helper that intentionally lives at the
 # repository root, in addition to the installable source package.
+testpaths = ["tests"]
 pythonpath = [".", "src"]
 addopts = [
     "--import-mode=importlib",

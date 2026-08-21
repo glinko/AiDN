@@ -1,0 +1,1 @@
+"""Endpoint publication test package."""
