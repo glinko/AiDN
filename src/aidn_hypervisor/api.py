@@ -70,6 +70,7 @@ from aidn_hypervisor.runtime_operations_read_models import (
     build_runtime_operations_payload,
 )
 from aidn_hypervisor.service import AllocationUnavailableError, HypervisorService
+from aidn_hypervisor.lifecycle_manager import LifecycleError
 from aidn_hypervisor.session_application_service import SessionApplicationService
 from aidn_hypervisor.session_read_models import (
     build_operator_sessions_payload,
@@ -178,6 +179,34 @@ class HookDispatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     now: str | None = None
+
+
+class LifecycleRemovalPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    object_type: str = Field(min_length=1, max_length=64)
+    object_id: str = Field(min_length=1, max_length=256)
+    cascade: bool = False
+    actor: str = Field(default="operator", min_length=1, max_length=128)
+
+
+class LifecycleApplyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan_hash: str = Field(min_length=1, max_length=256)
+    actor: str = Field(default="operator", min_length=1, max_length=128)
+    force: bool = False
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class RuntimeResetApplyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reset_id: str = Field(min_length=1, max_length=128)
+    plan_hash: str = Field(min_length=1, max_length=256)
+    actor: str = Field(default="operator", min_length=1, max_length=128)
+    force: bool = False
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class WalletIdentityRegistrationRequest(BaseModel):
@@ -3785,6 +3814,50 @@ def build_api_router(
             raise HTTPException(status_code=404, detail=f"Unknown runtime: {runtime_id}") from error
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/lifecycle/removal-plan")
+    async def lifecycle_removal_plan(request: LifecycleRemovalPlanRequest) -> dict:
+        try:
+            return service.lifecycle_removal_plan(**request.model_dump(mode="json"))
+        except LifecycleError as error:
+            raise HTTPException(status_code=409, detail=error.as_detail()) from error
+
+    @router.post("/operators/lifecycle/removal-plans/{plan_id}/apply")
+    async def apply_lifecycle_removal(plan_id: str, request: LifecycleApplyRequest) -> dict:
+        try:
+            payload = request.model_dump(mode="json")
+            return service.apply_lifecycle_removal(plan_id, **payload)
+        except LifecycleError as error:
+            status_code = 404 if error.code == "OBJECT_NOT_FOUND" else 409
+            raise HTTPException(status_code=status_code, detail=error.as_detail()) from error
+
+    @router.get("/operators/lifecycle/tombstones")
+    async def lifecycle_tombstones() -> list[dict]:
+        return service.lifecycle_tombstones()
+
+    @router.get("/operators/lifecycle/tombstones/{object_type}/{object_id}")
+    async def lifecycle_tombstone(object_type: str, object_id: str) -> dict:
+        try:
+            return service.lifecycle_tombstone(object_type, object_id)
+        except LifecycleError as error:
+            raise HTTPException(status_code=404, detail=error.as_detail()) from error
+
+    @router.post("/operators/node/reset/runtime/plan")
+    async def runtime_reset_plan() -> dict:
+        try:
+            return service.runtime_reset_plan()
+        except LifecycleError as error:
+            raise HTTPException(status_code=409, detail=error.as_detail()) from error
+
+    @router.post("/operators/node/reset/runtime")
+    async def apply_runtime_reset(request: RuntimeResetApplyRequest) -> dict:
+        try:
+            payload = request.model_dump(mode="json")
+            reset_id = payload.pop("reset_id")
+            return service.apply_runtime_reset(reset_id, **payload)
+        except LifecycleError as error:
+            status_code = 404 if error.code == "OBJECT_NOT_FOUND" else 409
+            raise HTTPException(status_code=status_code, detail=error.as_detail()) from error
 
     @router.get("/resources")
     async def resource_summary() -> dict:

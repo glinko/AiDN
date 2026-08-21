@@ -36,6 +36,7 @@ from aidn_hypervisor.hypervisor_integration_service import (
     HypervisorIntegrationService,
 )
 from aidn_hypervisor.ledger.service import LedgerOperationService
+from aidn_hypervisor.lifecycle_manager import LifecycleManager, ResetManager
 from aidn_hypervisor.model_install_service import ModelInstallService
 from aidn_hypervisor.mvp_session_economics_service import MvpSessionEconomicsService
 from aidn_hypervisor.network_projection_service import NetworkProjectionService
@@ -250,6 +251,13 @@ class HypervisorService:
         self._consumed_wallet_authorization_nonces: set[str] = set()
         self._operator_onboarding: dict | None = None
         self._runtime_reservations: set[str] = set()
+        # RFC-0074/IMP-0002 durable lifecycle operation and tombstone stores.
+        # They are intentionally plain JSON records so older state stores can
+        # load a snapshot without importing a newer object model.
+        self._lifecycle_operations: dict[str, dict] = {}
+        self._lifecycle_tombstones: dict[str, dict] = {}
+        self._lifecycle_maintenance_state = "ENABLED"
+        self._lifecycle_lock = RLock()
         self._bundle_states: dict[str, dict] = {}
         self._wallet_usage_events: list[dict] = []
         self._next_wallet_usage_sequence = 1
@@ -341,6 +349,8 @@ class HypervisorService:
         if callable(bind_installation_job_callback):
             bind_installation_job_callback(self._persist_state)
         self._runtime_boundary = RuntimeProtocolBoundaryService(self)
+        self.lifecycle_manager = LifecycleManager(self)
+        self.reset_manager = ResetManager(self.lifecycle_manager)
         # Managed child processes can change state without an API request.
         # Let the process manager persist those transitions so another shared
         # state-store writer cannot reintroduce an old runtime snapshot.
@@ -2216,6 +2226,30 @@ class HypervisorService:
         result = self._runtime_boundary.force_stop_runtime(runtime_id)
         self.reconcile_scheduler(trigger="operator_runtime_stop")
         return result
+
+    # RFC-0074/IMP-0002 lifecycle boundary.  Callers should use these
+    # facades instead of deleting Provider/Bundle/Endpoint state directly.
+    def lifecycle_removal_plan(self, object_type: str, object_id: str, **kwargs) -> dict:
+        return self.lifecycle_manager.removal_plan(object_type, object_id, **kwargs)
+
+    def apply_lifecycle_removal(self, plan_id: str, plan_hash: str, **kwargs) -> dict:
+        return self.lifecycle_manager.apply_removal(plan_id, plan_hash, **kwargs)
+
+    def lifecycle_tombstones(self) -> list[dict]:
+        return self.lifecycle_manager.list_tombstones()
+
+    def lifecycle_tombstone(self, object_type: str, object_id: str) -> dict:
+        return self.lifecycle_manager.get_tombstone(object_type, object_id)
+
+    def runtime_reset_plan(self, **kwargs) -> dict:
+        return self.reset_manager.plan("runtime", **kwargs)
+
+    def apply_runtime_reset(self, reset_id: str, plan_hash: str, **kwargs) -> dict:
+        return self.reset_manager.apply(reset_id, plan_hash, **kwargs)
+
+    @property
+    def lifecycle_maintenance_state(self) -> str:
+        return self._lifecycle_maintenance_state
 
     def restart_runtime(self, runtime_id: str) -> dict[str, str]:
         return self._runtime_boundary.restart_runtime(runtime_id)

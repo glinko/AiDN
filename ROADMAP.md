@@ -260,18 +260,23 @@ identity, Wallet identity, network history, and secret erasure interact.
 - [x] Add the Draft RFC-0074 normative document covering Disable, Unpublish,
   Retire, Delete Local, Decommission, Secure Erase, reset profiles, tombstones,
   audit, and historical-network invariants.
-- [ ] Implement the dependency graph and deterministic Removal Plan with
-  precheck, approval, apply, verification, resumable partial-failure state,
-  and stable plan hashes.
+- [x] Add [IMP-0002](./docs/product/IMP-0002-deletion-decommissioning-and-reset-implementation-profile.md)
+  as the implementation profile for the reference Hypervisor, including the
+  LifecycleManager/ResetManager boundary, plan hashes, operation persistence,
+  CLI/MCP/UI contracts, fixtures, and release gates.
+- [x] Implement the first dependency-aware Removal Plan slice for local
+  Runtime/Bundle/Model/Provider/Endpoint objects, with precheck, plan-hash
+  binding, apply, operation persistence, and stale-plan rejection. Full
+  resumable recovery and distributed NetworkOps remain on the next slice.
 - [ ] Add lifecycle transitions for Runtime, Provider, Model, Bundle,
   Endpoint, Validation Report, and Node objects; block destructive deletion
   while live dependents remain.
-- [ ] Add durable tombstones, soft-delete grace periods, reference-aware
-  artifact garbage collection, stale-command errors, and RFC-0072 lifecycle
-  events.
-- [ ] Implement Runtime Reset and Configuration Reset with RFC-0073 scheduler
-  pause/drain, Lease release, reconciliation, Session/Request handling, and
-  completion proofs.
+- [x] Add the MVP durable tombstone store, stale-command protection, and
+  lifecycle/reset events. Soft-delete grace periods and reference-aware
+  ArtifactGC remain pending.
+- [x] Implement Runtime Reset with maintenance pause, runtime stop, Resource
+  Lease release, reconciliation, and completion verification. Configuration
+  Reset and Session/Request drain policy remain pending.
 - [ ] Implement Identity-Preserving Reset, Node Decommission, forced-local-only
   recovery, liveness expiry, and public-key continuity verification.
 - [ ] Implement guarded Factory Reset and separate Wallet/secret secure erase;

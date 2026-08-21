@@ -161,6 +161,12 @@ class SnapshotStateService:
                 if self._host.resources is not None
                 else []
             ),
+            lifecycle_operations=[
+                dict(item) for item in self._host._lifecycle_operations.values()
+            ],
+            lifecycle_tombstones=[
+                dict(item) for item in self._host._lifecycle_tombstones.values()
+            ],
             model_installs=[ModelInstallSnapshot(**job) for job in self._host._model_installs.values()],
             plugin_releases=[
                 release.model_copy(deep=True) for release in self._host.provider_inventory.list_plugin_releases()
@@ -388,6 +394,16 @@ class SnapshotStateService:
         self._host._allocations = {}
         self._host._model_installs = {}
         self._host._operator_requests_policy = dict(snapshot.operator_requests_policy)
+        self._host._lifecycle_operations = {
+            str(item["operation_id"]): dict(item)
+            for item in snapshot.lifecycle_operations
+            if isinstance(item, dict) and item.get("operation_id")
+        }
+        self._host._lifecycle_tombstones = {
+            f"{item.get('object_type')}:{item.get('object_id')}": dict(item)
+            for item in snapshot.lifecycle_tombstones
+            if isinstance(item, dict) and item.get("object_type") and item.get("object_id")
+        }
         self._host._owner_wallet = (
             snapshot.owner_wallet.model_dump(mode="json") if snapshot.owner_wallet is not None else None
         )

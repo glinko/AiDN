@@ -382,6 +382,10 @@ class HypervisorStateSnapshot(BaseModel):
     # RFC-0073 Resource Broker leases.  Kept as a plain JSON read model so
     # snapshots remain forward-compatible with older nodes and plugins.
     resource_leases: list[dict] = Field(default_factory=list)
+    # RFC-0074/IMP-0002 lifecycle operations and tombstones are plain JSON
+    # projections so a newer lifecycle manager can recover from an older node.
+    lifecycle_operations: list[dict] = Field(default_factory=list)
+    lifecycle_tombstones: list[dict] = Field(default_factory=list)
     model_installs: list[ModelInstallSnapshot] = Field(default_factory=list)
     plugin_releases: list[PluginRelease] = Field(default_factory=list)
     installed_plugins: list[InstalledPlugin] = Field(default_factory=list)
