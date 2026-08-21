@@ -7,7 +7,6 @@ import {
   BriefcaseBusiness,
   CheckCircle2,
   ChevronRight,
-  ChevronDown,
   ChevronUp,
   CircleDot,
   Copy,
@@ -2711,49 +2710,70 @@ function isFailedOperationMessage(message: string): boolean {
 
 function NotificationDock({ notifications, expanded, onToggle }: { notifications: OperationNotification[]; expanded: boolean; onToggle: () => void }) {
   const latest = notifications[0]
+  const dragStartY = useRef<number | null>(null)
+  const ignoreClick = useRef(false)
 
   return (
-    <section className="fixed inset-x-3 bottom-[4.25rem] z-40 mx-auto max-w-2xl" aria-label="Operation feedback">
-      <div className="overflow-hidden rounded-xl border border-border/90 bg-[#0a1725]/[0.98] shadow-[0_16px_44px_rgba(0,0,0,0.32)] backdrop-blur-xl">
-        <button
-          type="button"
-          className={cn('flex min-h-12 w-full items-center gap-3 px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70 sm:px-4', latest ? 'hover:bg-white/[0.035]' : 'cursor-default')}
-          aria-expanded={latest ? expanded : false}
-          aria-controls={latest ? 'aidn-operation-history' : undefined}
-          disabled={!latest}
-          onClick={onToggle}
-        >
-          <span className={cn('grid size-7 shrink-0 place-items-center rounded-md', latest ? latest.failed ? 'bg-rose-300/10 text-rose-200' : 'bg-emerald-300/10 text-emerald-200' : 'bg-cyan-300/10 text-cyan-200')} aria-hidden="true">
-            {latest ? latest.failed ? <XCircle className="size-4" /> : <CheckCircle2 className="size-4" /> : <Activity className="size-4" />}
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="eyebrow block">Operation feedback</span>
-            <span className={cn('mt-0.5 block truncate text-xs font-medium', latest ? latest.failed ? 'text-rose-100' : 'text-emerald-100' : 'text-muted-foreground')}>{latest?.message ?? 'No recent operations'}</span>
-          </span>
-          <span className="hidden shrink-0 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground sm:block">{latest ? `${notifications.length} ${notifications.length === 1 ? 'notice' : 'notices'}` : 'Awaiting action'}</span>
-          {latest ? expanded ? <ChevronDown className="size-4 shrink-0 text-muted-foreground" /> : <ChevronUp className="size-4 shrink-0 text-muted-foreground" /> : null}
-        </button>
-        {latest ? <div id="aidn-operation-history" className={cn('overflow-hidden transition-[max-height,opacity] duration-200', expanded ? 'max-h-80 opacity-100' : 'max-h-0 opacity-0')}>
-          <div role="log" aria-live="polite" aria-relevant="additions text" className="max-h-64 overflow-y-auto border-t border-border/70 px-3 py-2 sm:px-4">
+    <section className="pointer-events-none fixed inset-x-0 bottom-[4.25rem] z-40 flex justify-center px-3 sm:px-5" aria-label="Operation feedback">
+      <div className="pointer-events-auto w-full">
+        {latest && expanded ? <div className="mx-auto max-w-2xl overflow-hidden rounded-t-xl border border-b-0 border-border/90 bg-card shadow-[0_16px_44px_rgba(32,70,88,0.16)]">
+          <div className="flex items-center justify-between gap-3 border-b border-border/70 px-4 py-2.5">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className={cn('grid size-6 shrink-0 place-items-center rounded-md', latest.failed ? 'bg-rose-300/10 text-rose-200' : 'bg-emerald-300/10 text-emerald-200')} aria-hidden="true">
+                {latest.failed ? <XCircle className="size-3.5" /> : <CheckCircle2 className="size-3.5" />}
+              </span>
+              <p className={cn('truncate text-xs font-semibold', latest.failed ? 'text-rose-700' : 'text-emerald-700')}>{latest.message}</p>
+            </div>
+            <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">{notifications.length} {notifications.length === 1 ? 'notice' : 'notices'}</span>
+          </div>
+          <div id="aidn-operation-history" role="log" aria-live="polite" aria-relevant="additions text" className="max-h-[min(42vh,22rem)] overflow-y-auto px-4 py-1">
             {notifications.map((notification) => (
               <div key={notification.id} className="flex items-start gap-3 border-b border-border/50 py-2.5 last:border-b-0">
-                <span className={cn('mt-0.5 shrink-0', notification.failed ? 'text-rose-200' : 'text-emerald-200')} aria-hidden="true">
+                <span className={cn('mt-0.5 shrink-0', notification.failed ? 'text-rose-700' : 'text-emerald-700')} aria-hidden="true">
                   {notification.failed ? <XCircle className="size-3.5" /> : <CheckCircle2 className="size-3.5" />}
                 </span>
-                <p className={cn('min-w-0 flex-1 text-xs leading-5', notification.failed ? 'text-rose-100' : 'text-emerald-100')}>{notification.message}</p>
+                <p className={cn('min-w-0 flex-1 text-xs leading-5', notification.failed ? 'text-rose-700' : 'text-emerald-700')}>{notification.message}</p>
                 <time className="shrink-0 font-mono text-[10px] text-muted-foreground" dateTime={new Date(notification.createdAt).toISOString()}>
                   {new Date(notification.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </time>
               </div>
             ))}
           </div>
-          <div className="flex items-center justify-between gap-3 border-t border-border/70 px-3 py-2 sm:px-4">
-            <p className="text-[10px] text-muted-foreground">Latest actions stay here for quick review.</p>
-            <button type="button" className="min-h-8 shrink-0 rounded-md px-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-cyan-200 transition-colors hover:bg-cyan-300/10 hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70" onClick={onToggle}>
-              Collapse
-              </button>
-            </div>
         </div> : null}
+        <button
+          type="button"
+          className={cn('relative flex h-5 w-full touch-none items-center justify-center border border-border/90 bg-card text-primary shadow-[0_8px_20px_rgba(32,70,88,0.14)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary', expanded && latest ? 'border-t-0' : 'hover:bg-secondary', !latest && 'cursor-default opacity-80')}
+          aria-label={latest ? (expanded ? 'Collapse operation log' : 'Expand operation log') : 'No operation logs yet'}
+          aria-expanded={Boolean(latest && expanded)}
+          aria-controls={latest && expanded ? 'aidn-operation-history' : undefined}
+          disabled={!latest}
+          onPointerDown={(event) => {
+            if (!latest) return
+            dragStartY.current = event.clientY
+            event.currentTarget.setPointerCapture(event.pointerId)
+          }}
+          onPointerUp={(event) => {
+            if (!latest) return
+            const start = dragStartY.current
+            dragStartY.current = null
+            if (start === null) return
+            const delta = start - event.clientY
+            if (Math.abs(delta) < 16) return
+            ignoreClick.current = true
+            const shouldExpand = delta > 0
+            if (shouldExpand !== expanded) onToggle()
+          }}
+          onPointerCancel={() => { dragStartY.current = null }}
+          onClick={() => {
+            if (ignoreClick.current) {
+              ignoreClick.current = false
+              return
+            }
+            if (latest) onToggle()
+          }}
+        >
+          <ChevronUp className={cn('size-4 stroke-[3] transition-transform duration-200', expanded && latest && 'rotate-180')} aria-hidden="true" />
+        </button>
       </div>
     </section>
   )

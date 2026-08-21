@@ -5,39 +5,39 @@
 @import 'tw-animate-css';
 
 :root {
-  /* AiDN public-site palette: dark infrastructure field, cyan route, calm blue support. */
-  --background: #050c15;
-  --foreground: #f2f7fc;
-  --card: #0a1725;
-  --card-foreground: #f2f7fc;
-  --popover: #0a1725;
-  --popover-foreground: #f2f7fc;
-  --primary: #4ee6d4;
-  --primary-foreground: #041019;
-  --secondary: #0e1e2e;
-  --secondary-foreground: #f2f7fc;
-  --muted: #101f2d;
-  --muted-foreground: #91a5bc;
-  --accent: #101f2d;
-  --accent-foreground: #f2f7fc;
-  --destructive: #ff8c9b;
-  --border: #20374b;
-  --input: #20374b;
-  --ring: #4ee6d4;
+  /* AiDN public-site palette: light field, teal route, calm blue support. */
+  --background: #f4f8fb;
+  --foreground: #102133;
+  --card: #ffffff;
+  --card-foreground: #102133;
+  --popover: #ffffff;
+  --popover-foreground: #102133;
+  --primary: #0a7f83;
+  --primary-foreground: #f7ffff;
+  --secondary: #eef5f8;
+  --secondary-foreground: #102133;
+  --muted: #e7f0f5;
+  --muted-foreground: #536b80;
+  --accent: #e7f0f5;
+  --accent-foreground: #102133;
+  --destructive: #b33f53;
+  --border: #c8d8e4;
+  --input: #c8d8e4;
+  --ring: #0a7f83;
   --radius: 0.75rem;
-  --chart-1: #4ee6d4;
-  --chart-2: #77b8ff;
-  --chart-3: #75e8a6;
-  --chart-4: #f6c768;
-  --chart-5: #ffae63;
-  --brand-cyan: #4ee6d4;
-  --brand-cyan-soft: #a0f5ea;
-  --brand-blue: #77b8ff;
-  --brand-green: #75e8a6;
-  --brand-amber: #f6c768;
-  --brand-orange: #ffae63;
-  --brand-red: #ff8c9b;
-  --quiet: #657b94;
+  --chart-1: #0a7f83;
+  --chart-2: #2f72a8;
+  --chart-3: #187546;
+  --chart-4: #8a5a00;
+  --chart-5: #a65314;
+  --brand-cyan: #0a7f83;
+  --brand-cyan-soft: #0d6067;
+  --brand-blue: #2f72a8;
+  --brand-green: #187546;
+  --brand-amber: #8a5a00;
+  --brand-orange: #a65314;
+  --brand-red: #b33f53;
+  --quiet: #71879a;
 }
 
 @theme inline {
@@ -114,15 +114,15 @@
 
 html {
   background: var(--background);
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 body {
   min-width: 320px;
   margin: 0;
   background:
-    radial-gradient(circle at 82% -15%, rgba(54, 129, 154, 0.17), transparent 33rem),
-    linear-gradient(180deg, #07121e 0%, var(--background) 34rem);
+    radial-gradient(circle at 82% -15%, rgba(54, 129, 154, 0.12), transparent 33rem),
+    linear-gradient(180deg, #e7f2f5 0%, var(--background) 34rem);
   color: var(--foreground);
   font-family: var(--font-sans);
   font-synthesis: none;
@@ -142,15 +142,15 @@ button {
 
 .operator-shell {
   background:
-    radial-gradient(circle at 82% -15%, rgba(54, 129, 154, 0.08), transparent 33rem),
-    linear-gradient(180deg, #07121e 0%, var(--background) 34rem);
+    radial-gradient(circle at 82% -15%, rgba(54, 129, 154, 0.12), transparent 33rem),
+    linear-gradient(180deg, #e7f2f5 0%, var(--background) 34rem);
 }
 
 .operator-panel {
   border: 1px solid var(--border);
   border-radius: 0.875rem;
   background: color-mix(in srgb, var(--card) 94%, transparent);
-  box-shadow: 0 22px 65px rgba(0, 0, 0, 0.16);
+  box-shadow: 0 22px 65px rgba(32, 70, 88, 0.14);
 }
 
 .eyebrow {
@@ -164,9 +164,27 @@ button {
 }
 
 ::selection {
-  background: rgba(78, 230, 212, 0.24);
-  color: white;
+  background: rgba(10, 127, 131, 0.2);
+  color: var(--foreground);
 }
+
+/* Keep the utility-heavy dashboard aligned with the public site's light world.
+   A few legacy screens still carry literal dark utility classes; these scoped
+   mappings let the shared semantic tokens win without changing their domain
+   structure or interaction behavior. */
+.operator-shell [class*="bg-[#040b13]"] { background-color: #edf4f8 !important; }
+.operator-shell [class*="bg-[#050c15]"] { background-color: rgba(244, 248, 251, 0.94) !important; }
+.operator-shell [class*="bg-[#060e18]"] { background-color: rgba(244, 248, 251, 0.96) !important; }
+.operator-shell [class*="bg-[#07111d]"],
+.operator-shell [class*="bg-[#071321]"],
+.operator-shell [class*="bg-[#081422]"],
+.operator-shell [class*="bg-[#081522]"],
+.operator-shell [class*="bg-[#081523]"],
+.operator-shell [class*="bg-[#091725]"],
+.operator-shell [class*="bg-[#0a1725]"] { background-color: var(--card) !important; }
+.operator-shell [class*="bg-[#102438]"] { background-color: #dcebf0 !important; }
+.operator-shell [class*="text-white"] { color: var(--foreground) !important; }
+.operator-shell [class*="border-slate-700"] { border-color: var(--border) !important; }
 
 :where(button, a, input, select, textarea):focus-visible {
   outline: 2px solid var(--ring);
