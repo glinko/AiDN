@@ -659,6 +659,7 @@ def test_providers_payload_summarizes_plugins_and_bundle_state(
     assert payload["items"][0]["plugin_id"] == "fake-managed"
     assert payload["items"][0]["bundle_count"] == 2
     assert payload["items"][0]["install_count"] == 0
+    assert payload["runtime_operations"]["freshness"]["source"] == "live_reconciled"
 
 
 def test_providers_payload_uses_plugin_first_empty_state() -> None:

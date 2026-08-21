@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { dashboardSchemas, type BundlePayload, type CometBftDashboard, type CometBftInstall, type DashboardHome, type EndpointPayload, type Fleet, type MarketDashboard, type Readiness, type RemoteEndpointsDashboard, type SessionDashboard, type WalletDashboard } from '@/lib/types'
+import { dashboardSchemas, type BundlePayload, type CometBftDashboard, type CometBftInstall, type DashboardHome, type EndpointPayload, type Fleet, type MarketDashboard, type Readiness, type RemoteEndpointsDashboard, type RuntimeOperations, type SessionDashboard, type WalletDashboard } from '@/lib/types'
 
 const apiRoot = (import.meta.env.VITE_AIDN_API_ROOT ?? '').replace(/\/$/, '')
 const requestTimeoutMs = 15_000
@@ -126,7 +126,57 @@ export type ModelInstallWorkspace = {
   summary: DashboardRecord
 }
 
+export type HookEventFilter = {
+  event_types: string[]
+  resource_ids: string[]
+  severity_minimum: string | null
+}
+
+export type HookDefinition = {
+  hook_id: string
+  owner_operator_id: string
+  target_agent_id: string
+  enabled: boolean
+  event_filter: HookEventFilter
+  delivery_mode: 'DURABLE_INBOX' | 'MCP_LIVE' | string
+  max_attempts: number
+  retry_backoff_seconds: number
+  created_at: string
+  expires_at: string | null
+  hook_revision: number
+}
+
+export type HookDelivery = {
+  delivery_id: string
+  hook_id: string
+  event_id: string
+  target_agent_id: string
+  delivery_mode: string
+  status: string
+  attempt_count: number
+  next_attempt_at: string | null
+  last_error: string | null
+  created_at: string
+  updated_at: string
+  delivered_at: string | null
+  replayed: boolean
+}
+
+export type HookMetrics = {
+  events_matched: number
+  deliveries_created: number
+  deliveries_attempted: number
+  events_delivered: number
+  events_retried: number
+  events_failed: number
+  events_dead_lettered: number
+  events_replayed: number
+  queue_depth: number
+  dead_letter_count: number
+}
+
 const dashboardRecordSchema = z.record(z.string(), z.unknown())
+const numberValue = z.coerce.number().catch(0)
 const providerArtifactInventorySchema = z.union([
   z.array(dashboardRecordSchema),
   dashboardRecordSchema,
@@ -149,6 +199,55 @@ const providerWorkspaceSchema = z.object({
 const modelInstallWorkspaceSchema = z.object({
   items: z.array(z.record(z.string(), z.unknown())).default([]),
   summary: z.record(z.string(), z.unknown()).default({}),
+}).passthrough()
+
+const hookEventFilterSchema = z.object({
+  event_types: z.array(z.string()).catch([]),
+  resource_ids: z.array(z.string()).catch([]),
+  severity_minimum: z.string().nullable().catch(null),
+}).passthrough()
+
+const hookSchema = z.object({
+  hook_id: z.string(),
+  owner_operator_id: z.string(),
+  target_agent_id: z.string(),
+  enabled: z.boolean().catch(true),
+  event_filter: hookEventFilterSchema,
+  delivery_mode: z.string().catch('DURABLE_INBOX'),
+  max_attempts: numberValue,
+  retry_backoff_seconds: numberValue,
+  created_at: z.string(),
+  expires_at: z.string().nullable().catch(null),
+  hook_revision: numberValue,
+}).passthrough()
+
+const hookDeliverySchema = z.object({
+  delivery_id: z.string(),
+  hook_id: z.string(),
+  event_id: z.string(),
+  target_agent_id: z.string(),
+  delivery_mode: z.string(),
+  status: z.string(),
+  attempt_count: numberValue,
+  next_attempt_at: z.string().nullable().catch(null),
+  last_error: z.string().nullable().catch(null),
+  created_at: z.string(),
+  updated_at: z.string(),
+  delivered_at: z.string().nullable().catch(null),
+  replayed: z.boolean().catch(false),
+}).passthrough()
+
+const hookMetricsSchema = z.object({
+  events_matched: numberValue,
+  deliveries_created: numberValue,
+  deliveries_attempted: numberValue,
+  events_delivered: numberValue,
+  events_retried: numberValue,
+  events_failed: numberValue,
+  events_dead_lettered: numberValue,
+  events_replayed: numberValue,
+  queue_depth: numberValue,
+  dead_letter_count: numberValue,
 }).passthrough()
 
 async function readDashboard<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
@@ -222,11 +321,16 @@ export const dashboardApi = {
   endpoints: (signal?: AbortSignal): Promise<EndpointPayload> => readDashboard('/operators/dashboard/endpoints', dashboardSchemas.endpoints, signal),
   wallet: (signal?: AbortSignal): Promise<WalletDashboard> => readDashboard('/operators/dashboard/wallet', dashboardSchemas.wallet, signal),
   providers: (signal?: AbortSignal): Promise<ProviderWorkspace> => readDashboard('/operators/dashboard/providers', providerWorkspaceSchema, signal),
+  runtimeOperations: (signal?: AbortSignal): Promise<RuntimeOperations> => readDashboard('/operators/dashboard/runtime-operations', dashboardSchemas.runtimeOperations, signal),
   installs: (signal?: AbortSignal): Promise<ModelInstallWorkspace> => readDashboard('/operators/dashboard/installs', modelInstallWorkspaceSchema, signal),
   sessions: (signal?: AbortSignal): Promise<SessionDashboard> => readDashboard('/operators/dashboard/sessions', dashboardSchemas.sessions, signal),
   market: (signal?: AbortSignal): Promise<MarketDashboard> => readDashboard('/operators/dashboard/market', dashboardSchemas.market, signal),
   remoteEndpoints: (signal?: AbortSignal): Promise<RemoteEndpointsDashboard> => readDashboard('/operators/dashboard/remote-endpoints', dashboardSchemas.remoteEndpoints, signal),
   events: (signal?: AbortSignal) => readDashboard('/operators/events?limit=24', dashboardSchemas.events, signal),
+  hooks: (signal?: AbortSignal): Promise<HookDefinition[]> => readDashboard('/operators/hooks', z.array(hookSchema), signal),
+  hookMetrics: (signal?: AbortSignal): Promise<HookMetrics> => readDashboard('/operators/hooks/metrics', hookMetricsSchema, signal),
+  hookDeliveries: (signal?: AbortSignal): Promise<HookDelivery[]> => readDashboard('/operators/hooks/deliveries?limit=32', z.array(hookDeliverySchema), signal),
+  hookDeadLetters: (signal?: AbortSignal): Promise<HookDelivery[]> => readDashboard('/operators/hooks/dead-letters?limit=32', z.array(hookDeliverySchema), signal),
   accessStatus: (): Promise<DashboardAccessStatus> => writeDashboard('/operators/dashboard/access/status', { method: 'GET' }) as Promise<DashboardAccessStatus>,
   updateDashboardNetworkAccess: (mode: DashboardNetworkAccess['mode']): Promise<DashboardNetworkAccess & { status: string }> => writeDashboard<DashboardNetworkAccess & { status: string }>('/operators/dashboard/access/operations/network', { method: 'POST', body: JSON.stringify({ mode }) }) as Promise<DashboardNetworkAccess & { status: string }>,
   cometbftAction: (action: 'start' | 'stop' | 'restart') => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/cometbft/${action}`, { method: 'POST' }),
@@ -275,4 +379,10 @@ export const dashboardApi = {
   sweepIdleSessions: () => writeDashboard<{ closed_count: number; items: DashboardRecord[] }>('/operators/dashboard/sessions/actions/sweep-idle', { method: 'POST', body: JSON.stringify({}) }),
   attachRemoteEndpoint: (payload: { node_id: string; endpoint_id: string; alias?: string; routing_mode?: string }) => writeDashboard<DashboardRecord>('/operators/remote-endpoints/attach', { method: 'POST', body: JSON.stringify(payload) }),
   detachRemoteEndpoint: (remoteEndpointId: string) => writeDashboard<DashboardRecord>(`/operators/remote-endpoints/${encodeURIComponent(remoteEndpointId)}`, { method: 'DELETE' }),
+  createHook: (payload: { hook_id: string; owner_operator_id: string; target_agent_id: string; event_filter: HookEventFilter; delivery_mode?: string; max_attempts?: number; retry_backoff_seconds?: number; expires_at?: string | null }) => writeDashboard<HookDefinition>('/operators/hooks', { method: 'POST', body: JSON.stringify(payload) }),
+  updateHook: (hookId: string, payload: Partial<Pick<HookDefinition, 'enabled' | 'target_agent_id' | 'event_filter' | 'delivery_mode' | 'max_attempts' | 'retry_backoff_seconds' | 'expires_at'>>) => writeDashboard<HookDefinition>(`/operators/hooks/${encodeURIComponent(hookId)}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  deleteHook: (hookId: string) => writeDashboard<{ deleted: boolean; hook_id: string }>(`/operators/hooks/${encodeURIComponent(hookId)}`, { method: 'DELETE' }),
+  testHook: (hookId: string) => writeDashboard<DashboardRecord>(`/operators/hooks/${encodeURIComponent(hookId)}/test`, { method: 'POST' }),
+  retryHookDeadLetter: (deliveryId: string) => writeDashboard<HookDelivery>(`/operators/hooks/dead-letters/${encodeURIComponent(deliveryId)}/retry`, { method: 'POST' }),
+  replayHookEvent: (eventId: string) => writeDashboard<HookDelivery[]>(`/operators/hooks/replay/${encodeURIComponent(eventId)}`, { method: 'POST' }),
 }

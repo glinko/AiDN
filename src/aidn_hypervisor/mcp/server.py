@@ -34,6 +34,9 @@ from aidn_hypervisor.operator_views import (
     build_operator_endpoints_payload,
     build_operator_providers_payload,
 )
+from aidn_hypervisor.runtime_operations_read_models import (
+    build_runtime_operations_payload,
+)
 
 MCP_PROTOCOL_VERSION = "2025-06-18"
 # Hermes Agent 0.20.x sends the 2025-11-25 handshake even when its
@@ -1054,6 +1057,33 @@ class McpControlPlane:
             },
             "additionalProperties": False,
         }
+        hook_filter_schema = {
+            "type": "object",
+            "properties": {
+                "event_types": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1},
+                    "maxItems": 128,
+                },
+                "resource_ids": {
+                    "type": "array",
+                    "items": {"type": "string", "minLength": 1},
+                    "maxItems": 128,
+                },
+                "severity_minimum": {
+                    "enum": ["DEBUG", "INFO", "NOTICE", "WARNING", "ERROR", "CRITICAL"],
+                },
+            },
+            "additionalProperties": False,
+        }
+        hook_mutation_fields = {
+            "mode": {"enum": ["plan", "apply"]},
+            "request_id": {"type": "string", "minLength": 1},
+            "idempotency_key": {"type": "string", "minLength": 1},
+            "plan_hash": {"type": "string", "minLength": 1},
+            "expected_revision": {"type": "string", "minLength": 1},
+            "approval_reference": {"type": "string", "minLength": 1},
+        }
         return {
             "aidn.capabilities.get": McpTool(
                 "aidn.capabilities.get",
@@ -1135,6 +1165,14 @@ class McpControlPlane:
                     endpoint_publication_service=self.endpoint_publication_service,
                     validation_service=self.validation_service,
                 ),
+            ),
+            "aidn.runtime.operations": McpTool(
+                "aidn.runtime.operations",
+                "Return freshly reconciled runtime readiness and Provider Broker installation progress.",
+                read_schema,
+                ("PROVIDER:READ",),
+                "READ_ONLY",
+                lambda _args: build_runtime_operations_payload(service=self.service),
             ),
             "aidn.model.list": McpTool(
                 "aidn.model.list",
@@ -1427,6 +1465,322 @@ class McpControlPlane:
                     after_sequence=int(args.get("after_sequence", 0)),
                 ),
             ),
+            "aidn.event.query": McpTool(
+                "aidn.event.query",
+                "Query retained canonical Hypervisor events with a restart-safe cursor.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+                        "after_sequence": {"type": "integer", "minimum": 0},
+                        "event_type": {"type": "array", "items": {"type": "string"}},
+                        "resource_id": {"type": "string", "minLength": 1},
+                    },
+                    "additionalProperties": False,
+                },
+                ("AUDIT:READ",),
+                "READ_ONLY",
+                lambda args: self.service.canonical_event_query(
+                    after_sequence=int(args.get("after_sequence", 0)),
+                    limit=int(args.get("limit", 100)),
+                    event_types=set(args["event_type"]) if args.get("event_type") else None,
+                    resource_id=args.get("resource_id"),
+                ),
+            ),
+            "aidn.event.inbox": McpTool(
+                "aidn.event.inbox",
+                "Read this agent's durable canonical event Inbox without acknowledging events.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+                        "after_sequence": {"type": "integer", "minimum": 0},
+                    },
+                    "additionalProperties": False,
+                },
+                ("AUDIT:READ",),
+                "READ_ONLY",
+                lambda args: self.service.event_inbox(
+                    self.session.agent_identity,
+                    after_sequence=(
+                        int(args["after_sequence"])
+                        if args.get("after_sequence") is not None
+                        else None
+                    ),
+                    limit=int(args.get("limit", 100)),
+                ),
+            ),
+            "aidn.event.ack": McpTool(
+                "aidn.event.ack",
+                "Acknowledge retained canonical events for this agent's Inbox.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "event_ids": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 500,
+                            "items": {"type": "string", "minLength": 1},
+                        }
+                    },
+                    "required": ["event_ids"],
+                    "additionalProperties": False,
+                },
+                ("AUDIT:READ",),
+                "INBOX_ACK",
+                lambda args: self.service.acknowledge_event_inbox(
+                    self.session.agent_identity,
+                    list(args.get("event_ids", [])),
+                ),
+            ),
+            "aidn.hook.list": McpTool(
+                "aidn.hook.list",
+                "List operator-owned RFC-0072 Hook subscriptions.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "owner_operator_id": {"type": "string", "minLength": 1},
+                    },
+                    "additionalProperties": False,
+                },
+                ("HOOK:READ",),
+                "READ_ONLY",
+                lambda args: {
+                    "items": [
+                        item.model_dump(mode="json")
+                        for item in self._visible_hooks(
+                            owner_operator_id=args.get("owner_operator_id")
+                        )
+                    ]
+                },
+            ),
+            "aidn.hook.deliveries": McpTool(
+                "aidn.hook.deliveries",
+                "Inspect bounded Hook delivery attempts and retry state.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "hook_id": {"type": "string", "minLength": 1},
+                        "status": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+                    },
+                    "additionalProperties": False,
+                },
+                ("HOOK:READ",),
+                "READ_ONLY",
+                lambda args: {
+                        "items": [
+                            item.model_dump(mode="json")
+                            for item in self.service.hook_deliveries(
+                                hook_id=args.get("hook_id"),
+                                status=args.get("status"),
+                                limit=int(args.get("limit", 100)),
+                            )
+                            if self._is_visible_delivery(item)
+                        ]
+                    },
+            ),
+            "aidn.hook.dead_letters": McpTool(
+                "aidn.hook.dead_letters",
+                "Inspect Hook deliveries that exhausted their bounded retry policy.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+                    },
+                    "additionalProperties": False,
+                },
+                ("HOOK:READ",),
+                "READ_ONLY",
+                lambda args: {
+                        "items": [
+                            item.model_dump(mode="json")
+                            for item in self.service.hook_dead_letters(
+                                limit=int(args.get("limit", 100))
+                            )
+                            if self._is_visible_delivery(item)
+                        ]
+                    },
+            ),
+            "aidn.hook.metrics": McpTool(
+                "aidn.hook.metrics",
+                "Return Hook delivery, retry, dead-letter, and queue metrics.",
+                {"type": "object", "properties": {}, "additionalProperties": False},
+                ("HOOK:READ",),
+                "READ_ONLY",
+                lambda _args: self.service.hook_dispatch_metrics(),
+            ),
+            "aidn.hook.get": McpTool(
+                "aidn.hook.get",
+                "Return one operator-owned Hook definition and its delivery status.",
+                {
+                    "type": "object",
+                    "properties": {"hook_id": {"type": "string", "minLength": 1}},
+                    "required": ["hook_id"],
+                    "additionalProperties": False,
+                },
+                ("HOOK:READ",),
+                "READ_ONLY",
+                lambda args: self._hook_get(args),
+            ),
+            "aidn.hook.create": McpTool(
+                "aidn.hook.create",
+                "Plan or create an operator-owned Hook subscription for the current Agent.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "hook_id": {"type": "string", "minLength": 1, "maxLength": 128},
+                        "target_agent_id": {"type": "string", "minLength": 1, "maxLength": 256},
+                        "event_filter": hook_filter_schema,
+                        "delivery_mode": {"enum": ["DURABLE_INBOX", "MCP_LIVE"]},
+                        "max_attempts": {"type": "integer", "minimum": 1, "maximum": 10},
+                        "retry_backoff_seconds": {"type": "number", "minimum": 0, "maximum": 3600},
+                        "expires_at": {"type": ["string", "null"]},
+                        **hook_mutation_fields,
+                    },
+                    "required": ["hook_id", "event_filter", "mode", "request_id", "idempotency_key"],
+                    "additionalProperties": False,
+                },
+                ("HOOK:MANAGE",),
+                "HOOK_MUTATION",
+                lambda args: self._hook_create(args),
+                mutating=True,
+                approval_key="hook_manage",
+            ),
+            "aidn.hook.update": McpTool(
+                "aidn.hook.update",
+                "Plan or update an operator-owned Hook without changing its immutable event history.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "hook_id": {"type": "string", "minLength": 1},
+                        "enabled": {"type": "boolean"},
+                        "target_agent_id": {"type": "string", "minLength": 1, "maxLength": 256},
+                        "event_filter": hook_filter_schema,
+                        "delivery_mode": {"enum": ["DURABLE_INBOX", "MCP_LIVE"]},
+                        "max_attempts": {"type": "integer", "minimum": 1, "maximum": 10},
+                        "retry_backoff_seconds": {"type": "number", "minimum": 0, "maximum": 3600},
+                        "expires_at": {"type": ["string", "null"]},
+                        **hook_mutation_fields,
+                    },
+                    "required": ["hook_id", "mode", "request_id", "idempotency_key"],
+                    "additionalProperties": False,
+                },
+                ("HOOK:MANAGE",),
+                "HOOK_MUTATION",
+                lambda args: self._hook_update(args),
+                mutating=True,
+                approval_key="hook_manage",
+            ),
+            "aidn.hook.pause": McpTool(
+                "aidn.hook.pause",
+                "Plan or pause an operator-owned Hook; queued deliveries expire safely.",
+                {
+                    "type": "object",
+                    "properties": {"hook_id": {"type": "string", "minLength": 1}, **hook_mutation_fields},
+                    "required": ["hook_id", "mode", "request_id", "idempotency_key"],
+                    "additionalProperties": False,
+                },
+                ("HOOK:MANAGE",),
+                "HOOK_MUTATION",
+                lambda args: self._hook_update({**args, "enabled": False}),
+                mutating=True,
+                approval_key="hook_manage",
+            ),
+            "aidn.hook.resume": McpTool(
+                "aidn.hook.resume",
+                "Plan or resume an operator-owned Hook subscription.",
+                {
+                    "type": "object",
+                    "properties": {"hook_id": {"type": "string", "minLength": 1}, **hook_mutation_fields},
+                    "required": ["hook_id", "mode", "request_id", "idempotency_key"],
+                    "additionalProperties": False,
+                },
+                ("HOOK:MANAGE",),
+                "HOOK_MUTATION",
+                lambda args: self._hook_update({**args, "enabled": True}),
+                mutating=True,
+                approval_key="hook_manage",
+            ),
+            "aidn.hook.delete": McpTool(
+                "aidn.hook.delete",
+                "Plan or delete an operator-owned Hook subscription.",
+                {
+                    "type": "object",
+                    "properties": {"hook_id": {"type": "string", "minLength": 1}, **hook_mutation_fields},
+                    "required": ["hook_id", "mode", "request_id", "idempotency_key"],
+                    "additionalProperties": False,
+                },
+                ("HOOK:MANAGE",),
+                "HOOK_MUTATION",
+                lambda args: self._hook_delete(args),
+                mutating=True,
+                approval_key="hook_manage",
+            ),
+            "aidn.hook.test": McpTool(
+                "aidn.hook.test",
+                "Run a synthetic Hook delivery readiness check without creating an event or inbox entry.",
+                {
+                    "type": "object",
+                    "properties": {"hook_id": {"type": "string", "minLength": 1}},
+                    "required": ["hook_id"],
+                    "additionalProperties": False,
+                },
+                ("HOOK:MANAGE",),
+                "HOOK_TEST",
+                lambda args: self._hook_test(args),
+            ),
+            "aidn.hook.ack": McpTool(
+                "aidn.hook.ack",
+                "Acknowledge delivered Hook events in the current Agent Inbox.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "hook_id": {"type": "string", "minLength": 1},
+                        "event_ids": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 500,
+                            "items": {"type": "string", "minLength": 1},
+                        },
+                    },
+                    "required": ["hook_id", "event_ids"],
+                    "additionalProperties": False,
+                },
+                ("HOOK:MANAGE",),
+                "INBOX_ACK",
+                lambda args: self._hook_ack(args),
+            ),
+            "aidn.hook.replay": McpTool(
+                "aidn.hook.replay",
+                "Plan or replay a retained event to all matching operator-owned Hooks.",
+                {
+                    "type": "object",
+                    "properties": {"event_id": {"type": "string", "minLength": 1}, **hook_mutation_fields},
+                    "required": ["event_id", "mode", "request_id", "idempotency_key"],
+                    "additionalProperties": False,
+                },
+                ("HOOK:MANAGE",),
+                "HOOK_MUTATION",
+                lambda args: self._hook_replay(args),
+                mutating=True,
+                approval_key="hook_manage",
+            ),
+            "aidn.hook.dead_letter_retry": McpTool(
+                "aidn.hook.dead_letter_retry",
+                "Plan or retry one retained Hook dead-letter delivery.",
+                {
+                    "type": "object",
+                    "properties": {"delivery_id": {"type": "string", "minLength": 1}, **hook_mutation_fields},
+                    "required": ["delivery_id", "mode", "request_id", "idempotency_key"],
+                    "additionalProperties": False,
+                },
+                ("HOOK:MANAGE",),
+                "HOOK_MUTATION",
+                lambda args: self._hook_dead_letter_retry(args),
+                mutating=True,
+                approval_key="hook_manage",
+            ),
             "aidn.provider.attach": McpTool(
                 "aidn.provider.attach",
                 "Plan or attach one already reachable Provider endpoint through a validated built-in Plugin.",
@@ -1561,6 +1915,13 @@ class McpControlPlane:
                     validation_service=self.validation_service,
                 ),
             ),
+            "aidn://runtime/operations": McpResource(
+                "aidn://runtime/operations",
+                "Runtime operations",
+                "Live runtime readiness and Provider Broker installation progress.",
+                "PROVIDER:READ",
+                lambda _uri: build_runtime_operations_payload(service=self.service),
+            ),
             "aidn://models": McpResource(
                 "aidn://models",
                 "Models",
@@ -1672,6 +2033,46 @@ class McpControlPlane:
                 "AUDIT:READ",
                 lambda _uri: self.audit.query(limit=100),
             ),
+            "aidn://events/recent": McpResource(
+                "aidn://events/recent",
+                "Canonical events",
+                "Recent retained canonical Hypervisor events.",
+                "AUDIT:READ",
+                lambda _uri: self.service.canonical_event_query(limit=100),
+            ),
+            "aidn://events/inbox": McpResource(
+                "aidn://events/inbox",
+                "Agent event Inbox",
+                "Durable at-least-once event Inbox for this MCP agent.",
+                "AUDIT:READ",
+                lambda _uri: self.service.event_inbox(self.session.agent_identity),
+            ),
+            "aidn://hooks": McpResource(
+                "aidn://hooks",
+                "Hook subscriptions",
+                "Operator-owned RFC-0072 Hook definitions and delivery modes.",
+                "HOOK:READ",
+                lambda _uri: {
+                    "items": [
+                        item.model_dump(mode="json")
+                        for item in self._visible_hooks()
+                    ]
+                },
+            ),
+            "aidn://hooks/dead-letters": McpResource(
+                "aidn://hooks/dead-letters",
+                "Hook dead letters",
+                "Retained Hook deliveries that exhausted bounded retries.",
+                "HOOK:READ",
+                lambda _uri: {
+                    "items": [
+                        item.model_dump(mode="json")
+                        for item in self.service.hook_dead_letters()
+                        if self._is_visible_delivery(item)
+                    ],
+                    "metrics": self.service.hook_dispatch_metrics(),
+                },
+            ),
             "aidn://capabilities": McpResource(
                 "aidn://capabilities",
                 "MCP capabilities",
@@ -1765,7 +2166,7 @@ class McpControlPlane:
 
     def _build_plan(self, tool: McpTool, arguments: dict[str, Any]) -> dict[str, Any]:
         plan_arguments = self._plan_arguments(arguments)
-        current_revision = self._target_revision(arguments)
+        current_revision = self._target_revision(arguments, tool_name=tool.name)
         expected_revision = arguments.get("expected_revision")
         if expected_revision is not None and current_revision != expected_revision:
             raise McpDomainError(
@@ -1825,6 +2226,20 @@ class McpControlPlane:
             return [
                 f"publish Endpoint {arguments.get('endpoint_id', 'unknown')} through the canonical wallet path",
             ]
+        if tool_name == "aidn.hook.create":
+            return [
+                f"create a {arguments.get('delivery_mode', 'DURABLE_INBOX')} Hook for Agent {arguments.get('target_agent_id', 'current-agent')}",
+                "route matching canonical events through the configured retry policy",
+            ]
+        if tool_name in {"aidn.hook.update", "aidn.hook.pause", "aidn.hook.resume"}:
+            action = "update" if tool_name == "aidn.hook.update" else tool_name.rsplit(".", 1)[-1]
+            return [f"{action} Hook {arguments.get('hook_id', 'unknown')} without changing retained events"]
+        if tool_name == "aidn.hook.delete":
+            return [f"delete Hook {arguments.get('hook_id', 'unknown')} and stop future matching deliveries"]
+        if tool_name == "aidn.hook.replay":
+            return [f"replay retained event {arguments.get('event_id', 'unknown')} to matching Hooks"]
+        if tool_name == "aidn.hook.dead_letter_retry":
+            return [f"retry retained Hook dead letter {arguments.get('delivery_id', 'unknown')}"]
         return [tool_name]
 
     @staticmethod
@@ -1837,6 +2252,10 @@ class McpControlPlane:
             return [
                 "the Endpoint publication becomes visible to network discovery according to its publication policy",
             ]
+        if tool_name == "aidn.hook.delete":
+            return ["future events will no longer be delivered to this Hook"]
+        if tool_name in {"aidn.hook.replay", "aidn.hook.dead_letter_retry"}:
+            return ["an existing event may be delivered again; Agents must deduplicate by event_id"]
         return []
 
     def _attach_provider(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -2021,11 +2440,163 @@ class McpControlPlane:
                 details=error.readiness,
             ) from error
 
-    def _target_revision(self, arguments: dict[str, Any]) -> str | None:
+    def _visible_hooks(self, *, owner_operator_id: str | None = None) -> list[Any]:
+        """Return only Hooks visible to this Agent Control Session."""
+
+        requested_owner = owner_operator_id or self.session.operator_identity
+        if requested_owner != self.session.operator_identity:
+            raise McpDomainError(
+                "MCP_PERMISSION_DENIED",
+                "An Agent may only inspect Hooks owned by its bound operator",
+            )
+        return [
+            hook
+            for hook in self.service.list_hooks(owner_operator_id=requested_owner)
+            if hook.target_agent_id == self.session.agent_identity
+        ]
+
+    def _owned_hook(self, arguments: dict[str, Any]) -> Any:
+        hook_id = self._required_string(arguments, "hook_id")
+        try:
+            hook = self.service.get_hook(hook_id)
+        except ValueError as error:
+            raise McpDomainError("MCP_HOOK_NOT_FOUND", str(error)) from error
+        if hook.owner_operator_id != self.session.operator_identity or hook.target_agent_id != self.session.agent_identity:
+            raise McpDomainError(
+                "MCP_PERMISSION_DENIED",
+                "The current Agent is not authorized for this Hook",
+            )
+        return hook
+
+    def _is_visible_delivery(self, delivery: Any) -> bool:
+        try:
+            hook = self.service.get_hook(delivery.hook_id)
+        except ValueError:
+            return False
+        return (
+            hook.owner_operator_id == self.session.operator_identity
+            and hook.target_agent_id == self.session.agent_identity
+        )
+
+    def _hook_get(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        hook = self._owned_hook(arguments)
+        deliveries = self.service.hook_deliveries(hook_id=hook.hook_id, limit=25)
+        return {
+            "hook": _json_safe(hook),
+            "deliveries": [item.model_dump(mode="json") for item in deliveries],
+        }
+
+    def _hook_create(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        hook_id = self._required_string(arguments, "hook_id")
+        target_agent_id = arguments.get("target_agent_id", self.session.agent_identity)
+        if target_agent_id != self.session.agent_identity:
+            raise McpDomainError(
+                "MCP_PERMISSION_DENIED",
+                "A remote Agent may only create a Hook for its own Agent identity",
+            )
+        event_filter = arguments.get("event_filter")
+        if not isinstance(event_filter, dict):
+            raise McpDomainError("MCP_INVALID_ARGUMENTS", "event_filter must be a JSON object")
+        if arguments.get("mode") == "plan":
+            return self._build_plan(self._tools["aidn.hook.create"], arguments)
+        payload = {
+            "hook_id": hook_id,
+            "owner_operator_id": self.session.operator_identity,
+            "target_agent_id": target_agent_id,
+            "event_filter": event_filter,
+            "delivery_mode": arguments.get("delivery_mode", "DURABLE_INBOX"),
+            "max_attempts": arguments.get("max_attempts", 3),
+            "retry_backoff_seconds": arguments.get("retry_backoff_seconds", 1.0),
+            "expires_at": arguments.get("expires_at"),
+        }
+        hook = self.service.create_hook(**payload)
+        return {"status": "created", "hook": _json_safe(hook)}
+
+    def _hook_update(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        hook = self._owned_hook(arguments)
+        if arguments.get("mode") == "plan":
+            return self._build_plan(self._tools["aidn.hook.update"], arguments)
+        updates = {
+            key: arguments[key]
+            for key in (
+                "enabled",
+                "event_filter",
+                "delivery_mode",
+                "max_attempts",
+                "retry_backoff_seconds",
+                "expires_at",
+            )
+            if key in arguments
+        }
+        if "target_agent_id" in arguments:
+            if arguments["target_agent_id"] != self.session.agent_identity:
+                raise McpDomainError(
+                    "MCP_PERMISSION_DENIED",
+                    "A remote Agent may only keep a Hook bound to its own identity",
+                )
+            updates["target_agent_id"] = arguments["target_agent_id"]
+        updated = self.service.update_hook(hook.hook_id, **updates)
+        return {"status": "updated", "hook": _json_safe(updated)}
+
+    def _hook_delete(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        hook = self._owned_hook(arguments)
+        if arguments.get("mode") == "plan":
+            return self._build_plan(self._tools["aidn.hook.delete"], arguments)
+        self.service.delete_hook(hook.hook_id)
+        return {"status": "deleted", "hook_id": hook.hook_id}
+
+    def _hook_test(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        hook = self._owned_hook(arguments)
+        return self.service.test_hook(hook.hook_id)
+
+    def _hook_ack(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        hook = self._owned_hook(arguments)
+        event_ids = arguments.get("event_ids")
+        if not isinstance(event_ids, list) or not event_ids or not all(
+            isinstance(item, str) and item for item in event_ids
+        ):
+            raise McpDomainError("MCP_INVALID_ARGUMENTS", "event_ids must be a non-empty string list")
+        return self.service.acknowledge_event_inbox(hook.target_agent_id, event_ids)
+
+    def _hook_replay(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        event_id = self._required_string(arguments, "event_id")
+        if arguments.get("mode") == "plan":
+            return self._build_plan(self._tools["aidn.hook.replay"], arguments)
+        deliveries = self.service.replay_hook_event(
+            event_id,
+            owner_operator_id=self.session.operator_identity,
+            target_agent_id=self.session.agent_identity,
+        )
+        return {
+            "status": "replayed",
+            "event_id": event_id,
+            "deliveries": [item.model_dump(mode="json") for item in deliveries],
+        }
+
+    def _hook_dead_letter_retry(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        delivery_id = self._required_string(arguments, "delivery_id")
+        delivery = next(
+            (item for item in self.service.hook_dead_letters(limit=500) if item.delivery_id == delivery_id),
+            None,
+        )
+        if delivery is None or not self._is_visible_delivery(delivery):
+            raise McpDomainError("MCP_HOOK_REPLAY_UNAVAILABLE", f"Unknown dead letter: {delivery_id}")
+        if arguments.get("mode") == "plan":
+            return self._build_plan(self._tools["aidn.hook.dead_letter_retry"], arguments)
+        retried = self.service.retry_hook_dead_letter(delivery_id)
+        return {"status": "retrying", "delivery": _json_safe(retried)}
+
+    def _target_revision(self, arguments: dict[str, Any], *, tool_name: str | None = None) -> str | None:
         bundle_id = arguments.get("bundle_id")
         if bundle_id:
             return self._bundle_revision(bundle_id)
         endpoint_id = arguments.get("endpoint_id")
+        hook_id = arguments.get("hook_id")
+        if hook_id:
+            if tool_name == "aidn.hook.create":
+                return None
+            hook = self._owned_hook(arguments)
+            return _hash_payload(_json_safe(hook))
         if not endpoint_id:
             return None
         if self.endpoint_service is None:

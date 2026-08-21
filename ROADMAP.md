@@ -1,6 +1,6 @@
 # AiDN Roadmap
 
-Last updated: `2026-08-20`
+Last updated: `2026-08-21`
 
 This is the main public roadmap for the repository.
 
@@ -87,8 +87,12 @@ long-running broker work observable to the dashboard and agents.
 - [x] Replace the in-process worker handoff with durable broker-side job
   identifiers, idempotent request hashes, replay-safe event offsets, restart
   reconciliation for non-terminal jobs, and cooperative cancellation hooks.
-- [ ] Project readiness and job progress into the MCP read model and dashboard
-  widgets without reintroducing stale cached runtime state.
+- [x] Project live runtime readiness and Provider Broker job progress into the
+  MCP read model and dashboard widgets without reintroducing stale cached
+  runtime state. `aidn.runtime.operations`, `aidn://runtime/operations`, and
+  `GET /operators/dashboard/runtime-operations` now share one reconciled
+  projection; the Provider workspace shows readiness, progress, and a
+  timestamped freshness boundary.
 
 ## 2026-08-20 RFC-0072 Hypervisor Event And Agent Hook Protocol
 
@@ -104,15 +108,37 @@ and MCP Control Session work:
   Envelope, event identity and sequence rules, data classes, Hook ownership,
   delivery modes, retry/acknowledgment semantics, privacy boundaries, and
   automation-loop invariants.
-- [ ] Implement one internal Event Bus and a canonical event normalizer with
+- [x] Implement one internal Event Bus and a canonical event normalizer with
   monotonic sequences, event hashes, correlation/causation IDs, and redaction
-  profiles.
-- [ ] Add the durable Event Store and per-agent Inbox with cursors, retention,
-  at-least-once delivery, deduplication, acknowledgments, bounded retries, and
-  dead-letter inspection/replay.
-- [ ] Add MCP Hook and Event tools/resources from RFC-0072, with scope and
-  operator-policy checks; refresh the catalog without requiring an agent
-  session to be manually recreated after every permission change.
+  profiles. Existing `record_event` producers now pass through the bus;
+  canonical envelopes are inspectable through
+  `GET /operators/events/canonical`, while the legacy journal contract remains
+  unchanged.
+- [x] Add the durable retained canonical Event Store and per-agent Inbox
+  baseline with restart-safe cursors, count-bounded retention, at-least-once
+  reads, event-id deduplication, idempotent acknowledgments, and snapshot
+  persistence. `GET /operators/events/query`,
+  `GET /operators/events/inbox/{agent_id}`, and the corresponding ack route
+  expose the operator boundary.
+- [x] Add bounded Hook delivery retries, dead-letter inspection/replay, and
+  delivery metrics on top of the durable Inbox. The first transport slice
+  supports filtered `DURABLE_INBOX` and `MCP_LIVE` delivery, exponential
+  backoff without a background thread, deterministic dead-letter records,
+  operator replay/retry controls, scoped per-agent Inboxes, and snapshot
+  persistence.
+- [x] Add scoped MCP Event query, Inbox, and acknowledgment
+  tools/resources. Catalog revisions remain refreshable through the existing
+  `aidn.mcp.session_status` / `tools/list` path without a gateway restart.
+- [x] Add scoped MCP Hook read tools/resources for definitions, deliveries,
+  dead letters, and metrics, plus operator-owned mutation tools
+  (`create/update/pause/resume/delete/test/ack/replay/dead_letter_retry`).
+  Mutating calls are plan/apply bound to `HOOK:MANAGE` and the operator
+  approval policy; the catalog is refreshable through `tools/list` without
+  recreating a session.
+- [x] Add the Advanced Mode Automation workspace for Hook creation, pause /
+  resume, synthetic delivery tests, delivery replay, dead-letter retry, and
+  live delivery metrics. The UI uses the same operator identity boundary as
+  the API and never treats an event as action authority.
 - [ ] Emit the first Node, Provider, Model, Bundle, Endpoint, Validation,
   Resource, Job, Approval, Wallet, and Budget events from authoritative state
   transitions rather than polling snapshots.

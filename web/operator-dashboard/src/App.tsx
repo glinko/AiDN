@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import {
   Activity,
   ArrowRightLeft,
+  BellRing,
   Box,
   Boxes,
   BriefcaseBusiness,
@@ -21,6 +22,8 @@ import {
   Network,
   PanelsTopLeft,
   Plus,
+  Play,
+  Pause,
   RadioTower,
   RefreshCw,
   RotateCcw,
@@ -71,9 +74,9 @@ import {
   shortId,
 } from '@/lib/format'
 import { useDashboardData } from '@/hooks/use-dashboard'
-import { DashboardApiError, dashboardApi, type AccessCredential, type AgentPermissionCatalog, type DashboardAccessStatus, type DashboardRecord, type EnrollmentRequest, type InferenceCredential, type ProviderArtifactInventory, type ProviderWorkspace } from '@/lib/api'
+import { DashboardApiError, dashboardApi, type AccessCredential, type AgentPermissionCatalog, type DashboardAccessStatus, type DashboardRecord, type EnrollmentRequest, type HookDefinition, type HookDelivery, type InferenceCredential, type ProviderArtifactInventory, type ProviderWorkspace } from '@/lib/api'
 import { dashboardScreens, useOperatorDashboardStore, type DashboardScreen } from '@/stores/operator-dashboard'
-import type { Bundle, CometBftDashboard, CometBftInstall, Endpoint, Fleet, Readiness, ReadinessStep, WalletDashboard } from '@/lib/types'
+import type { Bundle, CometBftDashboard, CometBftInstall, Endpoint, Fleet, Readiness, ReadinessStep, RuntimeOperations, WalletDashboard } from '@/lib/types'
 import { createSavedHypervisor, loadSavedHypervisors, saveSavedHypervisors, type SavedHypervisorConnection } from '@/lib/hypervisor-connections'
 
 type NavigationItem = {
@@ -100,6 +103,7 @@ const advancedItems: NavigationItem[] = [
   { id: 'validation', label: 'Validation', icon: ShieldCheck, advanced: true },
   { id: 'network', label: 'Network', icon: Network, advanced: true },
   { id: 'cometbft', label: 'CometBFT', icon: GitBranch, advanced: true },
+  { id: 'hooks', label: 'Automation', icon: BellRing, advanced: true },
 ]
 
 function inventoryRecords(value: ProviderArtifactInventory | undefined): DashboardRecord[] {
@@ -213,6 +217,7 @@ const operationsScreens: readonly OperationsScreen[] = [
   'validation',
   'network',
   'cometbft',
+  'hooks',
 ]
 
 function isOperationsScreen(screen: DashboardScreen): screen is OperationsScreen {
@@ -261,7 +266,7 @@ function App() {
   const nodeIdentity = data.home.data?.bootstrap.node_identity ?? data.fleet.data?.node
   const nodeName = getText(nodeIdentity, 'node_id') || 'Local Hypervisor'
   const readinessPercent = data.readiness.data?.progress.percent ?? 0
-  const hasRefreshError = [data.home, data.readiness, data.cometbft, data.cometbftInstall, data.fleet, data.bundles, data.endpoints, data.wallet, data.providers, data.installs, data.sessions, data.market, data.remoteEndpoints, data.events].some(
+  const hasRefreshError = [data.home, data.readiness, data.cometbft, data.cometbftInstall, data.fleet, data.bundles, data.endpoints, data.wallet, data.providers, data.runtimeOperations, data.installs, data.sessions, data.market, data.remoteEndpoints, data.events, data.hooks, data.hookMetrics, data.hookDeliveries, data.hookDeadLetters].some(
     (query) => query.isError,
   )
 
@@ -294,11 +299,16 @@ function App() {
       data.endpoints.refetch(),
       data.wallet.refetch(),
       data.providers.refetch(),
+      data.runtimeOperations.refetch(),
       data.installs.refetch(),
       data.sessions.refetch(),
       data.market.refetch(),
       data.remoteEndpoints.refetch(),
       data.events.refetch(),
+      data.hooks.refetch(),
+      data.hookMetrics.refetch(),
+      data.hookDeliveries.refetch(),
+      data.hookDeadLetters.refetch(),
     ]).then((results) => {
       const failed = results.filter((result) => result.status === 'rejected').length
       const time = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date())
@@ -324,7 +334,7 @@ function App() {
       <TopBar
         nodeName={nodeName}
         advanced={advanced}
-        isRefreshing={data.home.isFetching || data.readiness.isFetching || data.events.isFetching}
+            isRefreshing={data.home.isFetching || data.readiness.isFetching || data.runtimeOperations.isFetching || data.events.isFetching || data.hooks.isFetching}
         refreshError={hasRefreshError}
         refreshFeedback={refreshFeedback}
         onRefresh={refreshAll}
@@ -368,7 +378,7 @@ function App() {
           {activeScreen === 'settings' ? <SettingsWorkspace fleet={data.fleet.data} endpoints={data.endpoints.data?.items ?? []} onRefresh={refreshAll} /> : null}
           {activeScreen === 'wallet' ? <WalletWorkspace wallet={data.wallet.data} isLoading={data.wallet.isLoading} error={data.wallet.error} onRefresh={refreshAll} /> : null}
           {activeScreen === 'providers' || activeScreen === 'catalog' ? (
-            <ProviderWorkspaceScreen screen={activeScreen} workspace={data.providers.data} isLoading={data.providers.isLoading} error={data.providers.error} onRefresh={refreshAll} />
+            <ProviderWorkspaceScreen screen={activeScreen} workspace={data.providers.data} runtimeOperations={data.runtimeOperations.data} isLoading={data.providers.isLoading || data.runtimeOperations.isLoading} error={data.providers.error ?? data.runtimeOperations.error} onRefresh={refreshAll} />
           ) : null}
           {isOperationsScreen(activeScreen) && activeScreen !== 'providers' && activeScreen !== 'catalog' && activeScreen !== 'wallet' && activeScreen !== 'models' ? (
             <OperationsWorkspace screen={activeScreen} data={data} onNavigate={navigate} onRefresh={refreshAll} />
@@ -2475,7 +2485,7 @@ function providerInstallConfigurationIssue(plugin: DashboardRecord | undefined, 
   return null
 }
 
-function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefresh }: { screen: 'providers' | 'catalog'; workspace: ProviderWorkspace | undefined; isLoading: boolean; error: Error | null; onRefresh: () => void }) {
+function ProviderWorkspaceScreen({ screen, workspace, runtimeOperations, isLoading, error, onRefresh }: { screen: 'providers' | 'catalog'; workspace: ProviderWorkspace | undefined; runtimeOperations?: RuntimeOperations; isLoading: boolean; error: Error | null; onRefresh: () => void }) {
   const [pluginId, setPluginId] = useState('')
   const [displayName, setDisplayName] = useState('')
   const [configuration, setConfiguration] = useState<DashboardRecord>({})
@@ -2700,6 +2710,7 @@ function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefres
     {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
     {isLoading && !workspace ? <PanelSkeleton rows={5} /> : null}
     {error && !workspace ? <PanelError title="Provider workspace is unavailable" error={error} onRetry={onRefresh} /> : null}
+    <RuntimeOperationsCard operations={runtimeOperations} isLoading={isLoading} error={error} onRefresh={onRefresh} />
     {workspace ? <>
       <Card className="border-cyan-300/20 bg-cyan-300/[0.03] py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow text-cyan-100">Reviewed Ubuntu runtimes</p><CardTitle className="mt-1 text-lg font-semibold">Provider runtime catalog</CardTitle><p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">Select one runtime from the compact catalog. Installed runtimes expose Change and Remove; model selection and downloads remain a separate step.</p></div><StatusBadge value={runtimeInstalled ? 'installed' : runtimeInstallEnabled ? 'available' : 'blocked'} /></div></CardHeader><CardContent className="space-y-4 p-5">{runtimePlugins.length === 0 ? <EmptyState title="No reviewed runtimes available" detail="This node has no Provider Plugin with an allowlisted Ubuntu runtime installer." actionLabel="Refresh catalog" onAction={onRefresh} /> : <><div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.8fr)]"><label className="grid gap-2"><span className="eyebrow">Provider runtime</span><select value={runtimePluginId} onChange={(event) => chooseRuntimePlugin(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300"><optgroup label="Installed">{runtimePlugins.filter((plugin) => installedRuntimeIds.has(getText(plugin, 'plugin_id'))).map((plugin) => <option key={getText(plugin, 'plugin_id')} value={getText(plugin, 'plugin_id')}>{getText(plugin, 'display_name') || getText(plugin, 'plugin_id')}</option>)}</optgroup><optgroup label="Available">{runtimePlugins.filter((plugin) => !installedRuntimeIds.has(getText(plugin, 'plugin_id'))).map((plugin) => <option key={getText(plugin, 'plugin_id')} value={getText(plugin, 'plugin_id')}>{getText(plugin, 'display_name') || getText(plugin, 'plugin_id')}</option>)}</optgroup></select></label><div className="rounded-lg border border-border/70 bg-[#07111d] px-3 py-2"><p className="eyebrow">Pinned runtime</p><p className="mt-1 text-sm text-slate-100">{getText(runtimeInstaller, 'pinned_version') || 'Reviewed version'}</p><p className="mt-1 text-xs text-muted-foreground">{getText(runtimeInstaller, 'platform') || 'ubuntu'} · {runtimeInstalled ? 'Runtime is managed on this node.' : 'Not installed on this node.'}</p></div></div>{runtimeInstalled ? <p className="text-xs leading-5 text-amber-100/80">Change re-runs the reviewed installer against the selected configuration. Remove is blocked while model deployments or runtime bindings still reference this runtime.</p> : <p className="text-xs leading-5 text-muted-foreground">Install is enabled only when the root-owned allowlisted broker is available. Runtime files are separate from model downloads.</p>}{providerInstallFields(runtimePlugin).length > 0 ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{providerInstallFields(runtimePlugin).map((field) => { const id = getText(field, 'id'); const type = getText(field, 'type'); const value = providerFieldValue(runtimeConfiguration, field); const options = providerFieldOptions(field); return <label key={id} className="grid gap-2"><span className="eyebrow">{getText(field, 'label') || id}{field.required === true ? ' *' : ''}</span>{type === 'select' ? <select value={String(value)} onChange={(event) => setRuntimeConfiguration((current) => ({ ...current, [id]: event.target.value }))} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300">{options.map((option) => <option key={String(option.value)} value={String(option.value)}>{getText(option, 'label') || String(option.value)}</option>)}</select> : type === 'boolean' ? <span className="flex h-10 items-center gap-2 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-slate-200"><input type="checkbox" checked={value === true} onChange={(event) => setRuntimeConfiguration((current) => ({ ...current, [id]: event.target.checked }))} />Enabled</span> : <input type={type === 'url' ? 'url' : 'text'} value={String(value)} onChange={(event) => setRuntimeConfiguration((current) => ({ ...current, [id]: event.target.value }))} placeholder={String(field.default ?? '')} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" />}</label> })}</div> : null}<div className="flex flex-wrap gap-2">{!runtimeInstalled ? <Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={!runtimeInstallEnabled || busy !== null || Boolean(runtimeConfigurationIssue)} onClick={() => void applyRuntimeChange('install')}><ServerCog />{busy === `runtime:install:${runtimePluginId}` ? 'Installing...' : 'Install runtime'}</Button> : null}{runtimeInstalled ? <><Button variant="outline" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={!runtimeInstallEnabled || busy !== null || Boolean(runtimeConfigurationIssue)} onClick={() => void applyRuntimeChange('change')}><Settings />{busy === `runtime:change:${runtimePluginId}` ? 'Changing...' : 'Change runtime'}</Button><Button variant="destructive" className="border-rose-300/30" disabled={!runtimeInstallEnabled || busy !== null} onClick={() => void removeRuntime()}><Trash2 />{busy === `runtime:remove:${runtimePluginId}` ? 'Removing...' : 'Remove runtime'}</Button></> : null}</div></>}</CardContent></Card>
       <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Attach existing Provider</p><CardTitle className="mt-1 text-lg font-semibold">Create Provider instance</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">Choose a plugin first. The fields below come from that plugin's contract, so vLLM uses its OpenAI-compatible endpoint instead of inheriting an Ollama URL.</p></CardHeader><CardContent className="grid gap-4 p-5 md:grid-cols-2 lg:grid-cols-4"><label className="grid gap-2"><span className="eyebrow">Plugin</span><select value={pluginId} onChange={(event) => choosePlugin(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300">{plugins.map((plugin) => <option key={getText(plugin, 'plugin_id')} value={getText(plugin, 'plugin_id')}>{getText(plugin, 'display_name') || getText(plugin, 'plugin_id')}</option>)}</select></label><label className="grid gap-2"><span className="eyebrow">Provider name</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Local vLLM" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label>{attachFields.filter((field) => getText(field, 'id') !== 'display_name').map((field) => { const id = getText(field, 'id'); const type = getText(field, 'type'); const value = providerFieldValue(configuration, field); const options = providerFieldOptions(field); return <label key={id} className="grid gap-2"><span className="eyebrow">{getText(field, 'label') || id}{field.required === true ? ' *' : ''}</span>{type === 'select' ? <select value={String(value)} onChange={(event) => setConfiguration((current) => ({ ...current, [id]: event.target.value }))} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300">{options.map((option) => <option key={String(option.value)} value={String(option.value)}>{getText(option, 'label') || String(option.value)}</option>)}</select> : type === 'boolean' ? <span className="flex h-10 items-center gap-2 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-slate-200"><input type="checkbox" checked={value === true} onChange={(event) => setConfiguration((current) => ({ ...current, [id]: event.target.checked }))} />Enabled</span> : <input type={type === 'url' ? 'url' : 'text'} value={String(value)} onChange={(event) => setConfiguration((current) => ({ ...current, [id]: event.target.value }))} placeholder={String(field.default ?? '')} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" />}</label> })}<div className="flex items-end"><Button className="w-full bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy === 'attach' || plugins.length === 0} onClick={() => void attach()}><ServerCog />{busy === 'attach' ? 'Attaching...' : 'Attach'}</Button></div></CardContent></Card>
@@ -2707,6 +2718,63 @@ function ProviderWorkspaceScreen({ screen, workspace, isLoading, error, onRefres
       <div className="grid gap-4 lg:grid-cols-2"><InventoryCard title="Model deployments" detail="Discovered model supply. Runtime binding is required before Endpoint admission." items={deployments} primaryKey="model_deployment_id" /><InventoryCard title="Runtime bindings" detail="Compatibility records backing eligible Bundle and Endpoint runtime selection." items={bindings} primaryKey="runtime_binding_id" /></div>
     </> : null}
   </div>
+}
+
+function RuntimeOperationsCard({ operations, isLoading, error, onRefresh }: { operations?: RuntimeOperations; isLoading: boolean; error: Error | null; onRefresh: () => void }) {
+  if (!operations && isLoading) {
+    return <Card className="border-border/80 bg-card py-0 shadow-none"><CardContent className="flex items-center gap-3 p-5 text-sm text-muted-foreground"><RefreshCw className="size-4 animate-spin text-primary" />Loading live runtime readiness and Provider Broker jobs...</CardContent></Card>
+  }
+  const summary = operations?.summary
+  const freshness = operations?.freshness
+  const runtimes = operations?.runtimes ?? []
+  const jobs = operations?.installation_jobs ?? []
+  const activeJobs = jobs.filter((job) => !new Set(['SUCCEEDED', 'FAILED', 'CANCELLED']).has(getText(job, 'status')))
+  const checkedAt = operations?.generated_at ? new Date(operations.generated_at) : null
+  const checkedLabel = checkedAt && !Number.isNaN(checkedAt.getTime())
+    ? checkedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    : '—'
+
+  return <Card className="border-border/80 bg-card py-0 shadow-none">
+    <CardHeader className="border-b border-border/70 px-5 py-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="eyebrow">Live runtime readiness</p>
+          <CardTitle className="mt-1 text-lg font-semibold">Provider Broker operations</CardTitle>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">Process health and installation jobs are reconciled before this view is returned. A timestamp makes stale state visible instead of silently presenting the last snapshot.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <StatusBadge value={freshness?.reconciliation_error ? 'degraded' : freshness?.source || 'checking'} />
+          <Button variant="outline" size="sm" className="border-border bg-transparent" onClick={onRefresh} disabled={isLoading}><RefreshCw className={cn(isLoading && 'animate-spin')} />Refresh</Button>
+        </div>
+      </div>
+      <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Live check {checkedLabel} · {freshness?.max_age_seconds ?? 15}s freshness target</p>
+    </CardHeader>
+    <CardContent className="space-y-4 p-5">
+      {error && !operations ? <p role="alert" className="rounded-lg border border-rose-300/30 bg-rose-300/[0.06] px-3 py-2 text-xs leading-5 text-rose-700">Live runtime state is unavailable. {error.message}</p> : null}
+      {freshness?.reconciliation_error ? <p role="status" className="rounded-lg border border-amber-300/30 bg-amber-300/[0.06] px-3 py-2 text-xs leading-5 text-amber-700">The live read completed with a reconciliation warning: {freshness.reconciliation_error}</p> : null}
+      <div className="grid gap-2 sm:grid-cols-4">
+        <RuntimeMetric label="Ready runtimes" value={String(summary?.runtime_ready ?? 0)} detail={`${summary?.runtime_total ?? 0} observed`} />
+        <RuntimeMetric label="Active tasks" value={String(summary?.runtime_active_tasks ?? 0)} detail="across managed runtimes" />
+        <RuntimeMetric label="Install jobs" value={String(summary?.installation_job_active ?? 0)} detail={`${summary?.installation_job_total ?? 0} total`} />
+        <RuntimeMetric label="Failed jobs" value={String(summary?.installation_job_failed ?? 0)} detail={`${summary?.runtime_failed_or_not_ready ?? 0} runtimes need review`} tone={(summary?.installation_job_failed ?? 0) > 0 ? 'warn' : 'default'} />
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div>
+          <p className="eyebrow">Runtime instances</p>
+          {runtimes.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">No managed runtime instances are active.</p> : <div className="mt-2 divide-y divide-border/70 rounded-lg border border-border/70">{runtimes.slice(0, 6).map((runtime) => <div key={getText(runtime, 'runtime_id')} className="flex items-center justify-between gap-3 px-3 py-2.5"><div className="min-w-0"><p className="truncate font-mono text-xs text-foreground">{shortId(getText(runtime, 'runtime_id'), 22)}</p><p className="truncate text-[11px] text-muted-foreground">{getText(runtime, 'model_id') || getText(runtime, 'bundle_id') || 'Bundle runtime'} · {getText(runtime, 'readiness_message') || 'No diagnostic message'}</p></div><StatusBadge value={getText(runtime, 'readiness_status') || getText(runtime, 'runtime_status') || 'unknown'} /></div>)}</div>}
+        </div>
+        <div>
+          <p className="eyebrow">Installation jobs</p>
+          {jobs.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">No Provider Broker installation jobs recorded.</p> : <div className="mt-2 divide-y divide-border/70 rounded-lg border border-border/70">{jobs.slice(0, 6).map((job) => { const percent = Math.min(100, Math.max(0, Number(job.progress_percent ?? 0))); return <div key={getText(job, 'job_id')} className="px-3 py-2.5"><div className="flex items-center justify-between gap-3"><p className="truncate font-mono text-xs text-foreground">{shortId(getText(job, 'job_id'), 22)}</p><StatusBadge value={getText(job, 'status') || 'unknown'} /></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${percent}%` }} /></div><p className="mt-1 text-[11px] text-muted-foreground">{percent}% · {getText(job, 'current_step') || 'queued'}{getText(job, 'error_message') ? ` · ${getText(job, 'error_message')}` : ''}</p></div> })}</div>}
+          {activeJobs.length > 0 ? <p className="mt-2 text-[11px] text-muted-foreground">{activeJobs.length} job{activeJobs.length === 1 ? '' : 's'} still reconciled by the broker.</p> : null}
+        </div>
+      </div>
+    </CardContent>
+  </Card>
+}
+
+function RuntimeMetric({ label, value, detail, tone = 'default' }: { label: string; value: string; detail: string; tone?: 'default' | 'warn' }) {
+  return <div className="rounded-lg border border-border/70 bg-secondary/30 px-3 py-2.5"><p className="eyebrow">{label}</p><p className={cn('mt-1 text-xl font-semibold', tone === 'warn' ? 'text-amber-700' : 'text-foreground')}>{value}</p><p className="mt-1 text-[11px] text-muted-foreground">{detail}</p></div>
 }
 
 function InventoryCard({ title, detail, items, primaryKey }: { title: string; detail: string; items: DashboardRecord[]; primaryKey: string }) {
@@ -2799,7 +2867,170 @@ function OperationsWorkspace({ screen, data, onNavigate, onRefresh }: { screen: 
   if (screen === 'market') return <MarketWorkspace data={data} onNavigate={onNavigate} onRefresh={onRefresh} />
   if (screen === 'validation') return <ValidationWorkspace data={data} onNavigate={onNavigate} onRefresh={onRefresh} />
   if (screen === 'cometbft') return <CometBftWorkspace data={data} onNavigate={onNavigate} onRefresh={onRefresh} />
+  if (screen === 'hooks') return <HooksWorkspace data={data} onRefresh={onRefresh} />
   return <NetworkWorkspace data={data} onNavigate={onNavigate} onRefresh={onRefresh} />
+}
+
+function HooksWorkspace({ data, onRefresh }: { data: DashboardData; onRefresh: () => void }) {
+  const hooks = data.hooks.data ?? []
+  const deliveries = data.hookDeliveries.data ?? []
+  const deadLetters = data.hookDeadLetters.data ?? []
+  const metrics = data.hookMetrics.data
+  const [hookId, setHookId] = useState('agent-ops')
+  const [ownerOperatorId, setOwnerOperatorId] = useState('operator-local')
+  const [targetAgentId, setTargetAgentId] = useState('agent:local')
+  const [eventType, setEventType] = useState('aidn.provider.failed')
+  const [severity, setSeverity] = useState('WARNING')
+  const [deliveryMode, setDeliveryMode] = useState<'DURABLE_INBOX' | 'MCP_LIVE'>('DURABLE_INBOX')
+  const [busy, setBusy] = useState<string | null>(null)
+  const [message, setMessage] = useState<string | null>(null)
+
+  async function createHook() {
+    if (!hookId.trim() || !ownerOperatorId.trim() || !targetAgentId.trim() || !eventType.trim()) {
+      setMessage('Provide a Hook ID, operator, target Agent, and at least one event type.')
+      return
+    }
+    setBusy('create')
+    setMessage(null)
+    try {
+      await dashboardApi.createHook({
+        hook_id: hookId.trim(),
+        owner_operator_id: ownerOperatorId.trim(),
+        target_agent_id: targetAgentId.trim(),
+        delivery_mode: deliveryMode,
+        event_filter: {
+          event_types: [eventType.trim()],
+          resource_ids: [],
+          severity_minimum: severity === 'ANY' ? null : severity,
+        },
+      })
+      setMessage(`Hook ${hookId.trim()} created. It will receive matching canonical events.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Hook creation failed.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function toggleHook(hook: HookDefinition) {
+    setBusy(hook.hook_id)
+    setMessage(null)
+    try {
+      await dashboardApi.updateHook(hook.hook_id, { enabled: !hook.enabled })
+      setMessage(`Hook ${hook.hook_id} ${hook.enabled ? 'paused' : 'resumed'}.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Hook update failed.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function testHook(hook: HookDefinition) {
+    setBusy(`test:${hook.hook_id}`)
+    setMessage(null)
+    try {
+      const result = await dashboardApi.testHook(hook.hook_id)
+      setMessage(`${hook.hook_id}: ${getText(result, 'status') || 'test completed'}. No operational event was created.`)
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Hook test failed.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function deleteHook(hook: HookDefinition) {
+    if (!window.confirm(`Delete Hook ${hook.hook_id}? Future matching events will not be delivered.`)) return
+    setBusy(`delete:${hook.hook_id}`)
+    setMessage(null)
+    try {
+      await dashboardApi.deleteHook(hook.hook_id)
+      setMessage(`Hook ${hook.hook_id} deleted.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Hook deletion failed.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function retryDeadLetter(delivery: HookDelivery) {
+    setBusy(`retry:${delivery.delivery_id}`)
+    setMessage(null)
+    try {
+      await dashboardApi.retryHookDeadLetter(delivery.delivery_id)
+      setMessage(`Delivery ${shortId(delivery.delivery_id, 20)} queued for retry.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Dead-letter retry failed.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function replayDelivery(delivery: HookDelivery) {
+    setBusy(`replay:${delivery.event_id}`)
+    setMessage(null)
+    try {
+      await dashboardApi.replayHookEvent(delivery.event_id)
+      setMessage(`Event ${shortId(delivery.event_id, 20)} replay requested. Agents must deduplicate by event ID.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Event replay failed.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <ScreenHeading eyebrow="Automation" title="Hooks" detail="Subscribe an agent to operational changes without making it poll the Hypervisor. Visibility follows the operator and Agent identity; delivery never grants action authority." />
+      {message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : null}
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {[
+          ['Matched events', metrics?.events_matched ?? 0],
+          ['Delivered', metrics?.events_delivered ?? 0],
+          ['Retry queue', metrics?.queue_depth ?? 0],
+          ['Dead letters', metrics?.dead_letter_count ?? deadLetters.length],
+        ].map(([label, value]) => (
+          <Card key={String(label)} className="border-border/80 bg-card py-0 shadow-none">
+            <CardContent className="p-4"><p className="eyebrow">{label}</p><p className="mt-1 font-mono text-2xl font-semibold text-cyan-200">{value}</p></CardContent>
+          </Card>
+        ))}
+      </div>
+
+      <Card className="border-cyan-300/20 bg-cyan-300/[0.03] py-0 shadow-none">
+        <CardHeader className="border-b border-border/70 px-5 py-4">
+          <p className="eyebrow text-cyan-100">New subscription</p>
+          <CardTitle className="mt-1 text-lg font-semibold">Create an Agent Hook</CardTitle>
+          <p className="mt-1 text-sm leading-6 text-muted-foreground">Choose a typed event filter and a durable fallback. For remote Agent mutations, the MCP plan/approval boundary remains authoritative.</p>
+        </CardHeader>
+        <CardContent className="grid gap-3 p-5 lg:grid-cols-4">
+          <label className="grid gap-2"><span className="eyebrow">Hook ID</span><input value={hookId} onChange={(event) => setHookId(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label>
+          <label className="grid gap-2"><span className="eyebrow">Operator identity</span><input value={ownerOperatorId} onChange={(event) => setOwnerOperatorId(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label>
+          <label className="grid gap-2"><span className="eyebrow">Target Agent</span><input value={targetAgentId} onChange={(event) => setTargetAgentId(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label>
+          <label className="grid gap-2"><span className="eyebrow">Event type</span><input value={eventType} onChange={(event) => setEventType(event.target.value)} placeholder="aidn.provider.failed" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label>
+          <label className="grid gap-2"><span className="eyebrow">Minimum severity</span><select value={severity} onChange={(event) => setSeverity(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300"><option value="ANY">Any event</option><option value="NOTICE">Notice+</option><option value="WARNING">Warning+</option><option value="ERROR">Error+</option><option value="CRITICAL">Critical only</option></select></label>
+          <label className="grid gap-2"><span className="eyebrow">Delivery</span><select value={deliveryMode} onChange={(event) => setDeliveryMode(event.target.value as typeof deliveryMode)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300"><option value="DURABLE_INBOX">Durable inbox</option><option value="MCP_LIVE">MCP live</option></select></label>
+          <div className="flex items-end lg:col-span-2"><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy === 'create'} onClick={() => void createHook()}><BellRing />{busy === 'create' ? 'Creating...' : 'Create Hook'}</Button></div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-border/80 bg-card py-0 shadow-none">
+        <CardHeader className="flex-row items-start justify-between gap-3 border-b border-border/70 px-5 py-4"><div><p className="eyebrow">Subscriptions</p><CardTitle className="mt-1 text-lg font-semibold">Agent Hooks</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">At-least-once delivery. Agents acknowledge by event ID and can recover from a disconnected live session through the durable inbox.</p></div><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={onRefresh}><RefreshCw />Refresh</Button></CardHeader>
+        <CardContent className="divide-y divide-border/70 p-0">
+          {hooks.length === 0 ? <EmptyState title="No Hooks configured" detail="Create a subscription for provider failures, resource pressure, approvals, or any other canonical event family." actionLabel="Focus Hook form" onAction={() => document.querySelector<HTMLInputElement>('input[value="agent-ops"]')?.focus()} /> : hooks.map((hook) => <div key={hook.hook_id} className="flex flex-col gap-4 px-5 py-4 lg:flex-row lg:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-slate-100">{hook.hook_id}</p><StatusBadge value={hook.enabled ? 'enabled' : 'paused'} /><StatusBadge value={hook.delivery_mode} /></div><p className="mt-1 font-mono text-[11px] text-slate-500">agent {hook.target_agent_id} · revision {hook.hook_revision} · {hook.event_filter.event_types.join(', ') || 'resource filter'}</p><p className="mt-1 text-xs text-muted-foreground">{hook.event_filter.severity_minimum ? `${hook.event_filter.severity_minimum}+ severity` : 'all severities'} · retry {hook.max_attempts}× · {hook.retry_backoff_seconds}s backoff</p></div><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" className="border-border bg-[#091725]" disabled={busy === `test:${hook.hook_id}`} onClick={() => void testHook(hook)}><Eye />Test</Button><Button variant="outline" size="sm" className="border-border bg-[#091725]" disabled={busy === hook.hook_id} onClick={() => void toggleHook(hook)}>{hook.enabled ? <Pause /> : <Play />}{hook.enabled ? 'Pause' : 'Resume'}</Button><Button variant="outline" size="sm" className="border-rose-300/25 bg-[#091725] text-rose-100" disabled={busy === `delete:${hook.hook_id}`} onClick={() => void deleteHook(hook)}><Trash2 />Delete</Button></div></div>)}
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Delivery journal</p><CardTitle className="mt-1 text-lg font-semibold">Recent deliveries</CardTitle></CardHeader><CardContent className="divide-y divide-border/70 p-0">{deliveries.length === 0 ? <p className="px-5 py-8 text-sm text-muted-foreground">No Hook deliveries have been recorded.</p> : deliveries.slice(0, 8).map((delivery) => <div key={delivery.delivery_id} className="flex items-start gap-3 px-5 py-3"><span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-md bg-cyan-300/8 text-cyan-200"><BellRing className="size-3.5" /></span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs font-medium text-slate-100">{delivery.hook_id}</p><StatusBadge value={delivery.status} /></div><p className="mt-1 truncate font-mono text-[10px] text-slate-500">{shortId(delivery.event_id, 28)} · {formatTimestamp(delivery.updated_at)}</p>{delivery.last_error ? <p className="mt-1 text-xs text-rose-200">{delivery.last_error}</p> : null}</div><Button variant="ghost" size="icon-xs" aria-label="Replay event" title="Replay event" disabled={busy === `replay:${delivery.event_id}`} onClick={() => void replayDelivery(delivery)}><RotateCcw /></Button></div>)}</CardContent></Card>
+        <Card className="border-rose-300/20 bg-rose-300/[0.03] py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow text-rose-100">Recovery queue</p><CardTitle className="mt-1 text-lg font-semibold">Dead letters</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">Failed deliveries remain inspectable and can be retried after the Agent reconnects.</p></CardHeader><CardContent className="divide-y divide-border/70 p-0">{deadLetters.length === 0 ? <p className="px-5 py-8 text-sm text-muted-foreground">No dead-letter deliveries.</p> : deadLetters.map((delivery) => <div key={delivery.delivery_id} className="flex items-center gap-3 px-5 py-3"><div className="min-w-0 flex-1"><p className="truncate text-xs font-medium text-slate-100">{delivery.hook_id}</p><p className="mt-1 truncate font-mono text-[10px] text-slate-500">{shortId(delivery.delivery_id, 28)} · {delivery.last_error || 'delivery exhausted retries'}</p></div><Button variant="outline" size="sm" className="border-rose-300/25 bg-[#091725] text-rose-100" disabled={busy === `retry:${delivery.delivery_id}`} onClick={() => void retryDeadLetter(delivery)}><RotateCcw />Retry</Button></div>)}</CardContent></Card>
+      </div>
+    </div>
+  )
 }
 
 function AgentsWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {

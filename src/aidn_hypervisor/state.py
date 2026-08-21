@@ -77,6 +77,13 @@ from aidn_hypervisor.settlement.models import (
     SettlementDispute,
     SettlementReadyCommitment,
 )
+from aidn_hypervisor.event_bus import CanonicalEventEnvelope
+from aidn_hypervisor.event_store import EventInboxSnapshot
+from aidn_hypervisor.hook_dispatcher import (
+    HookDefinition,
+    HookDeliveryRecord,
+    HookMetrics,
+)
 from aidn_hypervisor.validation.models import (
     ValidationAssignment,
     ValidationAuthorization,
@@ -493,3 +500,10 @@ class HypervisorStateSnapshot(BaseModel):
     development_reward_cancellations: list[dict] = Field(default_factory=list)
     development_reward_corrections: list[dict] = Field(default_factory=list)
     events: list[JournalEvent] = Field(default_factory=list)
+    canonical_events: list[CanonicalEventEnvelope] = Field(default_factory=list)
+    canonical_event_sequence: int = Field(default=0, ge=0)
+    event_inboxes: list[EventInboxSnapshot] = Field(default_factory=list)
+    hook_definitions: list[HookDefinition] = Field(default_factory=list)
+    hook_deliveries: list[HookDeliveryRecord] = Field(default_factory=list)
+    hook_dead_letters: list[HookDeliveryRecord] = Field(default_factory=list)
+    hook_metrics: HookMetrics = Field(default_factory=HookMetrics)

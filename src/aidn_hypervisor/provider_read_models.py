@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from aidn_hypervisor.operator_onboarding import build_onboarding_payload
+from aidn_hypervisor.runtime_operations_read_models import (
+    build_runtime_operations_payload,
+)
 
 
 def _providers_empty_state() -> dict:
@@ -129,6 +132,11 @@ def build_operator_providers_payload(
         for manifest in plugin_directory
         if "CAN_INSTALL_PROVIDER" in manifest.get("plugin_capability_flags", [])
     )
+    runtime_operations = build_runtime_operations_payload(service=service)
+    # The live projection reattaches non-terminal broker jobs before returning.
+    # Read the established, richer job records after that reconciliation so
+    # legacy clients do not receive an older installation status beside the
+    # fresh runtime_operations field.
     installation_jobs = service.list_provider_installation_jobs()
     applied_approval_ids = {
         job["approval_id"] for job in installation_jobs if job["status"] == "SUCCEEDED"
@@ -402,6 +410,10 @@ def build_operator_providers_payload(
         "plugin_host_status": plugin_host_status,
         "installation_approvals": installation_approvals,
         "installation_jobs": installation_jobs,
+        # Keep the established provider read model useful to existing MCP
+        # clients while exposing the same live-reconciled projection used by
+        # the dedicated dashboard widget and runtime.operations tool.
+        "runtime_operations": runtime_operations,
         "provider_instances": enriched_provider_instances,
         "model_deployments": enriched_model_deployments,
         "runtime_bindings": runtime_bindings,

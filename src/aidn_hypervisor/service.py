@@ -18,7 +18,20 @@ from aidn_hypervisor.economics.models import (
 from aidn_hypervisor.endpoint_execution_context_service import (
     EndpointExecutionContextService,
 )
+from aidn_hypervisor.event_bus import (
+    CanonicalEventEnvelope,
+    EventDataClass,
+    EventSeverity,
+    InternalEventBus,
+)
 from aidn_hypervisor.event_projection_service import EventProjectionService
+from aidn_hypervisor.event_store import EventStore
+from aidn_hypervisor.hook_dispatcher import (
+    HookDefinition,
+    HookDeliveryRecord,
+    HookDeliveryState,
+    HookDispatcher,
+)
 from aidn_hypervisor.hypervisor_integration_service import (
     HypervisorIntegrationService,
 )
@@ -300,6 +313,26 @@ class HypervisorService:
         self._settlement_application_service = SettlementApplicationService(self)
         self.operator_read_models = OperatorReadModelService(self)
         self._events: list[JournalEvent] = []
+        consensus_config = getattr(self.consensus_service, "config", None)
+        event_network_id = (
+            getattr(self, "network_id", None)
+            or getattr(consensus_config, "network_id", None)
+            or getattr(consensus_config, "chain_id", None)
+            or "local"
+        )
+        self._event_bus = InternalEventBus(
+            hypervisor_id=self.node_id,
+            network_id=str(event_network_id),
+        )
+        self._event_store = EventStore(
+            self._event_bus,
+            on_change=self._persist_state,
+        )
+        self._hook_dispatcher = HookDispatcher(
+            self._event_bus,
+            self._event_store,
+            on_change=self._persist_state,
+        )
         bind_installation_job_callback = getattr(
             self.provider_inventory,
             "set_installation_job_update_callback",
@@ -372,6 +405,119 @@ class HypervisorService:
         if limit is None or limit >= len(events):
             return events
         return events[-limit:]
+
+    def canonical_event_journal(
+        self, *, limit: int | None = None
+    ) -> list[CanonicalEventEnvelope]:
+        """Return events after RFC-0072 normalisation and redaction."""
+
+        return self._event_store.events(limit=limit)
+
+    def canonical_event_query(
+        self,
+        *,
+        after_sequence: int = 0,
+        limit: int = 100,
+        event_types: set[str] | None = None,
+        resource_id: str | None = None,
+    ) -> dict:
+        return self._event_store.query(
+            after_sequence=after_sequence,
+            limit=limit,
+            event_types=event_types,
+            resource_id=resource_id,
+        )
+
+    def event_inbox(
+        self,
+        agent_id: str,
+        *,
+        after_sequence: int | None = None,
+        limit: int = 100,
+    ) -> dict:
+        return self._event_store.inbox(
+            agent_id,
+            after_sequence=after_sequence,
+            limit=limit,
+        )
+
+    def acknowledge_event_inbox(
+        self,
+        agent_id: str,
+        event_ids: list[str],
+    ) -> dict:
+        return self._event_store.acknowledge(agent_id, event_ids)
+
+    def create_hook(self, **kwargs) -> HookDefinition:
+        return self._hook_dispatcher.create_hook(**kwargs)
+
+    def list_hooks(self, *, owner_operator_id: str | None = None) -> list[HookDefinition]:
+        return self._hook_dispatcher.list_hooks(owner_operator_id=owner_operator_id)
+
+    def get_hook(self, hook_id: str) -> HookDefinition:
+        return self._hook_dispatcher.get_hook(hook_id)
+
+    def update_hook(self, hook_id: str, **updates) -> HookDefinition:
+        return self._hook_dispatcher.update_hook(hook_id, **updates)
+
+    def delete_hook(self, hook_id: str) -> bool:
+        return self._hook_dispatcher.delete_hook(hook_id)
+
+    def test_hook(self, hook_id: str) -> dict:
+        return self._hook_dispatcher.test_hook(hook_id)
+
+    def hook_deliveries(
+        self,
+        *,
+        hook_id: str | None = None,
+        status: HookDeliveryState | None = None,
+        limit: int = 100,
+    ) -> list[HookDeliveryRecord]:
+        return self._hook_dispatcher.list_deliveries(
+            hook_id=hook_id,
+            status=status,
+            limit=limit,
+        )
+
+    def hook_dead_letters(self, *, limit: int = 100) -> list[HookDeliveryRecord]:
+        return self._hook_dispatcher.dead_letters(limit=limit)
+
+    def retry_hook_dead_letter(self, delivery_id: str) -> HookDeliveryRecord:
+        return self._hook_dispatcher.retry_dead_letter(delivery_id)
+
+    def replay_hook_event(
+        self,
+        event_id: str,
+        *,
+        owner_operator_id: str | None = None,
+        target_agent_id: str | None = None,
+    ) -> list[HookDeliveryRecord]:
+        return self._hook_dispatcher.replay_event(
+            event_id,
+            owner_operator_id=owner_operator_id,
+            target_agent_id=target_agent_id,
+        )
+
+    def hook_dispatch_metrics(self) -> dict:
+        return self._hook_dispatcher.metrics()
+
+    @property
+    def event_store(self) -> EventStore:
+        """Expose durable event state to API and Hook adapters."""
+
+        return self._event_store
+
+    @property
+    def event_bus(self) -> InternalEventBus:
+        """Expose the local bus for local Hook dispatch composition."""
+
+        return self._event_bus
+
+    @property
+    def hook_dispatcher(self) -> HookDispatcher:
+        """Expose RFC-0072 Hook delivery state to API and MCP adapters."""
+
+        return self._hook_dispatcher
 
     def list_wallet_usage_events(self, *, limit: int | None = None) -> list[dict]:
         return self._wallet_application_facade().list_wallet_usage_events(limit=limit)
@@ -1952,6 +2098,16 @@ class HypervisorService:
         bundle_id: str | None = None,
         runtime_id: str | None = None,
         details: dict | None = None,
+        source: str | None = None,
+        severity: EventSeverity | str | None = None,
+        data_class: EventDataClass | str | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        resource_revision: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+        requires_attention: bool | None = None,
+        requires_action: bool | None = None,
     ) -> JournalEvent:
         return self._event_projection_facade().record_event(
             event_type=event_type,
@@ -1960,6 +2116,16 @@ class HypervisorService:
             bundle_id=bundle_id,
             runtime_id=runtime_id,
             details=details,
+            source=source,
+            severity=severity,
+            data_class=data_class,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            resource_revision=resource_revision,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            requires_attention=requires_attention,
+            requires_action=requires_action,
         )
 
     def bind_validation_service(self, validation_service) -> None:
@@ -2097,6 +2263,15 @@ class HypervisorService:
             runtime_id,
             force=force,
         )
+
+    def runtime_operations(self) -> dict:
+        """Return live runtime readiness and Provider Broker job progress."""
+
+        from aidn_hypervisor.runtime_operations_read_models import (
+            build_runtime_operations_payload,
+        )
+
+        return build_runtime_operations_payload(service=self)
 
     def process_pending(self) -> dict[str, int]:
         return self._task_lifecycle_facade().process_pending()

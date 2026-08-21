@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { dashboardApi } from '@/lib/api'
 
 const refetchIntervalMs = 20_000
+const runtimeOperationsRefetchIntervalMs = 5_000
 const staleTimeMs = 8_000
 
 export function useDashboardData() {
@@ -60,6 +61,12 @@ export function useDashboardData() {
     staleTime: staleTimeMs,
     refetchInterval: refetchIntervalMs,
   })
+  const runtimeOperations = useQuery({
+    queryKey: ['operator-dashboard', 'runtime-operations'],
+    queryFn: ({ signal }) => dashboardApi.runtimeOperations(signal),
+    staleTime: runtimeOperationsRefetchIntervalMs,
+    refetchInterval: runtimeOperationsRefetchIntervalMs,
+  })
   const installs = useQuery({
     queryKey: ['operator-dashboard', 'installs'],
     queryFn: ({ signal }) => dashboardApi.installs(signal),
@@ -90,6 +97,30 @@ export function useDashboardData() {
     staleTime: staleTimeMs,
     refetchInterval: refetchIntervalMs,
   })
+  const hooks = useQuery({
+    queryKey: ['operator-dashboard', 'hooks'],
+    queryFn: ({ signal }) => dashboardApi.hooks(signal),
+    staleTime: staleTimeMs,
+    refetchInterval: refetchIntervalMs,
+  })
+  const hookMetrics = useQuery({
+    queryKey: ['operator-dashboard', 'hook-metrics'],
+    queryFn: ({ signal }) => dashboardApi.hookMetrics(signal),
+    staleTime: staleTimeMs,
+    refetchInterval: refetchIntervalMs,
+  })
+  const hookDeliveries = useQuery({
+    queryKey: ['operator-dashboard', 'hook-deliveries'],
+    queryFn: ({ signal }) => dashboardApi.hookDeliveries(signal),
+    staleTime: staleTimeMs,
+    refetchInterval: refetchIntervalMs,
+  })
+  const hookDeadLetters = useQuery({
+    queryKey: ['operator-dashboard', 'hook-dead-letters'],
+    queryFn: ({ signal }) => dashboardApi.hookDeadLetters(signal),
+    staleTime: staleTimeMs,
+    refetchInterval: refetchIntervalMs,
+  })
 
-  return { home, readiness, cometbft, cometbftInstall, fleet, bundles, endpoints, wallet, providers, installs, sessions, market, remoteEndpoints, events }
+  return { home, readiness, cometbft, cometbftInstall, fleet, bundles, endpoints, wallet, providers, runtimeOperations, installs, sessions, market, remoteEndpoints, events, hooks, hookMetrics, hookDeliveries, hookDeadLetters }
 }

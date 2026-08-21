@@ -181,6 +181,28 @@ trusted operator approval boundary; it must not be fabricated by an Agent.
 Approved plan hashes survive a process restart when the persistent state path
 is configured.
 
+### Agent Hooks (RFC-0072)
+
+After the Agent credential has `HOOK:READ`, call `tools/list` and use
+`aidn.hook.list`, `aidn.hook.get`, `aidn.hook.deliveries`,
+`aidn.hook.dead_letters`, and `aidn.hook.metrics` to inspect the scoped Hook
+view. A Hook can only target the current Agent identity; receiving an event
+never grants mutation authority.
+
+Hook mutations use the same bounded plan/apply flow as Bundle mutations. For
+example, create a durable Provider-failure subscription:
+
+```json
+{"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"aidn.hook.create","arguments":{"hook_id":"provider-watch","target_agent_id":"agent-ops-1","event_filter":{"event_types":["aidn.provider.failed"],"severity_minimum":"WARNING"},"delivery_mode":"DURABLE_INBOX","mode":"plan","request_id":"req-hook-1","idempotency_key":"idem-hook-1"}}}
+```
+
+Apply only the returned `plan_hash` (and `approval_reference` when the
+operator policy requires confirmation). Use `aidn.hook.test` for a synthetic
+readiness check; it does not create an event or advance the Inbox. Durable
+delivery is at-least-once, so acknowledge the event IDs with `aidn.hook.ack`
+after the Agent has processed them. Replay and dead-letter retry are also
+plan-bound and must be deduplicated by `event_id`.
+
 Read the effective policy from both `aidn.capabilities.get` and
 `aidn.policy.get` before applying a mutation. The value is credential-scoped:
 `effective_approval_policy` (and `control_session.approval_policy`) describes

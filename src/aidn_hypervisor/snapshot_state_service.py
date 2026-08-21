@@ -103,6 +103,7 @@ class SnapshotStateService:
             if self._host.state_store is not None and hasattr(self._host.state_store, "load")
             else None
         )
+        hook_snapshot = self._host.hook_dispatcher.snapshot()
         return HypervisorStateSnapshot(
             tasks=[
                 TaskSnapshot(
@@ -355,6 +356,24 @@ class SnapshotStateService:
             consensus_state=self._host._ledger_operation_service.snapshot_consensus_state(),
             **self._host._ledger_operation_service.snapshot_settlement_state(),
             events=[event.model_copy(deep=True) for event in self._host._events],
+            canonical_events=[
+                event.model_copy(deep=True) for event in self._host.event_store.events()
+            ],
+            canonical_event_sequence=self._host.event_bus.last_sequence,
+            event_inboxes=self._host.event_store.snapshot_inboxes(),
+            hook_definitions=[
+                item.model_copy(deep=True)
+                for item in hook_snapshot["hooks"]
+            ],
+            hook_deliveries=[
+                item.model_copy(deep=True)
+                for item in hook_snapshot["deliveries"]
+            ],
+            hook_dead_letters=[
+                item.model_copy(deep=True)
+                for item in hook_snapshot["dead_letters"]
+            ],
+            hook_metrics=hook_snapshot["metrics"].model_copy(deep=True),
         )
 
     def restore_state(self, snapshot: HypervisorStateSnapshot) -> dict[str, int]:
@@ -430,6 +449,17 @@ class SnapshotStateService:
         self._host._consumed_wallet_authorization_nonces = set(snapshot.consumed_wallet_authorization_nonces)
         self._host._bundle_states = {state.bundle_id: state.model_dump(mode="json") for state in snapshot.bundle_states}
         self._host._events = [event.model_copy(deep=True) for event in snapshot.events]
+        self._host.event_store.restore(
+            events=snapshot.canonical_events,
+            sequence=max(snapshot.canonical_event_sequence, len(snapshot.events)),
+            inboxes=snapshot.event_inboxes,
+        )
+        self._host.hook_dispatcher.restore(
+            hooks=snapshot.hook_definitions,
+            deliveries=snapshot.hook_deliveries,
+            dead_letters=snapshot.hook_dead_letters,
+            metrics=snapshot.hook_metrics,
+        )
         session_service = getattr(self._host, "session_service", None)
         failure_handler = getattr(session_service, "failure_handler", None)
         if failure_handler is not None:

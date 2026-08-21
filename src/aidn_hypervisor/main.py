@@ -369,6 +369,39 @@ def build_app(
     )
 
     @app.middleware("http")
+    async def hook_operator_boundary(request: Request, call_next):
+        """Keep Hook definitions and delivery records inside the paired UI.
+
+        The canonical MCP surface has its own token and scope checks.  The
+        dashboard HTTP surface must enforce the equivalent browser session
+        boundary; otherwise a LAN caller could mutate Hooks by calling the
+        generic operator API directly.
+        """
+
+        if request.url.path == "/operators/hooks" or request.url.path.startswith(
+            "/operators/hooks/"
+        ):
+            access_service = app.state.dashboard_access_service
+            if access_service is not None and not access_service.authorize(
+                request.cookies.get("aidn_dashboard_access"),
+                browser_key=request.headers.get("X-AiDN-Browser-Key"),
+            ):
+                return JSONResponse(
+                    status_code=401,
+                    content={"error": {"code": "DASHBOARD_ACCESS_REQUIRED"}},
+                )
+            if (
+                access_service is not None
+                and not dashboard_access_insecure_lan
+                and request.url.scheme != "https"
+            ):
+                return JSONResponse(
+                    status_code=426,
+                    content={"error": {"code": "DASHBOARD_ACCESS_TLS_REQUIRED"}},
+                )
+        return await call_next(request)
+
+    @app.middleware("http")
     async def validator_write_boundary(request: Request, call_next):
         consensus = app.state.consensus_service
         if (
@@ -451,6 +484,18 @@ def _is_validator_consensus_write_path(path: str, method: str | None = None) -> 
     if parts == ["operators", "resources", "probe"]:
         # This bounded local operation accepts no caller-provided capacity and
         # only refreshes host measurements. It has no Ledger effect.
+        return True
+    if len(parts) >= 2 and parts[:2] == ["operators", "hooks"]:
+        # Hook subscriptions and delivery recovery are local event-plane
+        # state. They do not submit a consensus transaction.
+        return True
+    if (
+        len(parts) == 5
+        and parts[:3] == ["operators", "events", "inbox"]
+        and parts[4] == "ack"
+        and (method is None or method == "POST")
+    ):
+        # Inbox acknowledgments advance local delivery state only.
         return True
     if (
         parts == ["operators", "dashboard", "access", "pair"]

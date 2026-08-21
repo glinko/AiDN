@@ -9,6 +9,7 @@ from aidn_hypervisor.domain.models import (
     TaskRequest,
 )
 from aidn_hypervisor.model_store import FileModelStore
+from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.process_manager import ProviderProcessManager
@@ -414,6 +415,30 @@ def test_service_snapshot_and_restore_preserves_event_journal() -> None:
     assert restored_event.event_type == "operator.note"
     assert restored_event.message == "manual checkpoint"
     assert restored_event.details == {"source": "test"}
+    assert restored_service.canonical_event_journal(limit=1)[0].event_type == "operator.note"
+
+    restored_service.record_event(event_type="operator.note", message="after restore")
+    assert restored_service.canonical_event_journal(limit=1)[0].sequence == 2
+
+
+def test_durable_event_store_persists_canonical_events_and_inbox(tmp_path) -> None:
+    bundle = _bundle("whisper-a", "speech_to_text")
+    state_store = FileStateStore(tmp_path / "hypervisor-state.json")
+    service = _service(bundles=[bundle], plugins=_registry())
+    service.state_store = state_store
+    service.record_event(event_type="aidn.node.ready", message="ready")
+    item = service.event_inbox("agent-1")["items"][0]
+    service.acknowledge_event_inbox("agent-1", [item["event_id"]])
+
+    persisted = state_store.load()
+    assert persisted.canonical_events[0].event_type == "aidn.node.ready"
+    assert persisted.event_inboxes[0].ack_sequence == 1
+
+    restored_service = _service(bundles=[bundle], plugins=_registry())
+    restored_service.state_store = state_store
+    restored_service.restore_state(persisted)
+    assert restored_service.canonical_event_journal(limit=1)[0].event_type == "aidn.node.ready"
+    assert restored_service.event_inbox("agent-1")["items"] == []
 
 
 def test_service_snapshot_and_restore_preserves_bundle_cooldown_state(

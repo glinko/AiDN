@@ -14,6 +14,7 @@ export type DashboardScreen =
   | 'validation'
   | 'network'
   | 'cometbft'
+  | 'hooks'
 
 export const dashboardScreens: readonly DashboardScreen[] = [
   'overview',
@@ -29,6 +30,7 @@ export const dashboardScreens: readonly DashboardScreen[] = [
   'validation',
   'network',
   'cometbft',
+  'hooks',
 ]
 
 type OperatorDashboardState = {

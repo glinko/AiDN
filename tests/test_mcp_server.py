@@ -368,6 +368,65 @@ def test_mcp_bundle_get_reconciles_live_provider_health() -> None:
     assert runtime["health_status"] == "healthy"
 
 
+def test_mcp_runtime_operations_returns_live_readiness_and_job_progress() -> None:
+    server = _server("PROVIDER:READ", runtime=True)
+    _initialize(server)
+
+    result = _call(server, "aidn.runtime.operations")
+
+    assert result["isError"] is False
+    payload = result["structuredContent"]
+    assert payload["freshness"]["source"] == "live_reconciled"
+    assert payload["freshness"]["runtime_health_reconciled"] is True
+    assert payload["summary"]["runtime_total"] == 1
+    assert payload["runtimes"][0]["readiness_status"] == "READY"
+
+    resource = server.handle_message(
+        {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "resources/read",
+            "params": {"uri": "aidn://runtime/operations"},
+        }
+    )
+    assert resource["result"]["contents"][0]["mimeType"] == "application/json"
+
+
+def test_mcp_event_inbox_is_durable_and_acknowledgeable() -> None:
+    server = _server("AUDIT:READ")
+    _initialize(server)
+    server.control.service.record_event(
+        event_type="aidn.node.ready",
+        message="node ready",
+    )
+
+    query = _call(server, "aidn.event.query", {"event_type": ["aidn.node.ready"]})
+    assert query["isError"] is False
+    assert query["structuredContent"]["items"][0]["event_type"] == "aidn.node.ready"
+
+    inbox = _call(server, "aidn.event.inbox")
+    assert inbox["isError"] is False
+    item = inbox["structuredContent"]["items"][0]
+
+    repeated = _call(server, "aidn.event.inbox")
+    assert repeated["structuredContent"]["items"][0]["event_id"] == item["event_id"]
+
+    acknowledged = _call(server, "aidn.event.ack", {"event_ids": [item["event_id"]]})
+    assert acknowledged["isError"] is False
+    assert acknowledged["structuredContent"]["ack_sequence"] == item["sequence"]
+    assert _call(server, "aidn.event.inbox")["structuredContent"]["items"] == []
+
+    resource = server.handle_message(
+        {
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "resources/read",
+            "params": {"uri": "aidn://events/recent"},
+        }
+    )
+    assert resource["result"]["contents"][0]["mimeType"] == "application/json"
+
+
 def test_mcp_permission_denial_is_a_tool_error() -> None:
     server = _server("BUNDLE:READ")
     _initialize(server)

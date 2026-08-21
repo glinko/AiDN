@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from aidn_hypervisor.event_bus import EventDataClass, EventSeverity
 from aidn_hypervisor.state import JournalEvent
 from aidn_hypervisor.wallet_models import WalletSessionEvent
 
@@ -22,7 +23,18 @@ class EventProjectionService:
         bundle_id: str | None = None,
         runtime_id: str | None = None,
         details: dict | None = None,
+        source: str | None = None,
+        severity: EventSeverity | str | None = None,
+        data_class: EventDataClass | str | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        resource_revision: str | None = None,
+        correlation_id: str | None = None,
+        causation_id: str | None = None,
+        requires_attention: bool | None = None,
+        requires_action: bool | None = None,
     ) -> JournalEvent:
+        event_details = dict(details or {})
         event = JournalEvent(
             timestamp=datetime.now(UTC).isoformat(),
             event_type=event_type,
@@ -30,9 +42,27 @@ class EventProjectionService:
             task_id=task_id,
             bundle_id=bundle_id,
             runtime_id=runtime_id,
-            details=dict(details or {}),
+            details=event_details,
         )
         self._host._events.append(event)
+        self._host.event_bus.publish(
+            event_type=event_type,
+            message=message,
+            task_id=task_id,
+            bundle_id=bundle_id,
+            runtime_id=runtime_id,
+            details=event_details,
+            source=source,
+            severity=severity,
+            data_class=data_class,
+            resource_type=resource_type,
+            resource_id=resource_id,
+            resource_revision=resource_revision,
+            correlation_id=correlation_id,
+            causation_id=causation_id,
+            requires_attention=requires_attention,
+            requires_action=requires_action,
+        )
         if (
             self.record_wallet_session_event_from_journal(event)
             or self.record_wallet_validation_event_from_journal(event)

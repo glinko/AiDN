@@ -250,6 +250,28 @@ const cometBftInstallSchema = z.object({
   steps: z.array(unknownRecord).catch([]),
 }).passthrough()
 
+const runtimeOperationsSchema = z.object({
+  generated_at: stringValue,
+  freshness: z.object({
+    source: stringValue,
+    max_age_seconds: numberValue,
+    runtime_health_reconciled: z.boolean().catch(false),
+    installation_jobs_reconciled: z.boolean().catch(false),
+    reconciliation_error: z.string().nullable().optional(),
+  }).passthrough(),
+  summary: z.object({
+    runtime_total: numberValue,
+    runtime_ready: numberValue,
+    runtime_failed_or_not_ready: numberValue,
+    runtime_active_tasks: numberValue,
+    installation_job_total: numberValue,
+    installation_job_active: numberValue,
+    installation_job_failed: numberValue,
+  }).passthrough(),
+  runtimes: z.array(unknownRecord).catch([]),
+  installation_jobs: z.array(unknownRecord).catch([]),
+}).passthrough()
+
 const journalEventSchema = z.object({
   timestamp: stringValue,
   event_type: stringValue,
@@ -274,6 +296,7 @@ export type MarketDashboard = z.infer<typeof marketDashboardSchema>
 export type RemoteEndpointsDashboard = z.infer<typeof remoteEndpointsDashboardSchema>
 export type CometBftDashboard = z.infer<typeof cometBftDashboardSchema>
 export type CometBftInstall = z.infer<typeof cometBftInstallSchema>
+export type RuntimeOperations = z.infer<typeof runtimeOperationsSchema>
 export type JournalEvent = z.infer<typeof journalEventSchema>
 
 export const dashboardSchemas = {
@@ -288,5 +311,6 @@ export const dashboardSchemas = {
   remoteEndpoints: remoteEndpointsDashboardSchema,
   cometbft: cometBftDashboardSchema,
   cometbftInstall: cometBftInstallSchema,
+  runtimeOperations: runtimeOperationsSchema,
   events: z.array(journalEventSchema),
 }

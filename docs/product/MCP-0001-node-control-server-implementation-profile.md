@@ -200,9 +200,16 @@ notifications. A Hook never grants permission to invoke a mutation tool; every
 resulting action continues through this profile's Control Session, scope,
 policy, budget, and approval checks.
 
-The RFC-0072 Hook and Event tools are a separate implementation slice. They
-must not be advertised as implemented MCP capabilities until the Event Bus,
-durable Inbox, redaction, replay, and authorization tests are present.
+The first RFC-0072 implementation slice is now advertised by the live tool
+catalog. The Event Bus, durable Inbox, scoped delivery, bounded retries,
+dead-letter recovery, replay, and authorization tests are present. `HOOK:READ`
+exposes Hook definitions, deliveries, dead letters, and metrics. `HOOK:MANAGE`
+adds operator-owned `aidn.hook.create`, `update`, `pause`, `resume`, `delete`,
+`test`, `ack`, `replay`, and `dead_letter_retry`. Mutations still require the
+normal plan/apply, idempotency, scope, and operator-approval boundaries, and a
+Hook is always restricted to the current Agent identity. Signed webhooks,
+runtime wake-up adapters, threshold coalescing, and autonomous recovery remain
+deferred RFC-0072 slices.
 
 ## RFC-0073 Resource Broker and Scheduler Extension
 

@@ -1309,6 +1309,20 @@ def test_runtime_readiness_endpoint_reconciles_provider_health() -> None:
     assert body["readiness"]["diagnostic"]["healthy"] is True
 
 
+def test_runtime_operations_dashboard_endpoint_returns_live_projection() -> None:
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard/runtime-operations")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["freshness"]["source"] == "live_reconciled"
+    assert body["freshness"]["runtime_health_reconciled"] is True
+    assert body["summary"]["runtime_total"] == 1
+    assert body["runtimes"][0]["runtime_id"] == "rt-1"
+    assert body["runtimes"][0]["readiness_status"] == "READY"
+
+
 def test_runtime_detail_endpoint_returns_runtime_with_history() -> None:
     service = _service(with_runtime=False, use_process_manager=True)
     runtime = service.start_bundle("whisper-a")
@@ -10934,6 +10948,57 @@ def test_operator_events_endpoint_returns_recent_journal_entries() -> None:
             "details": {"index": 2},
         }
     ]
+
+
+def test_operator_canonical_events_endpoint_returns_rfc_0072_envelope() -> None:
+    service = _service()
+    service.record_event(
+        event_type="aidn.provider.failed",
+        message="provider exited",
+        bundle_id="whisper-a",
+        details={"provider_instance_id": "pi-1", "revision": 2},
+        correlation_id="incident-1",
+        causation_id="action-1",
+    )
+    client = TestClient(build_app(service=service))
+
+    response = client.get("/operators/events/canonical")
+
+    assert response.status_code == 200
+    event = response.json()[0]
+    assert event["event_type"] == "aidn.provider.failed"
+    assert event["sequence"] == 1
+    assert event["resource_type"] == "bundle"
+    assert event["resource_id"] == "whisper-a"
+    assert event["resource_revision"] == "2"
+    assert event["correlation_id"] == "incident-1"
+    assert event["causation_id"] == "action-1"
+    assert event["event_hash"].startswith("sha256:")
+
+
+def test_operator_event_query_and_inbox_ack_are_cursor_based() -> None:
+    service = _service()
+    service.record_event(event_type="aidn.node.ready", message="ready")
+    service.record_event(event_type="aidn.node.degraded", message="degraded")
+    client = TestClient(build_app(service=service))
+
+    query = client.get("/operators/events/query?after_sequence=1&limit=1")
+    assert query.status_code == 200
+    assert [item["sequence"] for item in query.json()["items"]] == [2]
+    assert query.json()["next_cursor"] == 2
+
+    inbox = client.get("/operators/events/inbox/agent-1")
+    assert inbox.status_code == 200
+    items = inbox.json()["items"]
+    assert len(items) == 2
+    acknowledged = client.post(
+        "/operators/events/inbox/agent-1/ack",
+        json={"event_ids": [items[0]["event_id"]]},
+    )
+    assert acknowledged.status_code == 200
+    assert acknowledged.json()["ack_sequence"] == 1
+    remaining = client.get("/operators/events/inbox/agent-1")
+    assert [item["sequence"] for item in remaining.json()["items"]] == [2]
 
 
 def test_operator_events_endpoint_includes_admission_decision_events(

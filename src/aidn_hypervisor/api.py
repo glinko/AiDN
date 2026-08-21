@@ -17,6 +17,12 @@ from aidn_hypervisor.dashboard import (
     find_react_dashboard_asset,
     load_dashboard_html,
 )
+from aidn_hypervisor.event_store import EventStoreError
+from aidn_hypervisor.hook_dispatcher import (
+    HookDeliveryState,
+    HookDispatcherError,
+    HookEventFilter,
+)
 from aidn_hypervisor.domain.models import (
     AllocationRequest,
     BundleConfig,
@@ -60,6 +66,9 @@ from aidn_hypervisor.registry_models import (
 from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.remote_endpoints.service import RemoteEndpointDependencyError
 from aidn_hypervisor.resource_probe import refresh_resource_probe_from_environment
+from aidn_hypervisor.runtime_operations_read_models import (
+    build_runtime_operations_payload,
+)
 from aidn_hypervisor.service import AllocationUnavailableError, HypervisorService
 from aidn_hypervisor.session_application_service import SessionApplicationService
 from aidn_hypervisor.session_read_models import (
@@ -129,6 +138,43 @@ class AttachProviderInstanceRequest(BaseModel):
 
 
 class ValidationCustodySweepRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    now: str | None = None
+
+
+class EventInboxAcknowledgeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_ids: list[str] = Field(min_length=1, max_length=500)
+
+
+class HookCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    hook_id: str = Field(min_length=1, max_length=128)
+    owner_operator_id: str = Field(min_length=1, max_length=128)
+    target_agent_id: str = Field(min_length=1, max_length=256)
+    event_filter: HookEventFilter
+    delivery_mode: str = "DURABLE_INBOX"
+    max_attempts: int = Field(default=3, ge=1, le=10)
+    retry_backoff_seconds: float = Field(default=1.0, ge=0, le=3600)
+    expires_at: str | None = None
+
+
+class HookUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool | None = None
+    target_agent_id: str | None = Field(default=None, min_length=1, max_length=256)
+    event_filter: HookEventFilter | None = None
+    delivery_mode: str | None = None
+    max_attempts: int | None = Field(default=None, ge=1, le=10)
+    retry_backoff_seconds: float | None = Field(default=None, ge=0, le=3600)
+    expires_at: str | None = None
+
+
+class HookDispatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     now: str | None = None
@@ -1152,6 +1198,204 @@ def build_api_router(
     async def event_journal(limit: int = 100) -> list[dict]:
         return [event.model_dump(mode="json") for event in service.event_journal(limit=limit)]
 
+    @router.get("/operators/events/canonical")
+    async def canonical_event_journal(limit: int = 100) -> list[dict]:
+        """Return the RFC-0072 envelope produced by the internal bus."""
+
+        return [
+            event.model_dump(mode="json")
+            for event in service.canonical_event_journal(limit=limit)
+        ]
+
+    @router.get("/operators/events/query")
+    async def canonical_event_query(
+        after_sequence: int = 0,
+        limit: int = 100,
+        event_type: list[str] | None = None,
+        resource_id: str | None = None,
+    ) -> dict:
+        """Read the retained canonical stream with an explicit cursor."""
+
+        return service.canonical_event_query(
+            after_sequence=after_sequence,
+            limit=limit,
+            event_types=set(event_type) if event_type else None,
+            resource_id=resource_id,
+        )
+
+    @router.get("/operators/events/inbox/{agent_id}")
+    async def event_inbox(
+        agent_id: str,
+        after_sequence: int | None = None,
+        limit: int = 100,
+    ) -> dict:
+        """Read an agent inbox without advancing its acknowledgement cursor."""
+
+        try:
+            return service.event_inbox(
+                agent_id,
+                after_sequence=after_sequence,
+                limit=limit,
+            )
+        except EventStoreError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    @router.post("/operators/events/inbox/{agent_id}/ack")
+    async def acknowledge_event_inbox(
+        agent_id: str,
+        request: EventInboxAcknowledgeRequest,
+    ) -> dict:
+        """Acknowledge retained events idempotently for one agent identity."""
+
+        try:
+            return service.acknowledge_event_inbox(agent_id, request.event_ids)
+        except EventStoreError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+
+    def _operator_hook(hook_id: str):
+        """Resolve a Hook only when it belongs to this node's operator."""
+
+        try:
+            hook = service.get_hook(hook_id)
+        except HookDispatcherError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        if hook.owner_operator_id != service.operator_id:
+            raise HTTPException(status_code=404, detail=f"Unknown Hook: {hook_id}")
+        return hook
+
+    def _is_operator_delivery(delivery) -> bool:
+        try:
+            return service.get_hook(delivery.hook_id).owner_operator_id == service.operator_id
+        except HookDispatcherError:
+            # Deleting a Hook does not erase its delivery audit trail; keep
+            # orphaned records out of the live operator projection.
+            return False
+
+    @router.get("/operators/hooks")
+    async def list_hooks(owner_operator_id: str | None = None) -> list[dict]:
+        if owner_operator_id is not None and owner_operator_id != service.operator_id:
+            raise HTTPException(status_code=403, detail="Hook owner is not this Hypervisor operator")
+        return [
+            hook.model_dump(mode="json")
+            for hook in service.list_hooks(owner_operator_id=service.operator_id)
+        ]
+
+    @router.post("/operators/hooks", status_code=201)
+    async def create_hook(request: HookCreateRequest) -> dict:
+        if request.owner_operator_id != service.operator_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Hook owner must match this Hypervisor's configured operator identity",
+            )
+        try:
+            hook = service.create_hook(**request.model_dump())
+        except (HookDispatcherError, EventStoreError, ValueError) as error:
+            status_code = 409 if isinstance(error, HookDispatcherError) and error.code == "MCP_HOOK_EXISTS" else 400
+            raise HTTPException(status_code=status_code, detail=str(error)) from error
+        return hook.model_dump(mode="json")
+
+    @router.get("/operators/hooks/metrics")
+    async def hook_metrics() -> dict:
+        return service.hook_dispatch_metrics()
+
+    @router.get("/operators/hooks/deliveries")
+    async def hook_deliveries(
+        hook_id: str | None = None,
+        delivery_status: HookDeliveryState | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        if hook_id is not None:
+            _operator_hook(hook_id)
+        return [
+            item.model_dump(mode="json")
+            for item in service.hook_deliveries(
+                hook_id=hook_id,
+                status=delivery_status,
+                limit=limit,
+            )
+            if _is_operator_delivery(item)
+        ]
+
+    @router.get("/operators/hooks/dead-letters")
+    async def hook_dead_letters(limit: int = 100) -> list[dict]:
+        return [
+            item.model_dump(mode="json")
+            for item in service.hook_dead_letters(limit=limit)
+            if _is_operator_delivery(item)
+        ]
+
+    @router.post("/operators/hooks/dead-letters/{delivery_id}/retry")
+    async def retry_hook_dead_letter(delivery_id: str) -> dict:
+        try:
+            delivery = next(
+                item
+                for item in service.hook_dead_letters(limit=500)
+                if item.delivery_id == delivery_id
+            )
+            _operator_hook(delivery.hook_id)
+            return service.retry_hook_dead_letter(delivery_id).model_dump(mode="json")
+        except HookDispatcherError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except StopIteration as error:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Unknown dead letter: {delivery_id}",
+            ) from error
+
+    @router.post("/operators/hooks/replay/{event_id}")
+    async def replay_hook_event(event_id: str) -> list[dict]:
+        try:
+            return [
+                item.model_dump(mode="json")
+                for item in service.replay_hook_event(
+                    event_id,
+                    owner_operator_id=service.operator_id,
+                )
+            ]
+        except HookDispatcherError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+
+    @router.post("/operators/hooks/dispatch")
+    async def dispatch_hooks(request: HookDispatchRequest | None = None) -> dict:
+        # Manual dispatch never bypasses Hook policy; it only advances due
+        # retries after an agent/runtime has reconnected.
+        now = None
+        if request is not None and request.now:
+            try:
+                now = datetime.fromisoformat(request.now.replace("Z", "+00:00"))
+            except ValueError as error:
+                raise HTTPException(status_code=400, detail="now must be an ISO timestamp") from error
+        return {"delivered": service.hook_dispatcher.dispatch_due(now=now), "metrics": service.hook_dispatch_metrics()}
+
+    @router.get("/operators/hooks/{hook_id}")
+    async def get_hook(hook_id: str) -> dict:
+        return _operator_hook(hook_id).model_dump(mode="json")
+
+    @router.post("/operators/hooks/{hook_id}/test")
+    async def test_hook(hook_id: str) -> dict:
+        """Run a synthetic delivery readiness check without changing events."""
+
+        _operator_hook(hook_id)
+        return service.test_hook(hook_id)
+
+    @router.patch("/operators/hooks/{hook_id}")
+    async def update_hook(hook_id: str, request: HookUpdateRequest) -> dict:
+        try:
+            _operator_hook(hook_id)
+            return service.update_hook(
+                hook_id,
+                **request.model_dump(exclude_unset=True),
+            ).model_dump(mode="json")
+        except (HookDispatcherError, ValueError) as error:
+            status_code = 404 if isinstance(error, HookDispatcherError) and error.code == "MCP_HOOK_NOT_FOUND" else 400
+            raise HTTPException(status_code=status_code, detail=str(error)) from error
+
+    @router.delete("/operators/hooks/{hook_id}")
+    async def delete_hook(hook_id: str) -> dict:
+        _operator_hook(hook_id)
+        service.delete_hook(hook_id)
+        return {"deleted": True, "hook_id": hook_id}
+
     @router.get("/operators/registry/advertisement")
     async def registry_advertisement() -> dict:
         advertisement = service.node_advertisement()
@@ -1522,6 +1766,12 @@ def build_api_router(
             endpoint_publication_service=endpoint_publication_service,
             validation_service=validation_service,
         )
+
+    @router.get("/operators/dashboard/runtime-operations")
+    async def operator_dashboard_runtime_operations() -> dict:
+        """Return live runtime readiness and Provider Broker job progress."""
+
+        return build_runtime_operations_payload(service=service)
 
     @router.get("/operators/provider-plugins")
     async def list_provider_plugins() -> dict:

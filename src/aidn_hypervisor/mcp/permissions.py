@@ -160,7 +160,54 @@ AGENT_PERMISSION_CATALOG: tuple[McpAgentPermission, ...] = (
         ("aidn.budget.list", "aidn.budget.status"),
     ),
     McpAgentPermission(
-        "AUDIT:READ", "Audit log", "Read the hash-linked MCP audit stream.", "Read", "low", ("aidn.audit.query",)
+        "AUDIT:READ",
+        "Audit and event stream",
+        "Read the hash-linked MCP audit stream and the retained canonical event Inbox.",
+        "Read",
+        "low",
+        (
+            "aidn.audit.query",
+            "aidn.event.query",
+            "aidn.event.inbox",
+            "aidn.event.ack",
+        ),
+    ),
+    McpAgentPermission(
+        "HOOK:READ",
+        "Hook delivery status",
+        "Inspect authorized Hook definitions, delivery attempts, dead letters, and metrics.",
+        "Read",
+        "low",
+        (
+            "aidn.hook.list",
+            "aidn.hook.get",
+            "aidn.hook.deliveries",
+            "aidn.hook.dead_letters",
+            "aidn.hook.metrics",
+        ),
+    ),
+    McpAgentPermission(
+        "HOOK:MANAGE",
+        "Manage agent Hooks",
+        (
+            "Create, update, pause, resume, test, replay, and delete operator-owned "
+            "Hook subscriptions. Mutations are plan-bound and remain subject to "
+            "the operator approval policy."
+        ),
+        "Actions",
+        "high",
+        (
+            "aidn.hook.create",
+            "aidn.hook.update",
+            "aidn.hook.pause",
+            "aidn.hook.resume",
+            "aidn.hook.delete",
+            "aidn.hook.test",
+            "aidn.hook.ack",
+            "aidn.hook.replay",
+            "aidn.hook.dead_letter_retry",
+        ),
+        "hook_manage",
     ),
     McpAgentPermission(
         "PROVIDER:WRITE",
