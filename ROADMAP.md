@@ -268,9 +268,14 @@ identity, Wallet identity, network history, and secret erasure interact.
   Runtime/Bundle/Model/Provider/Endpoint objects, with precheck, plan-hash
   binding, apply, operation persistence, and stale-plan rejection. Full
   resumable recovery and distributed NetworkOps remain on the next slice.
-- [ ] Add lifecycle transitions for Runtime, Provider, Model, Bundle,
-  Endpoint, Validation Report, and Node objects; block destructive deletion
-  while live dependents remain.
+- [x] Add the first plan/apply lifecycle-transition slice for Bundle and
+  Endpoint objects: Disable, Unpublish, and Retire are hash-bound, persisted,
+  stale-plan checked, evented, and fail closed around active sessions. Endpoint
+  unpublish keeps the local historical manifest while closing discovery and
+  external requests; NetworkOps finalization remains explicit and pending.
+- [ ] Extend the same lifecycle boundary to Runtime, Provider, Model,
+  Validation Report, and Node objects; block destructive deletion while live
+  dependents remain.
 - [x] Add the MVP durable tombstone store, stale-command protection, and
   lifecycle/reset events. Soft-delete grace periods and reference-aware
   ArtifactGC remain pending.

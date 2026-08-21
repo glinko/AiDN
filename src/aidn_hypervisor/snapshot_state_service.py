@@ -167,6 +167,9 @@ class SnapshotStateService:
             lifecycle_tombstones=[
                 dict(item) for item in self._host._lifecycle_tombstones.values()
             ],
+            lifecycle_states=[
+                dict(item) for item in getattr(self._host, "_lifecycle_states", {}).values()
+            ],
             model_installs=[ModelInstallSnapshot(**job) for job in self._host._model_installs.values()],
             plugin_releases=[
                 release.model_copy(deep=True) for release in self._host.provider_inventory.list_plugin_releases()
@@ -402,6 +405,11 @@ class SnapshotStateService:
         self._host._lifecycle_tombstones = {
             f"{item.get('object_type')}:{item.get('object_id')}": dict(item)
             for item in snapshot.lifecycle_tombstones
+            if isinstance(item, dict) and item.get("object_type") and item.get("object_id")
+        }
+        self._host._lifecycle_states = {
+            f"{item.get('object_type')}:{item.get('object_id')}": dict(item)
+            for item in getattr(snapshot, "lifecycle_states", [])
             if isinstance(item, dict) and item.get("object_type") and item.get("object_id")
         }
         self._host._owner_wallet = (

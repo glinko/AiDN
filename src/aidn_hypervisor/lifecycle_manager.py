@@ -74,6 +74,176 @@ class LifecycleManager:
     def tombstones(self) -> dict[str, dict]:
         return self._host._lifecycle_tombstones
 
+    @property
+    def lifecycle_states(self) -> dict[str, dict]:
+        """Durable lifecycle projections for objects without a local state field.
+
+        Bundle and Endpoint manifests predate RFC-0074 and therefore cannot
+        grow terminal states without breaking their immutable/configuration
+        contracts.  Keep those states in a small, JSON-compatible projection
+        owned by the host instead.  The snapshot service persists this map;
+        lightweight test hosts get it lazily so the lifecycle boundary remains
+        backwards compatible.
+        """
+        states = getattr(self._host, "_lifecycle_states", None)
+        if states is None:
+            states = {}
+            setattr(self._host, "_lifecycle_states", states)
+        return states
+
+    def transition_plan(
+        self,
+        object_type: str,
+        object_id: str,
+        action: str,
+        *,
+        actor: str = "operator",
+        expires_seconds: int = 900,
+    ) -> dict:
+        """Create a plan for a reversible/terminal lifecycle transition.
+
+        This is deliberately separate from local removal.  Unpublishing and
+        retiring preserve the object and its history, while disabling only
+        changes whether the local execution path may use it.
+        """
+        normalized_type = self._normalize_type(object_type)
+        normalized_action = str(action).strip().upper()
+        target = self._target(normalized_type, object_id)
+        target_state = self._transition_target_state(
+            normalized_type,
+            target["state"],
+            normalized_action,
+        )
+        now = _now()
+        expires_at = now + timedelta(seconds=max(60, int(expires_seconds)))
+        network_actions = self._transition_network_actions(
+            normalized_type, normalized_action
+        )
+        plan = {
+            "transition_id": f"transition-{uuid4().hex[:16]}",
+            "operation_id": None,
+            "operation_type": "TRANSITION",
+            "target": {"type": normalized_type, "id": object_id},
+            "action": normalized_action,
+            "current_state": target["state"],
+            "target_state": target_state,
+            "target_fingerprint": deepcopy(target["fingerprint"]),
+            "dependencies": self._dependencies(normalized_type, object_id),
+            "network_actions": network_actions,
+            "local_actions": self._transition_local_actions(
+                normalized_type, normalized_action, object_id
+            ),
+            "requires_approval": normalized_action in {"UNPUBLISH", "RETIRE"},
+            "actor": actor,
+            "created_at": _timestamp(now),
+            "expires_at": _timestamp(expires_at),
+        }
+        plan["operation_id"] = plan["transition_id"]
+        plan["plan_hash"] = _canonical_hash(plan)
+        operation = {
+            "operation_id": plan["transition_id"],
+            "operation_type": "TRANSITION",
+            "target_id": object_id,
+            "target_type": normalized_type,
+            "plan_hash": plan["plan_hash"],
+            "plan": deepcopy(plan),
+            "state": "PLANNED",
+            "current_step": "PLAN",
+            "started_at": None,
+            "updated_at": _timestamp(now),
+            "error": None,
+            "idempotency_key": None,
+        }
+        with self._lock:
+            self.operations[plan["transition_id"]] = operation
+            self._persist()
+        self._emit(
+            "aidn.object.transition_planned",
+            "lifecycle transition plan created",
+            resource_type=normalized_type,
+            resource_id=object_id,
+            details={
+                "transition_id": plan["transition_id"],
+                "plan_hash": plan["plan_hash"],
+                "action": normalized_action,
+                "target_state": target_state,
+            },
+        )
+        return deepcopy(plan)
+
+    def apply_transition(
+        self,
+        transition_id: str,
+        plan_hash: str,
+        *,
+        actor: str = "operator",
+        idempotency_key: str | None = None,
+    ) -> dict:
+        with self._lock:
+            operation = self.operations.get(transition_id)
+            if operation is None or operation.get("operation_type") != "TRANSITION":
+                raise LifecycleError("OBJECT_NOT_FOUND", f"Unknown lifecycle transition: {transition_id}")
+            if operation["state"] == "COMPLETED":
+                return deepcopy(operation)
+            if operation["plan_hash"] != plan_hash:
+                raise LifecycleError(
+                    "REMOVAL_PLAN_STALE",
+                    "Lifecycle transition plan hash does not match",
+                    details={"expected": operation["plan_hash"], "received": plan_hash},
+                )
+            if operation.get("idempotency_key") not in {None, idempotency_key}:
+                raise LifecycleError(
+                    "MCP_CONFLICT_IDEMPOTENCY",
+                    "Lifecycle transition was already applied with another idempotency key",
+                )
+            plan = deepcopy(operation["plan"])
+        if plan.get("expires_at") and plan["expires_at"] < _timestamp():
+            raise LifecycleError("REMOVAL_PLAN_STALE", "Lifecycle transition plan has expired")
+
+        self._assert_plan_current(plan)
+        self._set_operation(
+            operation,
+            state="PRECHECK",
+            step="PRECHECK",
+            actor=actor,
+            idempotency_key=idempotency_key,
+        )
+        try:
+            self._set_operation(operation, state="APPLYING", step="APPLYING", actor=actor)
+            self._apply_transition(plan, actor=actor)
+            current = self._target(plan["target"]["type"], plan["target"]["id"])
+            if current["state"] != plan["target_state"]:
+                raise LifecycleError(
+                    "TRANSITION_VERIFY_FAILED",
+                    "Lifecycle transition did not reach its target state",
+                    details={"expected": plan["target_state"], "actual": current["state"]},
+                )
+            self._set_operation(operation, state="VERIFYING", step="VERIFY", actor=actor)
+            self._set_operation(operation, state="COMPLETED", step="COMPLETE", actor=actor)
+            event_type = {
+                "DISABLE": "aidn.object.disabled",
+                "UNPUBLISH": "aidn.object.unpublished",
+                "RETIRE": "aidn.object.retired",
+            }[plan["action"]]
+            self._emit(
+                event_type,
+                f"lifecycle transition {plan['action'].lower()} completed",
+                resource_type=plan["target"]["type"],
+                resource_id=plan["target"]["id"],
+                details={
+                    "transition_id": transition_id,
+                    "plan_hash": plan_hash,
+                    "previous_state": plan["current_state"],
+                    "new_state": plan["target_state"],
+                },
+            )
+            return deepcopy(self.operations[transition_id])
+        except LifecycleError as error:
+            self._fail_transition(operation, error)
+        except Exception as error:  # pragma: no cover - defensive boundary
+            self._fail_transition(operation, LifecycleError("TRANSITION_PARTIAL_FAILURE", str(error)))
+        raise AssertionError("unreachable")
+
     def removal_plan(
         self,
         object_type: str,
@@ -245,11 +415,24 @@ class LifecycleManager:
         if object_type == "runtime":
             for runtime in self._host.list_runtimes():
                 if runtime.runtime_id == object_id:
-                    return {"state": runtime.status.upper(), "fingerprint": {"status": runtime.status, "bundle_id": runtime.bundle_id}, "bundle_id": runtime.bundle_id, "runtime": runtime}
+                    return {
+                        "state": runtime.status.upper(),
+                        "fingerprint": {"status": runtime.status, "bundle_id": runtime.bundle_id},
+                        "bundle_id": runtime.bundle_id,
+                        "runtime": runtime,
+                    }
         elif object_type == "bundle":
             for bundle in self._host.bundle_config():
                 if bundle.bundle_id == object_id:
-                    return {"state": "ACTIVE" if bundle.enabled else "DISABLED", "fingerprint": bundle.model_dump(mode="json"), "bundle": bundle}
+                    return self._with_lifecycle_state(
+                        object_type,
+                        object_id,
+                        {
+                            "state": "ACTIVE" if bundle.enabled else "DISABLED",
+                            "fingerprint": bundle.model_dump(mode="json"),
+                            "bundle": bundle,
+                        },
+                    )
         elif object_type == "provider_instance":
             for item in self._host.provider_inventory.list_provider_instances():
                 if item.provider_instance_id == object_id:
@@ -263,12 +446,163 @@ class LifecycleManager:
             if service is not None:
                 for item in service.list_endpoints():
                     if item.endpoint_id == object_id:
-                        return {"state": item.status.upper(), "fingerprint": item.model_dump(mode="json"), "endpoint": item}
+                        return self._with_lifecycle_state(
+                            object_type,
+                            object_id,
+                            {
+                                "state": item.status.upper(),
+                                "fingerprint": item.model_dump(mode="json"),
+                                "endpoint": item,
+                            },
+                        )
         elif object_type == "provider_plugin":
             for item in self._host.provider_inventory.list_installed_plugins():
                 if item.plugin_id == object_id or item.installed_plugin_id == object_id:
                     return {"state": "ACTIVE", "fingerprint": item.model_dump(mode="json"), "plugin": item}
         raise LifecycleError("OBJECT_NOT_FOUND", f"Unknown {object_type}: {object_id}")
+
+    def _with_lifecycle_state(self, object_type: str, object_id: str, target: dict) -> dict:
+        projection = self.lifecycle_states.get(self._tombstone_key(object_type, object_id))
+        if projection is None:
+            return target
+        enriched = dict(target)
+        enriched["state"] = str(projection["state"]).upper()
+        fingerprint = dict(target["fingerprint"])
+        fingerprint["_lifecycle_state"] = projection["state"]
+        enriched["fingerprint"] = fingerprint
+        enriched["lifecycle"] = projection
+        return enriched
+
+    def _transition_target_state(self, object_type: str, current_state: str, action: str) -> str:
+        current = str(current_state).upper()
+        if current == "RETIRED":
+            raise LifecycleError("OBJECT_RETIRED", "Retired objects cannot be transitioned in place")
+        if object_type == "bundle":
+            if action == "DISABLE":
+                if current == "DISABLED":
+                    raise LifecycleError("OBJECT_DISABLED", "Bundle is already disabled")
+                if current != "ACTIVE":
+                    raise LifecycleError("LIFECYCLE_TRANSITION_UNSUPPORTED", f"Cannot disable Bundle from {current}")
+                return "DISABLED"
+            if action == "RETIRE":
+                if current != "DISABLED":
+                    raise LifecycleError("TRANSITION_REQUIRES_DISABLED", "Bundle must be disabled before retirement")
+                return "RETIRED"
+            raise LifecycleError("LIFECYCLE_TRANSITION_UNSUPPORTED", f"Action {action} is not supported for Bundle")
+        if object_type == "endpoint":
+            if action == "DISABLE":
+                if current == "DISABLED":
+                    raise LifecycleError("OBJECT_DISABLED", "Endpoint is already disabled")
+                if current in {"DELETED", "RETIRED", "UNPUBLISHED"}:
+                    raise LifecycleError("LIFECYCLE_TRANSITION_UNSUPPORTED", f"Cannot disable Endpoint from {current}")
+                return "DISABLED"
+            if action == "UNPUBLISH":
+                if current == "UNPUBLISHED":
+                    raise LifecycleError("OBJECT_UNPUBLISHED", "Endpoint is already unpublished")
+                if current == "DELETED":
+                    raise LifecycleError("OBJECT_DELETED", "Deleted Endpoint cannot be unpublished")
+                return "UNPUBLISHED"
+            if action == "RETIRE":
+                if current != "UNPUBLISHED":
+                    raise LifecycleError("TRANSITION_REQUIRES_UNPUBLISHED", "Endpoint must be unpublished before retirement")
+                return "RETIRED"
+            raise LifecycleError("LIFECYCLE_TRANSITION_UNSUPPORTED", f"Action {action} is not supported for Endpoint")
+        raise LifecycleError("LIFECYCLE_TRANSITION_UNSUPPORTED", f"Lifecycle transitions are not implemented for {object_type}")
+
+    def _transition_network_actions(self, object_type: str, action: str) -> list[dict]:
+        if object_type == "endpoint" and action == "UNPUBLISH":
+            return [{"action": "UNPUBLISH", "status": "LOCAL_PROJECTION_ONLY", "requires_network_finalization": True}]
+        if object_type == "endpoint" and action == "RETIRE":
+            return [{"action": "RETIRE", "status": "LOCAL_PROJECTION_ONLY", "requires_network_finalization": True}]
+        return []
+
+    def _transition_local_actions(self, object_type: str, action: str, object_id: str) -> list[dict]:
+        if object_type == "bundle":
+            if action == "DISABLE":
+                return [{"action": "SET_BUNDLE_ENABLED", "target": object_id, "enabled": False}]
+            return [{"action": "RETAIN_HISTORY", "target": object_id}]
+        if object_type == "endpoint":
+            if action == "DISABLE":
+                return [{"action": "DISABLE_ENDPOINT", "target": object_id}]
+            if action == "UNPUBLISH":
+                return [{"action": "CLOSE_PUBLICATION", "target": object_id}]
+            return [{"action": "DISABLE_ENDPOINT", "target": object_id}, {"action": "RETAIN_HISTORY", "target": object_id}]
+        return []
+
+    def _apply_transition(self, plan: dict, *, actor: str) -> None:
+        object_type = plan["target"]["type"]
+        object_id = plan["target"]["id"]
+        action = plan["action"]
+        if action == "RETIRE":
+            live_dependencies = [
+                item for item in self._dependencies(object_type, object_id)
+                if item.get("blocking", True)
+            ]
+            if live_dependencies:
+                raise LifecycleError(
+                    "DELETE_REQUIRES_DRAIN",
+                    "Object has live dependents and cannot be retired",
+                    details={"dependencies": live_dependencies},
+                )
+        if object_type == "bundle":
+            if action == "DISABLE":
+                self._host.set_bundle_enabled(object_id, False)
+            elif action == "RETIRE":
+                # Retirement is a terminal lifecycle projection; the local
+                # Bundle remains available for historical inspection.
+                pass
+            else:  # pragma: no cover - guarded by _transition_target_state
+                raise LifecycleError("LIFECYCLE_TRANSITION_UNSUPPORTED", f"Action {action} is not supported for Bundle")
+        elif object_type == "endpoint":
+            endpoint_service = getattr(self._host, "endpoint_service", None)
+            if endpoint_service is None:
+                raise LifecycleError("ENDPOINT_SERVICE_UNAVAILABLE", "Endpoint service is not configured")
+            if action == "DISABLE":
+                endpoint_service.disable_endpoint(object_id)
+            elif action == "UNPUBLISH":
+                endpoint_service.unpublish_endpoint(object_id)
+            elif action == "RETIRE":
+                active_sessions = self._active_endpoint_sessions(object_id)
+                if active_sessions:
+                    raise LifecycleError(
+                        "ACTIVE_SESSIONS",
+                        "Endpoint has active sessions and cannot be retired",
+                        details={"endpoint_id": object_id, "session_ids": active_sessions},
+                    )
+                endpoint = self._target(object_type, object_id)["endpoint"]
+                if endpoint.status in {"created", "active", "suspended"}:
+                    endpoint_service.disable_endpoint(object_id)
+            else:  # pragma: no cover - guarded by _transition_target_state
+                raise LifecycleError("LIFECYCLE_TRANSITION_UNSUPPORTED", f"Action {action} is not supported for Endpoint")
+        else:  # pragma: no cover - guarded by _transition_target_state
+            raise LifecycleError("LIFECYCLE_TRANSITION_UNSUPPORTED", f"Lifecycle transitions are not implemented for {object_type}")
+        self._set_lifecycle_state(object_type, object_id, plan["target_state"], actor=actor)
+
+    def _set_lifecycle_state(self, object_type: str, object_id: str, state: str, *, actor: str) -> None:
+        key = self._tombstone_key(object_type, object_id)
+        previous = self.lifecycle_states.get(key, {})
+        self.lifecycle_states[key] = {
+            "object_type": object_type,
+            "object_id": object_id,
+            "state": state,
+            "revision": int(previous.get("revision", 0)) + 1,
+            "actor": actor,
+            "updated_at": _timestamp(),
+        }
+        self._persist()
+
+    def _active_endpoint_sessions(self, endpoint_id: str) -> list[str]:
+        session_service = getattr(self._host, "session_service", None)
+        store = getattr(session_service, "store", None)
+        list_sessions = getattr(store, "list_sessions", None)
+        if not callable(list_sessions):
+            return []
+        active_states = {"queued", "active", "recovering", "paused", "force_closing"}
+        return [
+            session.session_id
+            for session in list_sessions()
+            if session.endpoint_id == endpoint_id and session.status in active_states
+        ]
 
     def _dependencies(self, object_type: str, object_id: str) -> list[dict]:
         dependencies: list[dict] = []
@@ -464,6 +798,8 @@ class LifecycleManager:
         target = self._target(plan["target"]["type"], plan["target"]["id"])
         if target["fingerprint"] != plan["target_fingerprint"]:
             raise LifecycleError("REMOVAL_PLAN_STALE", "Target changed since the plan was created")
+        if "dependencies" not in plan:
+            return
         current_dependencies = self._dependencies(plan["target"]["type"], plan["target"]["id"])
         if current_dependencies != plan["dependencies"]:
             raise LifecycleError("REMOVAL_PLAN_STALE", "Dependencies changed since the plan was created", details={"current": current_dependencies, "planned": plan["dependencies"]})
@@ -486,6 +822,21 @@ class LifecycleManager:
         operation["updated_at"] = _timestamp()
         self._persist()
         self._emit("aidn.object.removal_failed", error.message, resource_type=operation["target_type"], resource_id=operation["target_id"], details=error.as_detail())
+        raise error
+
+    def _fail_transition(self, operation: dict, error: LifecycleError) -> None:
+        operation["state"] = "PARTIALLY_APPLIED" if operation.get("current_step") not in {"PLAN", "PRECHECK"} else "FAILED"
+        operation["current_step"] = "FAILED"
+        operation["error"] = error.as_detail()
+        operation["updated_at"] = _timestamp()
+        self._persist()
+        self._emit(
+            "aidn.object.transition_failed",
+            error.message,
+            resource_type=operation["target_type"],
+            resource_id=operation["target_id"],
+            details=error.as_detail(),
+        )
         raise error
 
     def _active_task_count(self, runtime_id: str) -> int:

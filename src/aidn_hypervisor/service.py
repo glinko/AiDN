@@ -256,6 +256,7 @@ class HypervisorService:
         # load a snapshot without importing a newer object model.
         self._lifecycle_operations: dict[str, dict] = {}
         self._lifecycle_tombstones: dict[str, dict] = {}
+        self._lifecycle_states: dict[str, dict] = {}
         self._lifecycle_maintenance_state = "ENABLED"
         self._lifecycle_lock = RLock()
         self._bundle_states: dict[str, dict] = {}
@@ -2234,6 +2235,12 @@ class HypervisorService:
 
     def apply_lifecycle_removal(self, plan_id: str, plan_hash: str, **kwargs) -> dict:
         return self.lifecycle_manager.apply_removal(plan_id, plan_hash, **kwargs)
+
+    def lifecycle_transition_plan(self, object_type: str, object_id: str, action: str, **kwargs) -> dict:
+        return self.lifecycle_manager.transition_plan(object_type, object_id, action, **kwargs)
+
+    def apply_lifecycle_transition(self, transition_id: str, plan_hash: str, **kwargs) -> dict:
+        return self.lifecycle_manager.apply_transition(transition_id, plan_hash, **kwargs)
 
     def lifecycle_tombstones(self) -> list[dict]:
         return self.lifecycle_manager.list_tombstones()

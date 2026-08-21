@@ -386,6 +386,7 @@ class HypervisorStateSnapshot(BaseModel):
     # projections so a newer lifecycle manager can recover from an older node.
     lifecycle_operations: list[dict] = Field(default_factory=list)
     lifecycle_tombstones: list[dict] = Field(default_factory=list)
+    lifecycle_states: list[dict] = Field(default_factory=list)
     model_installs: list[ModelInstallSnapshot] = Field(default_factory=list)
     plugin_releases: list[PluginRelease] = Field(default_factory=list)
     installed_plugins: list[InstalledPlugin] = Field(default_factory=list)

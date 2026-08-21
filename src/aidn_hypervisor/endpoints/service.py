@@ -348,6 +348,42 @@ class EndpointService:
             next_status="stopped",
         )
 
+    def disable_endpoint(self, endpoint_id: str) -> EndpointResult:
+        """Stop local execution without deleting Endpoint history.
+
+        LifecycleManager owns the durable DISABLED projection.  The manifest
+        only records the executable process state, so a created/active/
+        suspended endpoint can be made non-runnable through one idempotent
+        local operation.
+        """
+        current = self.store.get_manifest(endpoint_id)
+        if current.status == "deleted":
+            raise EndpointStateError("Deleted Endpoint cannot be disabled")
+        if current.status == "stopped":
+            return EndpointResult(endpoint=current)
+        updated = current.model_copy(update={"status": "stopped"})
+        self.store.save_manifest(updated)
+        return EndpointResult(endpoint=updated)
+
+    def unpublish_endpoint(self, endpoint_id: str) -> EndpointResult:
+        """Close discovery/external access while retaining the manifest.
+
+        Consensus finalization is intentionally handled by the publication
+        application service.  This method is the local projection used by the
+        lifecycle plan/apply boundary and never erases publication history.
+        """
+        current = self.store.get_manifest(endpoint_id)
+        if current.status == "deleted":
+            raise EndpointStateError("Deleted Endpoint cannot be unpublished")
+        publication = current.publication.model_copy(
+            update={"discoverable": False, "accepts_external_requests": False}
+        )
+        if publication == current.publication:
+            return EndpointResult(endpoint=current)
+        updated = current.model_copy(update={"publication": publication})
+        self.store.save_manifest(updated)
+        return EndpointResult(endpoint=updated)
+
     def suspend_endpoint(self, endpoint_id: str) -> EndpointResult:
         return self._transition(endpoint_id, allowed={"active"}, next_status="suspended")
 

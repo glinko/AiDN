@@ -3,7 +3,10 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from aidn_hypervisor.domain.models import NodeCapacity
+from aidn_hypervisor.domain.models import BundleConfig, NodeCapacity, ResourceProfile
+from aidn_hypervisor.endpoints.models import CreateEndpointCommand, EndpointPublicationPolicy
+from aidn_hypervisor.endpoints.service import EndpointService
+from aidn_hypervisor.endpoints.store import EndpointStore
 from aidn_hypervisor.lifecycle_manager import LifecycleError, LifecycleManager, ResetManager
 from aidn_hypervisor.main import build_app
 from aidn_hypervisor.plugins.registry import PluginRegistry
@@ -54,6 +57,54 @@ class _FakeHost:
 
     def _persist_state(self):
         self.persist_count += 1
+
+
+class _TransitionHost(_FakeHost):
+    def __init__(self) -> None:
+        super().__init__()
+        self.bundles = [
+            BundleConfig(
+                bundle_id="bundle-a",
+                plugin_id="plugin",
+                provider_type="llama.cpp",
+                workload_type="llm_text",
+                model_id="model-a",
+                launch_mode="managed_process",
+                endpoint="http://127.0.0.1:8080",
+                device_affinity="cuda:0",
+                resource_profile=ResourceProfile(steady_vram_mb=1024),
+                warm_policy="auto",
+            )
+        ]
+        self.endpoint_service = EndpointService(EndpointStore())
+        self.endpoint_service.create_endpoint(
+            CreateEndpointCommand(
+                owner_wallet="wallet-a",
+                bundle_id="bundle-a",
+                bundle_hash="sha256:bundle",
+                display_name="Endpoint A",
+                model_class="llm",
+                publication=EndpointPublicationPolicy(
+                    visibility="public",
+                    discoverable=True,
+                    accepts_external_requests=True,
+                ),
+            )
+        )
+
+    def bundle_config(self):
+        return list(self.bundles)
+
+    def set_bundle_enabled(self, bundle_id: str, enabled: bool):
+        for index, bundle in enumerate(self.bundles):
+            if bundle.bundle_id == bundle_id:
+                self.bundles[index] = bundle.model_copy(update={"enabled": enabled})
+                self._persist_state()
+                return {"bundle_id": bundle_id, "enabled": enabled, "status": "enabled" if enabled else "disabled"}
+        raise KeyError(bundle_id)
+
+    def replace_bundle_config(self, bundles):
+        self.bundles = list(bundles)
 
 
 def test_runtime_removal_is_plan_bound_and_creates_tombstone() -> None:
@@ -110,6 +161,41 @@ def test_runtime_reset_rejects_future_profile_without_erasing_state() -> None:
         reset.apply(plan["reset_id"], plan["plan_hash"], actor="operator", force=False, idempotency_key=None)
     assert error.value.code == "RESET_PROFILE_NOT_IMPLEMENTED"
     assert host.runtimes
+
+
+def test_bundle_disable_and_retire_are_plan_bound_transitions() -> None:
+    host = _TransitionHost()
+    manager = LifecycleManager(host)
+
+    disable = manager.transition_plan("bundle", "bundle-a", "DISABLE")
+    result = manager.apply_transition(disable["transition_id"], disable["plan_hash"])
+    assert result["state"] == "COMPLETED"
+    assert manager._target("bundle", "bundle-a")["state"] == "DISABLED"
+
+    host.runtimes.clear()
+    retire = manager.transition_plan("bundle", "bundle-a", "RETIRE")
+    manager.apply_transition(retire["transition_id"], retire["plan_hash"])
+    assert manager._target("bundle", "bundle-a")["state"] == "RETIRED"
+
+
+def test_endpoint_unpublish_then_retire_preserves_manifest_and_closes_access() -> None:
+    host = _TransitionHost()
+    manager = LifecycleManager(host)
+    endpoint_id = host.endpoint_service.list_endpoints()[0].endpoint_id
+
+    unpublish = manager.transition_plan("endpoint", endpoint_id, "UNPUBLISH")
+    manager.apply_transition(unpublish["transition_id"], unpublish["plan_hash"])
+    endpoint = host.endpoint_service.get_endpoint(endpoint_id).endpoint
+    assert endpoint.publication.discoverable is False
+    assert endpoint.publication.accepts_external_requests is False
+    assert manager._target("endpoint", endpoint_id)["state"] == "UNPUBLISHED"
+
+    host.runtimes.clear()
+    retire = manager.transition_plan("endpoint", endpoint_id, "RETIRE")
+    manager.apply_transition(retire["transition_id"], retire["plan_hash"])
+    endpoint = host.endpoint_service.get_endpoint(endpoint_id).endpoint
+    assert endpoint.status == "stopped"
+    assert manager._target("endpoint", endpoint_id)["state"] == "RETIRED"
 
 
 def test_operator_api_exposes_plan_and_tombstone_routes() -> None:

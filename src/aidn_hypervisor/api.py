@@ -190,6 +190,15 @@ class LifecycleRemovalPlanRequest(BaseModel):
     actor: str = Field(default="operator", min_length=1, max_length=128)
 
 
+class LifecycleTransitionPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    object_type: str = Field(min_length=1, max_length=64)
+    object_id: str = Field(min_length=1, max_length=256)
+    action: Literal["DISABLE", "UNPUBLISH", "RETIRE"]
+    actor: str = Field(default="operator", min_length=1, max_length=128)
+
+
 class LifecycleApplyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -3827,6 +3836,26 @@ def build_api_router(
         try:
             payload = request.model_dump(mode="json")
             return service.apply_lifecycle_removal(plan_id, **payload)
+        except LifecycleError as error:
+            status_code = 404 if error.code == "OBJECT_NOT_FOUND" else 409
+            raise HTTPException(status_code=status_code, detail=error.as_detail()) from error
+
+    @router.post("/operators/lifecycle/transition-plan")
+    async def lifecycle_transition_plan(request: LifecycleTransitionPlanRequest) -> dict:
+        try:
+            return service.lifecycle_transition_plan(**request.model_dump(mode="json"))
+        except LifecycleError as error:
+            raise HTTPException(status_code=409, detail=error.as_detail()) from error
+
+    @router.post("/operators/lifecycle/transition-plans/{transition_id}/apply")
+    async def apply_lifecycle_transition(transition_id: str, request: LifecycleApplyRequest) -> dict:
+        try:
+            payload = request.model_dump(mode="json")
+            payload.pop("force", None)
+            return service.apply_lifecycle_transition(
+                transition_id,
+                **payload,
+            )
         except LifecycleError as error:
             status_code = 404 if error.code == "OBJECT_NOT_FOUND" else 409
             raise HTTPException(status_code=status_code, detail=error.as_detail()) from error
