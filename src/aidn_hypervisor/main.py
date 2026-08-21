@@ -84,7 +84,7 @@ from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.remote_endpoints.service import RemoteEndpointService
 from aidn_hypervisor.remote_endpoints.store import RemoteEndpointStore
 from aidn_hypervisor.resource_probe import load_resource_probe_from_environment
-from aidn_hypervisor.resources import ResourceOrchestrator
+from aidn_hypervisor.resources import ResourceOrchestrator, ResourceSafetyPolicy
 from aidn_hypervisor.runtime_port_allocator import RuntimePortAllocator
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
@@ -790,6 +790,7 @@ def _build_default_service(
         resources=ResourceOrchestrator(
             resource_probe.capacity,
             probe=resource_probe.metadata(),
+            safety=ResourceSafetyPolicy.from_environment(),
         ),
         bundles=bundles,
         plugins=plugins,

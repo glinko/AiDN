@@ -2851,15 +2851,21 @@ function NotificationDock({ notifications, expanded, onToggle }: { notifications
   )
 }
 
-function OperationNotice({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+/**
+ * Compatibility bridge for existing operation state.
+ *
+ * Transient operation results used to render inline on every workspace. The
+ * notification dock is now the single presentation surface, so this bridge
+ * forwards the message and deliberately renders no page-level banner.
+ */
+function OperationNotice({ message }: { message: string; onDismiss?: () => void }) {
   const pushNotification = useContext(NotificationContext)
-  const failed = isFailedOperationMessage(message)
 
   useEffect(() => {
     pushNotification?.(message)
   }, [message, pushNotification])
 
-  return <div role={failed ? 'alert' : 'status'} aria-live="polite" className={cn('flex items-start justify-between gap-3 rounded-lg border p-3 text-sm', failed ? 'border-rose-300/25 bg-rose-300/[0.05] text-rose-100' : 'border-emerald-300/25 bg-emerald-300/[0.05] text-emerald-100')}><div className="flex items-start gap-2"><span className="mt-0.5" aria-hidden="true">{failed ? <XCircle className="size-4" /> : <CheckCircle2 className="size-4" />}</span><p className="leading-5">{message}</p></div><Button variant="ghost" size="icon-xs" className="shrink-0" aria-label="Dismiss operation result" onClick={onDismiss}><XCircle /></Button></div>
+  return null
 }
 
 function OperationsWorkspace({ screen, data, onNavigate, onRefresh }: { screen: OperationsScreen; data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {

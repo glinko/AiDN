@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -159,6 +160,86 @@ def _probe_nvidia_vram() -> tuple[dict[str, int], dict[str, int], str | None]:
     return devices, measured, limitation
 
 
+def _probe_nvidia_processes() -> tuple[list[dict[str, Any]], str | None]:
+    """Return bounded GPU process evidence without exposing command lines."""
+
+    query = [
+        "nvidia-smi",
+        "--query-compute-apps=gpu_uuid,pid,process_name,used_memory",
+        "--format=csv,noheader,nounits",
+    ]
+    try:
+        result = subprocess.run(
+            query,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=3,
+        )
+    except FileNotFoundError:
+        return [], None
+    except (OSError, subprocess.TimeoutExpired):
+        return [], "GPU process usage could not be measured"
+    if result.returncode != 0:
+        return [], "GPU process usage could not be measured"
+
+    processes: list[dict[str, Any]] = []
+    for line in result.stdout.splitlines():
+        parts = [part.strip() for part in line.split(",")]
+        if len(parts) != 4:
+            continue
+        gpu_uuid, raw_pid, process_name, raw_memory = parts
+        try:
+            pid = int(raw_pid)
+            used_memory = int(raw_memory)
+        except ValueError:
+            continue
+        if pid <= 0 or used_memory < 0:
+            continue
+        processes.append(
+            {
+                "gpu_uuid": gpu_uuid,
+                "pid": pid,
+                "process_name": process_name[:128],
+                "used_memory_mb": used_memory,
+            }
+        )
+    return processes, None
+
+
+def _probe_ram_usage_mb() -> int:
+    """Read Linux memory usage without adding a mandatory psutil dependency."""
+
+    raw = _read_text("/proc/meminfo")
+    if not raw:
+        return 0
+    values: dict[str, int] = {}
+    for line in raw.splitlines():
+        parts = line.split()
+        if len(parts) >= 2:
+            try:
+                values[parts[0].rstrip(":")] = int(parts[1])
+            except ValueError:
+                continue
+    total = values.get("MemTotal", 0)
+    available = values.get("MemAvailable", values.get("MemFree", 0))
+    return max(0, (total - available) // 1024)
+
+
+def _probe_storage(path: str | Path | None = None) -> dict[str, Any] | None:
+    target = Path(path or os.getenv("AIDN_RESOURCE_STORAGE_PATH") or Path.cwd())
+    try:
+        usage = shutil.disk_usage(target)
+    except OSError:
+        return None
+    return {
+        "path": str(target),
+        "total_bytes": int(usage.total),
+        "used_bytes": int(usage.used),
+        "free_bytes": int(usage.free),
+    }
+
+
 @dataclass(frozen=True)
 class ResourceProbeReport:
     capacity: NodeCapacity
@@ -166,6 +247,10 @@ class ResourceProbeReport:
     observed_at: str
     limitations: tuple[str, ...] = ()
     measured_vram_mb: dict[str, int] = field(default_factory=dict)
+    measured_cpu_cores: float = 0.0
+    measured_ram_mb: int = 0
+    storage: dict[str, Any] | None = None
+    external_processes: tuple[dict[str, Any], ...] = ()
 
     def as_payload(self) -> dict[str, Any]:
         return {
@@ -174,6 +259,10 @@ class ResourceProbeReport:
             "observed_at": self.observed_at,
             "capacity": self.capacity.model_dump(mode="json"),
             "measured_vram_mb": dict(self.measured_vram_mb),
+            "measured_cpu_cores": self.measured_cpu_cores,
+            "measured_ram_mb": self.measured_ram_mb,
+            "storage": dict(self.storage) if self.storage else None,
+            "external_processes": [dict(item) for item in self.external_processes],
             "limitations": list(self.limitations),
         }
 
@@ -184,7 +273,21 @@ class ResourceProbeReport:
             "limitations": list(self.limitations),
             "gpu_reported": bool(self.capacity.gpu_devices),
             "measured_vram_mb": dict(self.measured_vram_mb),
+            "measured_cpu_cores": self.measured_cpu_cores,
+            "measured_ram_mb": self.measured_ram_mb,
+            "storage": dict(self.storage) if self.storage else None,
+            "external_processes": [dict(item) for item in self.external_processes],
         }
+
+
+class HardwareMonitor:
+    """Small injectable monitor used by bootstrap and operator refresh paths."""
+
+    def __init__(self, *, source: str = "runtime-auto-probe") -> None:
+        self.source = source
+
+    def sample(self) -> ResourceProbeReport:
+        return probe_host_resources(source=self.source)
 
 
 def probe_host_resources(*, source: str = "runtime-auto-probe") -> ResourceProbeReport:
@@ -194,10 +297,14 @@ def probe_host_resources(*, source: str = "runtime-auto-probe") -> ResourceProbe
 
     configured_vram = _configured_gpu_vram()
     measured_vram_mb: dict[str, int] = {}
+    external_processes: list[dict[str, Any]] = []
     if configured_vram is None:
         vram_mb, measured_vram_mb, gpu_limitation = _probe_nvidia_vram()
         if gpu_limitation:
             limitations.append(gpu_limitation)
+        external_processes, process_limitation = _probe_nvidia_processes()
+        if process_limitation:
+            limitations.append(process_limitation)
     else:
         vram_mb = configured_vram
 
@@ -218,6 +325,9 @@ def probe_host_resources(*, source: str = "runtime-auto-probe") -> ResourceProbe
         observed_at=datetime.now(UTC).isoformat(),
         limitations=tuple(limitations),
         measured_vram_mb=measured_vram_mb,
+        measured_ram_mb=_probe_ram_usage_mb(),
+        storage=_probe_storage(),
+        external_processes=tuple(external_processes),
     )
 
 
@@ -244,6 +354,12 @@ def read_resource_probe_report(path: str | Path) -> ResourceProbeReport:
     # the probe limitation in its normal metadata.
     if not isinstance(raw_measured_vram, Mapping):
         raw_measured_vram = {}
+    raw_processes = payload.get("external_processes") or []
+    if not isinstance(raw_processes, list):
+        raw_processes = []
+    raw_storage = payload.get("storage")
+    if not isinstance(raw_storage, Mapping):
+        raw_storage = None
     return ResourceProbeReport(
         capacity=NodeCapacity.model_validate(payload["capacity"]),
         source=str(payload.get("source") or "capacity-file"),
@@ -254,6 +370,20 @@ def read_resource_probe_report(path: str | Path) -> ResourceProbeReport:
             for device, amount in raw_measured_vram.items()
             if _is_non_negative_int(amount)
         },
+        measured_cpu_cores=_non_negative_float(payload.get("measured_cpu_cores")),
+        measured_ram_mb=_non_negative_int(payload.get("measured_ram_mb")),
+        storage=(
+            {
+                str(key): (str(value) if key == "path" else int(value))
+                for key, value in raw_storage.items()
+                if key == "path" or _is_non_negative_int(value)
+            }
+            if raw_storage is not None
+            else None
+        ),
+        external_processes=tuple(
+            dict(item) for item in raw_processes if isinstance(item, Mapping)
+        ),
     )
 
 
@@ -262,6 +392,18 @@ def _is_non_negative_int(value: Any) -> bool:
         return int(value) >= 0
     except (TypeError, ValueError):
         return False
+
+
+def _non_negative_int(value: Any) -> int:
+    return int(value) if _is_non_negative_int(value) else 0
+
+
+def _non_negative_float(value: Any) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, parsed)
 
 
 def load_resource_probe_from_environment(
@@ -293,6 +435,11 @@ def load_resource_probe_from_environment(
                     f"configured capacity file was unavailable or invalid: {type(error).__name__}",
                     *fallback.limitations,
                 ),
+                measured_vram_mb=dict(fallback.measured_vram_mb),
+                measured_cpu_cores=fallback.measured_cpu_cores,
+                measured_ram_mb=fallback.measured_ram_mb,
+                storage=dict(fallback.storage) if fallback.storage else None,
+                external_processes=tuple(dict(item) for item in fallback.external_processes),
             )
     return probe_host_resources(source="runtime-auto-probe")
 

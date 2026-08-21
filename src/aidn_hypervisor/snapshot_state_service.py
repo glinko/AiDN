@@ -156,6 +156,11 @@ class SnapshotStateService:
                 )
                 for allocation in self._host._allocations.values()
             ],
+            resource_leases=(
+                self._host.resources.lease_details()
+                if self._host.resources is not None
+                else []
+            ),
             model_installs=[ModelInstallSnapshot(**job) for job in self._host._model_installs.values()],
             plugin_releases=[
                 release.model_copy(deep=True) for release in self._host.provider_inventory.list_plugin_releases()
@@ -460,6 +465,24 @@ class SnapshotStateService:
             dead_letters=snapshot.hook_dead_letters,
             metrics=snapshot.hook_metrics,
         )
+        if self._host.resources is not None:
+            # Restore all durable leases before runtime health checks. Runtime
+            # leases are retained when the process is still healthy so measured
+            # GPU usage is not mistaken for an unprofiled external allocation.
+            self._host._runtime_reservations.clear()
+            self._host.resources.restore_leases(
+                snapshot.resource_leases,
+                replace=True,
+            )
+            desired_runtime_leases = {
+                f"runtime:{runtime.bundle_id}"
+                for runtime in snapshot.runtimes
+                if runtime.status == "running" and runtime.bundle_id is not None
+            }
+            for lease in self._host.resources.lease_details():
+                lease_id = str(lease.get("lease_id") or "")
+                if lease_id.startswith("runtime:") and lease_id not in desired_runtime_leases:
+                    self._host.resources.release(lease_id)
         session_service = getattr(self._host, "session_service", None)
         failure_handler = getattr(session_service, "failure_handler", None)
         if failure_handler is not None:
@@ -639,6 +662,8 @@ class SnapshotStateService:
             if self._host._bundle_in_cooldown(runtime.bundle_id):
                 recovered_runtime.health_status = "cooldown"
                 recovered_runtime.last_error = self._host._current_bundle_state(runtime.bundle_id)["cooldown_reason"]
+                if self._host.resources is not None:
+                    self._host.resources.release(self._host._runtime_reservation_id(runtime.bundle_id))
                 recovered_runtimes.append(recovered_runtime)
                 continue
             if not self._host._health_check_with_retry(
@@ -652,13 +677,24 @@ class SnapshotStateService:
                     bundle_id=runtime.bundle_id,
                     runtime_id=runtime.runtime_id,
                 )
+                if self._host.resources is not None:
+                    self._host.resources.release(self._host._runtime_reservation_id(runtime.bundle_id))
                 continue
 
             profile = bundle.resource_profile
-            if self._host.resources is not None and not self._host.resources.can_fit(
-                profile.steady_cpu,
-                profile.steady_ram_mb,
-                profile.steady_vram_mb,
+            runtime_lease_id = self._host._runtime_reservation_id(bundle.bundle_id)
+            lease_already_restored = (
+                self._host.resources is not None
+                and self._host.resources.has_active_lease(runtime_lease_id)
+            )
+            if (
+                self._host.resources is not None
+                and not lease_already_restored
+                and not self._host.resources.can_fit(
+                    profile.steady_cpu,
+                    profile.steady_ram_mb,
+                    profile.steady_vram_mb,
+                )
             ):
                 self._host.record_event(
                     event_type="runtime.recovery_skipped",

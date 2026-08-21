@@ -1264,12 +1264,28 @@ def build_operator_access_router(
             return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_RESOURCE_PROBE_UNAVAILABLE"}})
         try:
             report = refresh_resource_probe_from_environment()
-            hypervisor_service.resources.replace_capacity(report.capacity, probe=report.metadata())
+            hypervisor_service.resources.reconcile_hardware(
+                report.capacity,
+                probe=report.metadata(),
+                observed_at=report.observed_at,
+            )
         except (OSError, TypeError, ValueError) as error:
             return operation_error(error)
         return JSONResponse(
             status_code=200,
             content={"status": "ok", "resources": hypervisor_service.resources.summary()},
+        )
+
+    @router.get("/operations/resources/status")
+    async def resource_hardware_status(request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None or hypervisor_service.resources is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_RESOURCE_STATUS_UNAVAILABLE"}})
+        return JSONResponse(
+            status_code=200,
+            content={"available": True, **hypervisor_service.resources.hardware_status()},
         )
 
     @router.post("/operations/wallet/create")

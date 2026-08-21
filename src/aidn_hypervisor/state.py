@@ -379,6 +379,9 @@ class HypervisorStateSnapshot(BaseModel):
     runtimes: list[RuntimeSnapshot] = Field(default_factory=list)
     bundle_states: list[BundleStateSnapshot] = Field(default_factory=list)
     allocations: list[AllocationSnapshot] = Field(default_factory=list)
+    # RFC-0073 Resource Broker leases.  Kept as a plain JSON read model so
+    # snapshots remain forward-compatible with older nodes and plugins.
+    resource_leases: list[dict] = Field(default_factory=list)
     model_installs: list[ModelInstallSnapshot] = Field(default_factory=list)
     plugin_releases: list[PluginRelease] = Field(default_factory=list)
     installed_plugins: list[InstalledPlugin] = Field(default_factory=list)

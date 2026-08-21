@@ -1337,6 +1337,14 @@ class McpControlPlane:
                 "READ_ONLY",
                 lambda _args: self._resource_status(),
             ),
+            "aidn.resource_broker.devices": McpTool(
+                "aidn.resource_broker.devices",
+                "Return Hardware Monitor state for CPU, RAM, per-GPU VRAM, storage, and reconciliation confidence.",
+                read_schema,
+                ("RESOURCES:READ",),
+                "READ_ONLY",
+                lambda _args: self._resource_devices(),
+            ),
             "aidn.resource_broker.forecast": McpTool(
                 "aidn.resource_broker.forecast",
                 "Forecast whether a new Resource Broker lease fits without reserving it.",
@@ -1976,6 +1984,13 @@ class McpControlPlane:
                 "Current Resource Broker capacity and reservations.",
                 "RESOURCES:READ",
                 lambda _uri: self._resource_status(),
+            ),
+            "aidn://resource-broker/devices": McpResource(
+                "aidn://resource-broker/devices",
+                "Resource Broker devices",
+                "Hardware Monitor state for local devices and allocatable capacity.",
+                "RESOURCES:READ",
+                lambda _uri: self._resource_devices(),
             ),
             "aidn://resource-broker/leases": McpResource(
                 "aidn://resource-broker/leases",
@@ -2729,6 +2744,10 @@ class McpControlPlane:
         resources = self.service.resources
         return resources.summary() if resources is not None else {"available": False}
 
+    def _resource_devices(self) -> dict[str, Any]:
+        resources = self.service.resources
+        return resources.hardware_status() if resources is not None else {"available": False}
+
     def _resource_forecast(self, arguments: dict[str, Any]) -> dict[str, Any]:
         resources = self.service.resources
         if resources is None:
@@ -2750,6 +2769,7 @@ class McpControlPlane:
         resources = self.service.resources
         return {
             "items": resources.lease_snapshot() if resources is not None else [],
+            "details": resources.lease_details() if resources is not None else [],
             "available": resources is not None,
         }
 

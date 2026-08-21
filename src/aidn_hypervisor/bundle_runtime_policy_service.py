@@ -842,6 +842,11 @@ class BundleRuntimePolicyService:
         reservation_id = self.runtime_reservation_id(bundle_id)
         if reservation_id in self._host._runtime_reservations:
             return
+        if self._host.resources.has_active_lease(reservation_id):
+            # Restart recovery may have restored the durable lease before the
+            # Runtime Instance is reattached to the in-memory set.
+            self._host._runtime_reservations.add(reservation_id)
+            return
         if cpu or ram_mb or vram_mb:
             self._host.resources.reserve(
                 reservation_id,

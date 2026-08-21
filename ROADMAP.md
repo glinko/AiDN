@@ -192,12 +192,15 @@ admission decision-maker.
 - [x] Expose policy-respecting manual reconciliation through
   `POST /diagnostics/scheduler/reconcile` and the plan/apply MCP tool
   `aidn.scheduler.reconcile` under the explicit `SCHEDULER:WRITE` scope.
-- [ ] Implement the Hardware Monitor and Resource Broker read model for CPU,
-  RAM, per-GPU VRAM, storage, external processes, safety headroom, and
-  allocatable capacity.
-- [ ] Add atomic Resource Lease management for cold Runtime activation,
-  provisional admission, expiration/revocation, restart reconciliation, and
-  fail-closed admission while resource truth is uncertain.
+- [x] Implement the first Hardware Monitor and Resource Broker read model for
+  CPU, RAM, per-GPU VRAM, storage, external GPU processes, configurable safety
+  headroom, allocatable capacity, and trusted/uncertain reconciliation state.
+  The projection is available through `/resources/status`, the authenticated
+  dashboard resource status route, and `aidn.resource_broker.devices`.
+- [x] Add the first atomic Resource Lease lifecycle for runtime/allocation
+  residency: lifecycle-aware records, TTL expiry, revoke/release, durable
+  snapshot restore, and fail-closed admission while hardware truth is
+  uncertain. The legacy reservation/lease projection remains compatible.
 - [ ] Add Runtime Instance Manager states (COLD, STARTING, WARM_IDLE,
   WARM_ACTIVE, BUSY, EVICTION_CANDIDATE, DRAINING, STOPPING, STOPPED, FAILED)
   and connect them to the existing Provider/Bundle lifecycle.
@@ -213,11 +216,11 @@ admission decision-maker.
 - [ ] Add RFC-0072 resource events (lease, pressure, reconciliation,
   activation-waiting, eviction, capacity, and estimate-failure) and ensure
   normal scheduling never depends on Agent availability.
-- [ ] Complete MCP inspection/forecast/explain tools: resource broker
-  devices/explain-denial and scheduler explain-decision, plus Runtime
-  drain/stop/pin/unpin. Status, leases, forecast, candidates, and the safe
-  reconciliation control are implemented; the remaining mutation/read-model
-  surfaces stay gated for a later slice.
+- [ ] Complete MCP inspection/forecast/explain tools: scheduler
+  explain-decision, plus Runtime drain/stop/pin/unpin. Status, leases,
+  forecast, devices, candidates, and the safe reconciliation control are
+  implemented; the remaining mutation/read-model surfaces stay gated for a
+  later slice.
 - [ ] Add Advanced Mode Resources, GPUs, Leases, Runtime Instances, Queues,
   Scheduler, and Reconciliation views with P50/P95 queue-wait and admission
   metrics.

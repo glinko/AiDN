@@ -279,11 +279,17 @@ class AllocationCatalogService:
 
         profile = bundle.resource_profile
         reservation_id = f"allocation:{allocation_id}"
-        self._host.resources.reserve(
+        self._host.resources.acquire_lease(
             reservation_id,
             cpu=profile.steady_cpu,
             ram_mb=profile.steady_ram_mb,
             vram_mb=profile.steady_vram_mb,
+            owner_id=allocation_id,
+            metadata={
+                "kind": "allocation_residency",
+                "allocation_id": allocation_id,
+                "bundle_id": bundle.bundle_id,
+            },
         )
         return reservation_id
 

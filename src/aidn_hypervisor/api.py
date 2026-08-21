@@ -1739,9 +1739,10 @@ def build_api_router(
     async def refresh_operator_resources() -> dict:
         try:
             report = refresh_resource_probe_from_environment()
-            service.resources.replace_capacity(
+            service.resources.reconcile_hardware(
                 report.capacity,
                 probe=report.metadata(),
+                observed_at=report.observed_at,
             )
         except (OSError, TypeError, ValueError) as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
@@ -3794,8 +3795,20 @@ def build_api_router(
     @router.get("/resources/leases")
     async def resource_leases() -> dict:
         if service.resources is None:
-            return {"available": False, "items": []}
-        return {"available": True, "items": service.resources.lease_snapshot()}
+            return {"available": False, "items": [], "details": []}
+        return {
+            "available": True,
+            "items": service.resources.lease_snapshot(),
+            "details": service.resources.lease_details(),
+        }
+
+    @router.get("/resources/status")
+    async def resource_hardware_status() -> dict:
+        """Return the Hardware Monitor projection used for admission decisions."""
+
+        if service.resources is None:
+            return {"available": False}
+        return {"available": True, **service.resources.hardware_status()}
 
     @router.get("/resources/forecast")
     async def resource_forecast(
