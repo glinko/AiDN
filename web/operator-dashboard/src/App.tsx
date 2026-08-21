@@ -253,10 +253,10 @@ function App() {
   }, [pushNotification, refreshFeedback.message, refreshFeedback.state])
 
   useEffect(() => {
-    if (!notificationsExpanded || notifications.length === 0) return
+    if (!notificationsExpanded) return
     const timer = window.setTimeout(() => setNotificationsExpanded(false), 6500)
     return () => window.clearTimeout(timer)
-  }, [notifications, notificationsExpanded])
+  }, [notificationsExpanded])
 
   const nodeIdentity = data.home.data?.bootstrap.node_identity ?? data.fleet.data?.node
   const nodeName = getText(nodeIdentity, 'node_id') || 'Local Hypervisor'
@@ -340,7 +340,7 @@ function App() {
         }}
       />
 
-      <div className="mx-auto flex w-full max-w-[1760px] gap-0 px-3 pb-20 pt-3 lg:px-5">
+      <div className="mx-auto flex w-full max-w-[1760px] gap-0 px-3 pb-24 pt-3 lg:px-5">
         <aside className="hidden w-[224px] shrink-0 lg:block">
           <Navigation
             activeScreen={activeScreen}
@@ -375,12 +375,13 @@ function App() {
         </main>
       </div>
 
-      <ResourceFooter fleet={data.fleet.data} isLoading={data.fleet.isLoading} onNavigate={navigate} />
-
-      <NotificationDock
+      <ResourceFooter
+        fleet={data.fleet.data}
+        isLoading={data.fleet.isLoading}
+        onNavigate={navigate}
         notifications={notifications}
-        expanded={notificationsExpanded}
-        onToggle={() => setNotificationsExpanded((current) => !current)}
+        notificationsExpanded={notificationsExpanded}
+        onToggleNotifications={() => setNotificationsExpanded((current) => !current)}
       />
 
       <AddHypervisorSheet
@@ -2714,20 +2715,19 @@ function NotificationDock({ notifications, expanded, onToggle }: { notifications
   const ignoreClick = useRef(false)
 
   return (
-    <section className="pointer-events-none fixed inset-x-0 bottom-[4.25rem] z-40 flex justify-center px-3 sm:px-5" aria-label="Operation feedback">
-      <div className="pointer-events-auto w-full">
-        {latest && expanded ? <div className="mx-auto max-w-2xl overflow-hidden rounded-t-xl border border-b-0 border-border/90 bg-card shadow-[0_16px_44px_rgba(32,70,88,0.16)]">
+    <section className="w-full" aria-label="Operation feedback">
+      {expanded ? <div className="overflow-hidden border-x border-t border-border/90 bg-card shadow-[0_16px_44px_rgba(32,70,88,0.16)]">
           <div className="flex items-center justify-between gap-3 border-b border-border/70 px-4 py-2.5">
             <div className="flex min-w-0 items-center gap-2">
-              <span className={cn('grid size-6 shrink-0 place-items-center rounded-md', latest.failed ? 'bg-rose-300/10 text-rose-200' : 'bg-emerald-300/10 text-emerald-200')} aria-hidden="true">
-                {latest.failed ? <XCircle className="size-3.5" /> : <CheckCircle2 className="size-3.5" />}
+              <span className={cn('grid size-6 shrink-0 place-items-center rounded-md', latest ? (latest.failed ? 'bg-rose-300/10 text-rose-700' : 'bg-emerald-300/10 text-emerald-700') : 'bg-secondary text-primary')} aria-hidden="true">
+                {latest ? (latest.failed ? <XCircle className="size-3.5" /> : <CheckCircle2 className="size-3.5" />) : <CircleDot className="size-3.5" />}
               </span>
-              <p className={cn('truncate text-xs font-semibold', latest.failed ? 'text-rose-700' : 'text-emerald-700')}>{latest.message}</p>
+              <p className={cn('truncate text-xs font-semibold', latest ? (latest.failed ? 'text-rose-700' : 'text-emerald-700') : 'text-muted-foreground')}>{latest?.message ?? 'No operation logs yet.'}</p>
             </div>
             <span className="shrink-0 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">{notifications.length} {notifications.length === 1 ? 'notice' : 'notices'}</span>
           </div>
           <div id="aidn-operation-history" role="log" aria-live="polite" aria-relevant="additions text" className="max-h-[min(42vh,22rem)] overflow-y-auto px-4 py-1">
-            {notifications.map((notification) => (
+            {notifications.length === 0 ? <p className="py-3 text-xs leading-5 text-muted-foreground">No operation logs yet. Actions and system feedback will appear here.</p> : notifications.map((notification) => (
               <div key={notification.id} className="flex items-start gap-3 border-b border-border/50 py-2.5 last:border-b-0">
                 <span className={cn('mt-0.5 shrink-0', notification.failed ? 'text-rose-700' : 'text-emerald-700')} aria-hidden="true">
                   {notification.failed ? <XCircle className="size-3.5" /> : <CheckCircle2 className="size-3.5" />}
@@ -2740,20 +2740,17 @@ function NotificationDock({ notifications, expanded, onToggle }: { notifications
             ))}
           </div>
         </div> : null}
-        <button
-          type="button"
-          className={cn('relative flex h-5 w-full touch-none items-center justify-center border border-border/90 bg-card text-primary shadow-[0_8px_20px_rgba(32,70,88,0.14)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary', expanded && latest ? 'border-t-0' : 'hover:bg-secondary', !latest && 'cursor-default opacity-80')}
-          aria-label={latest ? (expanded ? 'Collapse operation log' : 'Expand operation log') : 'No operation logs yet'}
-          aria-expanded={Boolean(latest && expanded)}
-          aria-controls={latest && expanded ? 'aidn-operation-history' : undefined}
-          disabled={!latest}
+      <button
+        type="button"
+        className={cn('relative flex h-5 w-full touch-none items-center justify-center border-x border-b border-border/90 bg-card text-primary shadow-[0_8px_20px_rgba(32,70,88,0.14)] transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary', expanded ? 'border-t-0' : 'border-t')}
+        aria-label={expanded ? 'Collapse operation log' : 'Expand operation log'}
+        aria-expanded={expanded}
+        aria-controls={expanded ? 'aidn-operation-history' : undefined}
           onPointerDown={(event) => {
-            if (!latest) return
             dragStartY.current = event.clientY
             event.currentTarget.setPointerCapture(event.pointerId)
           }}
           onPointerUp={(event) => {
-            if (!latest) return
             const start = dragStartY.current
             dragStartY.current = null
             if (start === null) return
@@ -2769,12 +2766,11 @@ function NotificationDock({ notifications, expanded, onToggle }: { notifications
               ignoreClick.current = false
               return
             }
-            if (latest) onToggle()
+            onToggle()
           }}
-        >
-          <ChevronUp className={cn('size-4 stroke-[3] transition-transform duration-200', expanded && latest && 'rotate-180')} aria-hidden="true" />
-        </button>
-      </div>
+      >
+        <ChevronUp className={cn('size-4 stroke-[3] transition-transform duration-200', expanded && 'rotate-180')} aria-hidden="true" />
+      </button>
     </section>
   )
 }
@@ -3689,7 +3685,7 @@ function HealthRow({ icon: Icon, label, value, detail }: { icon: LucideIcon; lab
   return <div className="flex items-center gap-3"><span className="grid size-7 place-items-center rounded-md bg-cyan-300/8 text-cyan-200"><Icon className="size-3.5" /></span><div className="min-w-0 flex-1"><p className="text-xs font-medium text-white">{label}</p><p className="truncate text-[11px] text-muted-foreground">{detail}</p></div><span className="font-mono text-xs font-semibold text-emerald-300">{value}</span></div>
 }
 
-function ResourceFooter({ fleet, isLoading, onNavigate }: { fleet: DashboardData['fleet']['data']; isLoading: boolean; onNavigate: NavigationProps['onNavigate'] }) {
+function ResourceFooter({ fleet, isLoading, onNavigate, notifications, notificationsExpanded, onToggleNotifications }: { fleet: DashboardData['fleet']['data']; isLoading: boolean; onNavigate: NavigationProps['onNavigate']; notifications: OperationNotification[]; notificationsExpanded: boolean; onToggleNotifications: () => void }) {
   const resources = fleet?.resources
   const cpu = resourceUsage(resources?.total.cpu, resources?.free.cpu)
   const ram = resourceUsage(resources?.total.ram_mb, resources?.free.ram_mb)
@@ -3701,7 +3697,10 @@ function ResourceFooter({ fleet, isLoading, onNavigate }: { fleet: DashboardData
     { label: 'VRAM', value: isLoading ? '…' : resources?.probe?.gpu_reported ? formatPercent(vram.percent) : '—', icon: Zap, tone: 'text-amber-300', screen: 'settings' as DashboardScreen },
     { label: 'Sessions', value: isLoading ? '…' : formatCount(queue?.active ?? 0), icon: Activity, tone: 'text-sky-300', screen: 'agents' as DashboardScreen },
   ]
-  return <footer className="fixed inset-x-0 bottom-0 z-20 border-t border-border/75 bg-[#060e18]/95 backdrop-blur-xl"><div className="mx-auto flex w-full max-w-[1760px] overflow-x-auto px-3 lg:px-5">{items.map(({ label, value, icon: Icon, tone, screen }) => <button type="button" key={label} className="flex min-w-40 items-center gap-2 border-r border-border/70 px-4 py-2.5 text-left transition-colors hover:bg-white/[0.035] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70 first:pl-0" onClick={() => onNavigate(screen)}><Icon className={cn('size-4', tone)} /><div><p className="font-mono text-[9px] uppercase tracking-[0.12em] text-cyan-100/60">{label}</p><p className="mt-0.5 font-mono text-xs font-semibold text-white">{value}</p></div><ChevronRight className="ml-auto size-3.5 text-slate-600" /></button>)}</div></footer>
+  return <footer className="fixed inset-x-0 bottom-0 z-30 overflow-visible bg-card/95 backdrop-blur-xl">
+    <NotificationDock notifications={notifications} expanded={notificationsExpanded} onToggle={onToggleNotifications} />
+    <div className="mx-auto flex w-full max-w-[1760px] overflow-x-auto border-t border-border/75 px-3 lg:px-5">{items.map(({ label, value, icon: Icon, tone, screen }) => <button type="button" key={label} className="flex min-w-40 items-center gap-2 border-r border-border/70 px-4 py-2.5 text-left transition-colors hover:bg-white/[0.035] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70 first:pl-0" onClick={() => onNavigate(screen)}><Icon className={cn('size-4', tone)} /><div><p className="font-mono text-[9px] uppercase tracking-[0.12em] text-cyan-100/60">{label}</p><p className="mt-0.5 font-mono text-xs font-semibold text-white">{value}</p></div><ChevronRight className="ml-auto size-3.5 text-slate-600" /></button>)}</div>
+  </footer>
 }
 
 function ScreenHeading({ eyebrow, title, detail }: { eyebrow: string; title: string; detail: string }) {
