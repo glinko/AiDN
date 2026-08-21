@@ -2711,29 +2711,29 @@ function isFailedOperationMessage(message: string): boolean {
 
 function NotificationDock({ notifications, expanded, onToggle }: { notifications: OperationNotification[]; expanded: boolean; onToggle: () => void }) {
   const latest = notifications[0]
-  if (!latest) return null
 
   return (
     <section className="fixed inset-x-3 bottom-[4.25rem] z-40 mx-auto max-w-2xl" aria-label="Operation feedback">
       <div className="overflow-hidden rounded-xl border border-border/90 bg-[#0a1725]/[0.98] shadow-[0_16px_44px_rgba(0,0,0,0.32)] backdrop-blur-xl">
         <button
           type="button"
-          className="flex min-h-12 w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-white/[0.035] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70 sm:px-4"
-          aria-expanded={expanded}
-          aria-controls="aidn-operation-history"
+          className={cn('flex min-h-12 w-full items-center gap-3 px-3 py-2.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70 sm:px-4', latest ? 'hover:bg-white/[0.035]' : 'cursor-default')}
+          aria-expanded={latest ? expanded : false}
+          aria-controls={latest ? 'aidn-operation-history' : undefined}
+          disabled={!latest}
           onClick={onToggle}
         >
-          <span className={cn('grid size-7 shrink-0 place-items-center rounded-md', latest.failed ? 'bg-rose-300/10 text-rose-200' : 'bg-emerald-300/10 text-emerald-200')} aria-hidden="true">
-            {latest.failed ? <XCircle className="size-4" /> : <CheckCircle2 className="size-4" />}
+          <span className={cn('grid size-7 shrink-0 place-items-center rounded-md', latest ? latest.failed ? 'bg-rose-300/10 text-rose-200' : 'bg-emerald-300/10 text-emerald-200' : 'bg-cyan-300/10 text-cyan-200')} aria-hidden="true">
+            {latest ? latest.failed ? <XCircle className="size-4" /> : <CheckCircle2 className="size-4" /> : <Activity className="size-4" />}
           </span>
           <span className="min-w-0 flex-1">
             <span className="eyebrow block">Operation feedback</span>
-            <span className={cn('mt-0.5 block truncate text-xs font-medium', latest.failed ? 'text-rose-100' : 'text-emerald-100')}>{latest.message}</span>
+            <span className={cn('mt-0.5 block truncate text-xs font-medium', latest ? latest.failed ? 'text-rose-100' : 'text-emerald-100' : 'text-muted-foreground')}>{latest?.message ?? 'No recent operations'}</span>
           </span>
-          <span className="hidden shrink-0 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground sm:block">{notifications.length} {notifications.length === 1 ? 'notice' : 'notices'}</span>
-          {expanded ? <ChevronDown className="size-4 shrink-0 text-muted-foreground" /> : <ChevronUp className="size-4 shrink-0 text-muted-foreground" />}
+          <span className="hidden shrink-0 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground sm:block">{latest ? `${notifications.length} ${notifications.length === 1 ? 'notice' : 'notices'}` : 'Awaiting action'}</span>
+          {latest ? expanded ? <ChevronDown className="size-4 shrink-0 text-muted-foreground" /> : <ChevronUp className="size-4 shrink-0 text-muted-foreground" /> : null}
         </button>
-        <div id="aidn-operation-history" className={cn('overflow-hidden transition-[max-height,opacity] duration-200', expanded ? 'max-h-80 opacity-100' : 'max-h-0 opacity-0')}>
+        {latest ? <div id="aidn-operation-history" className={cn('overflow-hidden transition-[max-height,opacity] duration-200', expanded ? 'max-h-80 opacity-100' : 'max-h-0 opacity-0')}>
           <div role="log" aria-live="polite" aria-relevant="additions text" className="max-h-64 overflow-y-auto border-t border-border/70 px-3 py-2 sm:px-4">
             {notifications.map((notification) => (
               <div key={notification.id} className="flex items-start gap-3 border-b border-border/50 py-2.5 last:border-b-0">
@@ -2751,9 +2751,9 @@ function NotificationDock({ notifications, expanded, onToggle }: { notifications
             <p className="text-[10px] text-muted-foreground">Latest actions stay here for quick review.</p>
             <button type="button" className="min-h-8 shrink-0 rounded-md px-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-cyan-200 transition-colors hover:bg-cyan-300/10 hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70" onClick={onToggle}>
               Collapse
-            </button>
-          </div>
-        </div>
+              </button>
+            </div>
+        </div> : null}
       </div>
     </section>
   )
