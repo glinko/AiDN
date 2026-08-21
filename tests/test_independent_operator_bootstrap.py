@@ -53,7 +53,13 @@ def test_release_operator_bootstrap_uses_safe_defaults_and_user_systemd() -> Non
     assert "--non-interactive" in script
     assert "--allow-public-api" in script
     assert "Expose Dashboard/API to the LAN on 0.0.0.0?" in script
-    assert "Dashboard network: loopback only" in script
+    assert "Loopback limits the dashboard and API to this machine" in script
+    assert "AiDN NODE INSTALLATION COMPLETE" in script
+    assert "[PUBLIC ARTIFACTS — SAFE TO SHARE]" in script
+    assert "[PRIVATE MATERIAL — NEVER COPY OR SHARE]" in script
+    assert "dashboard_pairing_code" in script
+    assert "dashboard_pairing_expires" in script
+    assert "print(json.dumps(payload, sort_keys=True))" not in script
     assert "hypervisor-bind-host" in script
     assert "AIDN_HYPERVISOR_RESTART_ON_BIND_CHANGE=true" in script
     assert "AIDN_DASHBOARD_ACCESS_ALLOW_INSECURE_LAN=true" in script

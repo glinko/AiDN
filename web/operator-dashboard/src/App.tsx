@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import {
   Activity,
   ArrowRightLeft,
@@ -7,6 +7,8 @@ import {
   BriefcaseBusiness,
   CheckCircle2,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   CircleDot,
   Copy,
   Cpu,
@@ -193,6 +195,15 @@ type RefreshFeedback = {
   message: string
 }
 
+type OperationNotification = {
+  id: number
+  message: string
+  failed: boolean
+  createdAt: number
+}
+
+const NotificationContext = createContext<((message: string) => void) | null>(null)
+
 const operationsScreens: readonly OperationsScreen[] = [
   'agents',
   'market',
@@ -216,6 +227,37 @@ function App() {
   const [savedHypervisors, setSavedHypervisors] = useState<SavedHypervisorConnection[]>(loadSavedHypervisors)
   const [addHypervisorOpen, setAddHypervisorOpen] = useState(false)
   const [refreshFeedback, setRefreshFeedback] = useState<RefreshFeedback>({ state: 'idle', message: 'Live data refreshes every 20 seconds' })
+  const [notifications, setNotifications] = useState<OperationNotification[]>([])
+  const [notificationsExpanded, setNotificationsExpanded] = useState(false)
+  const notificationSequence = useRef(0)
+
+  const pushNotification = useCallback((message: string) => {
+    const now = Date.now()
+    setNotifications((current) => {
+      const latest = current[0]
+      if (latest && latest.message === message && now - latest.createdAt < 800) return current
+      const next: OperationNotification = {
+        id: notificationSequence.current++,
+        message,
+        failed: isFailedOperationMessage(message),
+        createdAt: now,
+      }
+      return [next, ...current].slice(0, 8)
+    })
+    setNotificationsExpanded(true)
+  }, [])
+
+  useEffect(() => {
+    if (refreshFeedback.state === 'success' || refreshFeedback.state === 'error') {
+      pushNotification(refreshFeedback.message)
+    }
+  }, [pushNotification, refreshFeedback.message, refreshFeedback.state])
+
+  useEffect(() => {
+    if (!notificationsExpanded || notifications.length === 0) return
+    const timer = window.setTimeout(() => setNotificationsExpanded(false), 6500)
+    return () => window.clearTimeout(timer)
+  }, [notifications, notificationsExpanded])
 
   const nodeIdentity = data.home.data?.bootstrap.node_identity ?? data.fleet.data?.node
   const nodeName = getText(nodeIdentity, 'node_id') || 'Local Hypervisor'
@@ -278,7 +320,8 @@ function App() {
   }
 
   return (
-    <div className="operator-shell min-h-svh bg-background text-foreground">
+    <NotificationContext.Provider value={pushNotification}>
+      <div className="operator-shell min-h-svh bg-background text-foreground">
       <TopBar
         nodeName={nodeName}
         advanced={advanced}
@@ -335,6 +378,12 @@ function App() {
 
       <ResourceFooter fleet={data.fleet.data} isLoading={data.fleet.isLoading} onNavigate={navigate} />
 
+      <NotificationDock
+        notifications={notifications}
+        expanded={notificationsExpanded}
+        onToggle={() => setNotificationsExpanded((current) => !current)}
+      />
+
       <AddHypervisorSheet
         open={addHypervisorOpen}
         onOpenChange={setAddHypervisorOpen}
@@ -359,7 +408,8 @@ function App() {
           />
         </SheetContent>
       </Sheet>
-    </div>
+      </div>
+    </NotificationContext.Provider>
   )
 }
 
@@ -393,7 +443,7 @@ function TopBar({
   onRemoveHypervisor,
 }: TopBarProps) {
   return (
-    <header className="sticky top-0 z-30 border-b border-border/80 bg-[#040a12]/95 backdrop-blur-xl">
+    <header className="sticky top-0 z-30 border-b border-border/80 bg-[#050c15]/95 backdrop-blur-xl">
       <div className="mx-auto flex h-16 w-full max-w-[1760px] items-center gap-3 px-3 lg:px-5">
         <Button
           aria-label="Open navigation"
@@ -2655,8 +2705,68 @@ function InventoryCard({ title, detail, items, primaryKey }: { title: string; de
   return <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><CardTitle className="text-base font-semibold">{title}</CardTitle><p className="mt-1 text-xs leading-5 text-muted-foreground">{detail}</p></CardHeader><CardContent className="p-0">{items.length === 0 ? <p className="px-5 py-6 text-sm text-muted-foreground">No records yet.</p> : <div className="divide-y divide-border/70">{items.slice(0, 8).map((item) => <div key={getText(item, primaryKey)} className="px-5 py-3"><div className="flex items-center justify-between gap-3"><p className="truncate font-mono text-xs text-slate-200">{shortId(getText(item, primaryKey), 24)}</p><StatusBadge value={getText(item, 'status') || 'recorded'} /></div></div>)}</div>}</CardContent></Card>
 }
 
+function isFailedOperationMessage(message: string): boolean {
+  return /failed|rejected|required|invalid|unavailable|error/i.test(message)
+}
+
+function NotificationDock({ notifications, expanded, onToggle }: { notifications: OperationNotification[]; expanded: boolean; onToggle: () => void }) {
+  const latest = notifications[0]
+  if (!latest) return null
+
+  return (
+    <section className="fixed inset-x-3 bottom-[4.25rem] z-40 mx-auto max-w-2xl" aria-label="Operation feedback">
+      <div className="overflow-hidden rounded-xl border border-border/90 bg-[#0a1725]/[0.98] shadow-[0_16px_44px_rgba(0,0,0,0.32)] backdrop-blur-xl">
+        <button
+          type="button"
+          className="flex min-h-12 w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-white/[0.035] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70 sm:px-4"
+          aria-expanded={expanded}
+          aria-controls="aidn-operation-history"
+          onClick={onToggle}
+        >
+          <span className={cn('grid size-7 shrink-0 place-items-center rounded-md', latest.failed ? 'bg-rose-300/10 text-rose-200' : 'bg-emerald-300/10 text-emerald-200')} aria-hidden="true">
+            {latest.failed ? <XCircle className="size-4" /> : <CheckCircle2 className="size-4" />}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="eyebrow block">Operation feedback</span>
+            <span className={cn('mt-0.5 block truncate text-xs font-medium', latest.failed ? 'text-rose-100' : 'text-emerald-100')}>{latest.message}</span>
+          </span>
+          <span className="hidden shrink-0 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground sm:block">{notifications.length} {notifications.length === 1 ? 'notice' : 'notices'}</span>
+          {expanded ? <ChevronDown className="size-4 shrink-0 text-muted-foreground" /> : <ChevronUp className="size-4 shrink-0 text-muted-foreground" />}
+        </button>
+        <div id="aidn-operation-history" className={cn('overflow-hidden transition-[max-height,opacity] duration-200', expanded ? 'max-h-80 opacity-100' : 'max-h-0 opacity-0')}>
+          <div role="log" aria-live="polite" aria-relevant="additions text" className="max-h-64 overflow-y-auto border-t border-border/70 px-3 py-2 sm:px-4">
+            {notifications.map((notification) => (
+              <div key={notification.id} className="flex items-start gap-3 border-b border-border/50 py-2.5 last:border-b-0">
+                <span className={cn('mt-0.5 shrink-0', notification.failed ? 'text-rose-200' : 'text-emerald-200')} aria-hidden="true">
+                  {notification.failed ? <XCircle className="size-3.5" /> : <CheckCircle2 className="size-3.5" />}
+                </span>
+                <p className={cn('min-w-0 flex-1 text-xs leading-5', notification.failed ? 'text-rose-100' : 'text-emerald-100')}>{notification.message}</p>
+                <time className="shrink-0 font-mono text-[10px] text-muted-foreground" dateTime={new Date(notification.createdAt).toISOString()}>
+                  {new Date(notification.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </time>
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center justify-between gap-3 border-t border-border/70 px-3 py-2 sm:px-4">
+            <p className="text-[10px] text-muted-foreground">Latest actions stay here for quick review.</p>
+            <button type="button" className="min-h-8 shrink-0 rounded-md px-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-cyan-200 transition-colors hover:bg-cyan-300/10 hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70" onClick={onToggle}>
+              Collapse
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 function OperationNotice({ message, onDismiss }: { message: string; onDismiss: () => void }) {
-  const failed = /failed|rejected|required|invalid|unavailable|error/i.test(message)
+  const pushNotification = useContext(NotificationContext)
+  const failed = isFailedOperationMessage(message)
+
+  useEffect(() => {
+    pushNotification?.(message)
+  }, [message, pushNotification])
+
   return <div role={failed ? 'alert' : 'status'} aria-live="polite" className={cn('flex items-start justify-between gap-3 rounded-lg border p-3 text-sm', failed ? 'border-rose-300/25 bg-rose-300/[0.05] text-rose-100' : 'border-emerald-300/25 bg-emerald-300/[0.05] text-emerald-100')}><div className="flex items-start gap-2"><span className="mt-0.5" aria-hidden="true">{failed ? <XCircle className="size-4" /> : <CheckCircle2 className="size-4" />}</span><p className="leading-5">{message}</p></div><Button variant="ghost" size="icon-xs" className="shrink-0" aria-label="Dismiss operation result" onClick={onDismiss}><XCircle /></Button></div>
 }
 

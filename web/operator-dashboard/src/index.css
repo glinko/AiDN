@@ -5,30 +5,39 @@
 @import 'tw-animate-css';
 
 :root {
-  --background: #040a12;
+  /* AiDN public-site palette: dark infrastructure field, cyan route, calm blue support. */
+  --background: #050c15;
   --foreground: #f2f7fc;
-  --card: #0b1725;
+  --card: #0a1725;
   --card-foreground: #f2f7fc;
-  --popover: #0b1725;
+  --popover: #0a1725;
   --popover-foreground: #f2f7fc;
-  --primary: #2bd7c5;
-  --primary-foreground: #04101c;
-  --secondary: #102238;
-  --secondary-foreground: #eff7ff;
-  --muted: #0c1a2a;
-  --muted-foreground: #8da0b8;
-  --accent: #142a3e;
+  --primary: #4ee6d4;
+  --primary-foreground: #041019;
+  --secondary: #0e1e2e;
+  --secondary-foreground: #f2f7fc;
+  --muted: #101f2d;
+  --muted-foreground: #91a5bc;
+  --accent: #101f2d;
   --accent-foreground: #f2f7fc;
-  --destructive: #ff7e8b;
-  --border: #22354a;
-  --input: #182c40;
-  --ring: #2bd7c5;
+  --destructive: #ff8c9b;
+  --border: #20374b;
+  --input: #20374b;
+  --ring: #4ee6d4;
   --radius: 0.75rem;
-  --chart-1: #2bd7c5;
-  --chart-2: #6aa8ff;
-  --chart-3: #a78bfa;
-  --chart-4: #f4b860;
-  --chart-5: #5ad28f;
+  --chart-1: #4ee6d4;
+  --chart-2: #77b8ff;
+  --chart-3: #75e8a6;
+  --chart-4: #f6c768;
+  --chart-5: #ffae63;
+  --brand-cyan: #4ee6d4;
+  --brand-cyan-soft: #a0f5ea;
+  --brand-blue: #77b8ff;
+  --brand-green: #75e8a6;
+  --brand-amber: #f6c768;
+  --brand-orange: #ffae63;
+  --brand-red: #ff8c9b;
+  --quiet: #657b94;
 }
 
 @theme inline {
@@ -52,6 +61,47 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  /* Keep existing utility classes on the same semantic colors as the public site. */
+  --color-cyan-100: var(--brand-cyan-soft);
+  --color-cyan-200: var(--brand-cyan-soft);
+  --color-cyan-300: var(--brand-cyan);
+  --color-cyan-400: var(--brand-cyan);
+  --color-cyan-500: var(--brand-cyan);
+  --color-cyan-50: var(--brand-cyan-soft);
+  --color-blue-300: var(--brand-blue);
+  --color-blue-400: var(--brand-blue);
+  --color-blue-500: var(--brand-blue);
+  --color-sky-200: var(--brand-cyan-soft);
+  --color-sky-300: var(--brand-blue);
+  --color-emerald-100: var(--brand-green);
+  --color-emerald-200: var(--brand-green);
+  --color-emerald-300: var(--brand-green);
+  --color-emerald-400: var(--brand-green);
+  --color-emerald-500: var(--brand-green);
+  --color-emerald-50: var(--brand-green);
+  --color-amber-100: var(--brand-amber);
+  --color-amber-200: var(--brand-amber);
+  --color-amber-300: var(--brand-amber);
+  --color-amber-400: var(--brand-amber);
+  --color-amber-50: var(--brand-amber);
+  --color-orange-300: var(--brand-orange);
+  --color-orange-400: var(--brand-orange);
+  --color-rose-100: var(--brand-red);
+  --color-rose-200: var(--brand-red);
+  --color-rose-300: var(--brand-red);
+  --color-rose-400: var(--brand-red);
+  --color-rose-50: var(--brand-red);
+  --color-violet-100: var(--brand-blue);
+  --color-violet-200: var(--brand-blue);
+  --color-violet-300: var(--brand-blue);
+  --color-slate-50: var(--foreground);
+  --color-slate-100: var(--foreground);
+  --color-slate-200: var(--foreground);
+  --color-slate-300: var(--muted-foreground);
+  --color-slate-400: var(--muted-foreground);
+  --color-slate-500: var(--quiet);
+  --color-slate-600: var(--quiet);
+  --color-slate-700: var(--border);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -71,8 +121,8 @@ body {
   min-width: 320px;
   margin: 0;
   background:
-    radial-gradient(circle at 72% -12%, rgba(39, 112, 155, 0.16), transparent 36rem),
-    linear-gradient(180deg, #06101b 0%, var(--background) 30rem);
+    radial-gradient(circle at 82% -15%, rgba(54, 129, 154, 0.17), transparent 33rem),
+    linear-gradient(180deg, #07121e 0%, var(--background) 34rem);
   color: var(--foreground);
   font-family: var(--font-sans);
   font-synthesis: none;
@@ -92,19 +142,19 @@ button {
 
 .operator-shell {
   background:
-    radial-gradient(circle at 84% 7%, rgba(43, 215, 197, 0.055), transparent 28rem),
-    linear-gradient(145deg, rgba(255, 255, 255, 0.014), transparent 34rem);
+    radial-gradient(circle at 82% -15%, rgba(54, 129, 154, 0.08), transparent 33rem),
+    linear-gradient(180deg, #07121e 0%, var(--background) 34rem);
 }
 
 .operator-panel {
-  border: 1px solid color-mix(in srgb, var(--border), transparent 18%);
-  border-radius: 0.9rem;
-  background: linear-gradient(180deg, rgba(11, 23, 37, 0.98), rgba(6, 15, 26, 0.94));
-  box-shadow: 0 22px 65px rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--border);
+  border-radius: 0.875rem;
+  background: color-mix(in srgb, var(--card) 94%, transparent);
+  box-shadow: 0 22px 65px rgba(0, 0, 0, 0.16);
 }
 
 .eyebrow {
-  color: #7890aa;
+  color: var(--quiet);
   font-family: var(--font-mono);
   font-size: 0.625rem;
   font-weight: 500;
@@ -114,6 +164,22 @@ button {
 }
 
 ::selection {
-  background: rgba(43, 215, 197, 0.27);
+  background: rgba(78, 230, 212, 0.24);
   color: white;
+}
+
+:where(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }

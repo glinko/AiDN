@@ -51,6 +51,11 @@ The wizard reads prompts from /dev/tty, so it also works when downloaded via
 curl | bash. It never asks for, stores, or sends a root password. Ubuntu sudo
 prompts normally when package installation is required.
 
+Interactive choices include a short consequence note. On success the installer
+prints one structured handoff with URLs, identities, public artifacts, wallet
+and pairing state, private-file locations, and next commands; secret contents
+are never printed.
+
 The installer creates a host-local encrypted Registry Secret Manager and an
 Ed25519 operator identity. The private material stays below --data-dir with
 mode 0600. Exchange only public-peer.json and operator-public-identity.json
@@ -111,10 +116,14 @@ detect_advertise_host() {
 prompt_value() {
   local label="$1"
   local default_value="$2"
+  local explanation="${3:-}"
   local answer
   if [[ "$non_interactive" == 'true' ]]; then
     printf '%s' "$default_value"
     return
+  fi
+  if [[ -n "$explanation" ]]; then
+    printf '\n  %s\n' "$explanation" >&2
   fi
   if [[ -n "$default_value" ]]; then
     printf '%s [%s]: ' "$label" "$default_value" >&2
@@ -131,10 +140,14 @@ prompt_value() {
 prompt_yes_no() {
   local label="$1"
   local default_value="$2"
+  local explanation="${3:-}"
   local answer
   if [[ "$non_interactive" == 'true' ]]; then
     [[ "$default_value" == 'yes' ]]
     return
+  fi
+  if [[ -n "$explanation" ]]; then
+    printf '\n  %s\n' "$explanation" >&2
   fi
   printf '%s [%s]: ' "$label" "$default_value" >&2
   IFS= read -r -u 3 answer || die 'interactive wizard requires a terminal'
@@ -331,7 +344,7 @@ if [[ "$non_interactive" != 'true' ]]; then
 fi
 
 if [[ -z "$operator_id" ]]; then
-  operator_id="$(prompt_value 'Operator/node name' "$(sanitize_hostname)")"
+  operator_id="$(prompt_value 'Operator/node name' "$(sanitize_hostname)" 'This becomes the stable identity of the node and its local service. Changing it later can require re-registration and can separate the node from persisted network state.')"
 fi
 valid_identifier "$operator_id" || die 'operator ID contains unsupported characters'
 [[ -n "$peer_id" ]] || peer_id="$operator_id"
@@ -348,16 +361,16 @@ esac
 default_install_dir="$HOME/aidn/$operator_id/AiDN"
 default_data_dir="$HOME/.local/share/aidn/$operator_id"
 if [[ -z "$install_dir" ]]; then
-  install_dir="$(prompt_value 'AiDN checkout path' "$default_install_dir")"
+  install_dir="$(prompt_value 'AiDN checkout path' "$default_install_dir" 'This is where the reviewed AiDN source and virtual environment will be installed. Choosing another path uses a different checkout, while the persistent state remains in the data directory below.')"
 fi
 if [[ -z "$data_dir" ]]; then
-  data_dir="$(prompt_value 'Persistent data path' "$default_data_dir")"
+  data_dir="$(prompt_value 'Persistent data path' "$default_data_dir" 'This directory stores node state, bundles, wallet metadata, and encrypted secrets. Keep it on durable storage with restricted permissions and include it in your backup plan; do not use a temporary directory.')"
 fi
 valid_path "$install_dir" || die 'install directory must be an absolute path'
 valid_path "$data_dir" || die 'data directory must be an absolute path'
 
 if [[ "$non_interactive" != 'true' && "$consensus_mode_supplied" != 'true' ]]; then
-  consensus_mode="$(prompt_value 'Consensus mode (validator/non_validator/disabled)' "$consensus_mode")"
+  consensus_mode="$(prompt_value 'Consensus mode (validator/non_validator/disabled)' "$consensus_mode" 'Validator installs and runs a local CometBFT node; non-validator observes an existing private RPC; disabled skips local consensus integration. This choice changes network participation, ports, storage, and recovery responsibilities.')"
 fi
 case "$consensus_mode" in
   validator|non_validator|disabled) ;;
@@ -366,7 +379,7 @@ esac
 
 if [[ "$consensus_mode" == 'non_validator' ]]; then
   if [[ -z "$consensus_rpc" && "$non_interactive" != 'true' ]]; then
-    consensus_rpc="$(prompt_value 'Source CometBFT RPC (private HTTP URL)' '')"
+    consensus_rpc="$(prompt_value 'Source CometBFT RPC (private HTTP URL)' '' 'This is the CometBFT RPC that a non-validator follows for network state. It must be reachable from this host and kept on a trusted network; this mode does not run a local validator.')"
   fi
   [[ -n "$consensus_rpc" ]] || die 'non_validator mode requires --consensus-rpc or an interactive source RPC'
   valid_consensus_rpc "$consensus_rpc" || die 'source CometBFT RPC must be an HTTP(S) host:port URL'
@@ -376,7 +389,7 @@ if [[ "$wallet_action_supplied" != 'true' ]]; then
   if [[ "$non_interactive" == 'true' ]]; then
     wallet_action='skip'
   else
-    wallet_action="$(prompt_value 'Owner wallet action (create/import/skip)' 'create')"
+    wallet_action="$(prompt_value 'Owner wallet action (create/import/skip)' 'create' 'Create generates a new local owner wallet; import uses an existing private key; skip leaves ownership-dependent actions unavailable. Private material is handled by the encrypted secret manager and is never printed by the installer.')"
   fi
 fi
 case "$wallet_action" in
@@ -388,7 +401,7 @@ if [[ "$dashboard_pairing_supplied" != 'true' ]]; then
   if [[ "$non_interactive" == 'true' ]]; then
     dashboard_pairing_action='skip'
   else
-    dashboard_pairing_action="$(prompt_value 'Dashboard pairing (create/skip)' 'create')"
+    dashboard_pairing_action="$(prompt_value 'Dashboard pairing (create/skip)' 'create' 'Create prints a one-time browser pairing code and URL after installation; the code expires and is consumed once. Skip keeps the dashboard unpaired, so you can run aidn-operator pair later from the node terminal.')"
   fi
 fi
 case "$dashboard_pairing_action" in
@@ -410,14 +423,14 @@ esac
 
 if [[ "$non_interactive" != 'true' ]]; then
   if [[ "$api_host_supplied" == 'true' ]]; then
-    api_host="$(prompt_value 'Hypervisor API bind address' "$api_host")"
-  elif prompt_yes_no 'Expose Dashboard/API to the LAN on 0.0.0.0?' 'no'; then
+    api_host="$(prompt_value 'Hypervisor API bind address' "$api_host" 'Loopback limits the dashboard and API to this machine; a LAN address makes them reachable by other devices. A non-loopback bind needs a trusted network, firewall rules, and an explicit unauthenticated-API risk decision.')"
+  elif prompt_yes_no 'Expose Dashboard/API to the LAN on 0.0.0.0?' 'no' 'No keeps the service on loopback and blocks remote browsers; yes binds all interfaces so LAN devices can connect. The current bootstrap API has no public authentication boundary, so never expose this directly to the Internet.'; then
     api_host='0.0.0.0'
     allow_public_api='true'
   else
     api_host='127.0.0.1'
   fi
-  api_port="$(prompt_value 'Hypervisor API port' "$api_port")"
+  api_port="$(prompt_value 'Hypervisor API port' "$api_port" 'This port is used by the Hypervisor API and dashboard URL. It must be free on this host and allowed by the local firewall if the API is reachable from the LAN; changing it also changes agent and browser connection URLs.')"
 fi
 valid_port "$api_port" || die 'API port must be between 1 and 65535'
 [[ -n "$api_host" && "$api_host" != *[[:space:]]* ]] || die 'API bind address is invalid'
@@ -425,13 +438,13 @@ if ! is_loopback_host "$api_host" && [[ "$allow_public_api" != 'true' ]]; then
   if [[ "$non_interactive" == 'true' ]]; then
     die 'non-loopback API requires --allow-public-api because the MVP API has no public auth boundary'
   fi
-  prompt_yes_no 'The API is unauthenticated; allow a non-loopback bind?' 'no' || die 'public API bind was not approved'
+  prompt_yes_no 'The API is unauthenticated; allow a non-loopback bind?' 'no' 'Approving this permits unauthenticated HTTP access from the selected network. Rejecting it keeps the service loopback-only; if you approve, restrict the network and firewall immediately.' || die 'public API bind was not approved'
   allow_public_api='true'
 fi
 
 if [[ "$enable_registry_supplied" != 'true' ]]; then
   if [[ "$non_interactive" != 'true' ]]; then
-    if prompt_yes_no 'Enable the mTLS Registry listener for peer onboarding?' 'no'; then
+    if prompt_yes_no 'Enable the mTLS Registry listener for peer onboarding?' 'no' 'Enable this only when the node must exchange signed peer bundles with other operators. It opens a separate listener and still requires mutual peer approval; disabling it keeps this node local and avoids an additional network surface.'; then
       enable_registry='true'
     fi
   fi
@@ -439,8 +452,8 @@ fi
 if [[ "$enable_registry" == 'true' ]]; then
   [[ -n "$registry_listen_host" ]] || registry_listen_host='0.0.0.0'
   if [[ "$non_interactive" != 'true' && "$registry_listen_host_supplied" != 'true' ]]; then
-    registry_listen_host="$(prompt_value 'Registry listener bind address' "$registry_listen_host")"
-    registry_port="$(prompt_value 'Registry mTLS port' "$registry_port")"
+    registry_listen_host="$(prompt_value 'Registry listener bind address' "$registry_listen_host" 'This controls which interfaces accept mTLS peer onboarding traffic. Binding all interfaces increases reachability and firewall responsibility; loopback is suitable only for local testing.')"
+    registry_port="$(prompt_value 'Registry mTLS port' "$registry_port" 'This separate port is used for peer discovery and signed bundle exchange. It must not conflict with the Hypervisor API and must be allowed only on the intended peer network.')"
   fi
 else
   registry_listen_host='127.0.0.1'
@@ -723,7 +736,14 @@ EOF
 chmod 700 "$wrapper"
 
 operator_cli_wrapper="$data_dir/aidn-operator-wrapper.sh"
-dashboard_url="http://$advertise_host:$api_port/operators/dashboard/react#settings"
+dashboard_url_host="$advertise_host"
+if is_loopback_host "$api_host"; then
+  dashboard_url_host='127.0.0.1'
+fi
+if [[ "$dashboard_url_host" == *:* && "$dashboard_url_host" != \[*\] ]]; then
+  dashboard_url_host="[$dashboard_url_host]"
+fi
+dashboard_url="http://$dashboard_url_host:$api_port/operators/dashboard/react#settings"
 operator_api_host="$api_host"
 if [[ "$operator_api_host" == '0.0.0.0' || "$operator_api_host" == '::' ]]; then
   operator_api_host='127.0.0.1'
@@ -844,22 +864,22 @@ wallet_bootstrap_status='deferred_no_start'
 wallet_bootstrap_id=''
 wallet_bootstrap_public_key=''
 dashboard_pairing_status='skipped'
+dashboard_pairing_url="$dashboard_url"
+dashboard_pairing_expires=''
+dashboard_pairing_code=''
 agent_onboarding_status='skipped'
 if [[ "$no_start" == 'true' ]]; then
-  echo 'Onboarding is deferred because --no-start was supplied.' >&2
-  echo "  After starting $service_name, run: aidn-operator wallet create|import" >&2
-  echo '  Then run: aidn-operator pair' >&2
+  dashboard_pairing_status='deferred_no_start'
+  agent_onboarding_status='deferred_no_start'
 else
   case "$wallet_action" in
     create)
-      "$HOME/.local/bin/aidn-operator" wallet create --label 'Owner Wallet'
+      "$HOME/.local/bin/aidn-operator" wallet create --label 'Owner Wallet' >/dev/null
       ;;
     import)
-      "$HOME/.local/bin/aidn-operator" wallet import --label 'Owner Wallet'
+      "$HOME/.local/bin/aidn-operator" wallet import --label 'Owner Wallet' >/dev/null
       ;;
-    skip)
-      echo 'Owner wallet bootstrap skipped by operator choice.' >&2
-      ;;
+    skip) ;;
   esac
   wallet_status_json=''
   if wallet_status_json="$("$HOME/.local/bin/aidn-operator" wallet status)"; then
@@ -890,7 +910,11 @@ PY
   fi
 
   if [[ "$dashboard_pairing_action" == 'create' ]]; then
-    "$HOME/.local/bin/aidn-operator" pair
+    pairing_output="$("$HOME/.local/bin/aidn-operator" pair)"
+    dashboard_pairing_url="$(printf '%s\n' "$pairing_output" | sed -n 's/^Open: //p')"
+    dashboard_pairing_expires="$(printf '%s\n' "$pairing_output" | sed -n 's/^Expires: //p')"
+    dashboard_pairing_code="$(printf '%s\n' "$pairing_output" | sed -n 's/^Code: //p')"
+    [[ -n "$dashboard_pairing_url" ]] || dashboard_pairing_url="$dashboard_url"
     dashboard_pairing_status='created_once'
   else
     dashboard_pairing_status='skipped_by_operator'
@@ -898,13 +922,6 @@ PY
 
   if [[ "$agent_action" == 'guide' ]]; then
     agent_onboarding_status='guided_existing_enrollment_boundary'
-    echo >&2
-    echo 'Agent onboarding remains an explicit enrollment/approval decision:' >&2
-    echo "  MCP endpoint: $operator_api_url/mcp" >&2
-    echo '  1. Start the agent with its own X25519 key and submit an enrollment request.' >&2
-    echo '  2. Review its label and key fingerprint in Dashboard -> Settings -> Agent enrollment requests.' >&2
-    echo '  3. Approve only the expected request; the agent retrieves its sealed credential once.' >&2
-    echo '  Terminal helpers: aidn-operator enrollment list | aidn-operator enrollment approve --request-id <id>' >&2
   else
     agent_onboarding_status='skipped_by_operator'
   fi
@@ -920,6 +937,8 @@ fi
   "$registry_root" "$operator_public_key" "$ref" "$consensus_mode" \
   "$consensus_service_name" "$consensus_home" "$consensus_binary_path" \
   "$consensus_rpc_host" "$consensus_rpc_port" "$consensus_rpc_endpoint" "$consensus_transport" "$resource_capacity_path" \
+  "$install_dir" "$data_dir" "$dashboard_url" "$operator_api_url" \
+  "$dashboard_pairing_url" "$dashboard_pairing_expires" \
   "$wallet_action" "$wallet_bootstrap_status" "$wallet_bootstrap_id" \
   "$wallet_bootstrap_public_key" "$dashboard_pairing_status" "$agent_onboarding_status" <<'PY'
 import json
@@ -949,6 +968,12 @@ import sys
     consensus_rpc_endpoint,
     consensus_transport,
     resource_capacity_path,
+    install_dir,
+    data_dir,
+    dashboard_url,
+    operator_api_url,
+    dashboard_pairing_url,
+    dashboard_pairing_expires,
     wallet_action,
     wallet_bootstrap_status,
     wallet_bootstrap_id,
@@ -964,6 +989,10 @@ payload = {
     "commit": commit,
     "ref": ref,
     "api": f"http://{api_host}:{api_port}",
+    "operator_api": operator_api_url,
+    "dashboard": dashboard_url,
+    "checkout": install_dir,
+    "data": data_dir,
     "service": service_name,
     "operator_identity": os.path.join(identity_root, "operator-identity.json"),
     "operator_public_identity": os.path.join(identity_root, "operator-public-identity.json"),
@@ -991,6 +1020,8 @@ payload = {
         "wallet_id": wallet_bootstrap_id or None,
         "wallet_public_key": wallet_bootstrap_public_key or None,
         "dashboard_pairing": dashboard_pairing_status,
+        "dashboard_url": dashboard_pairing_url,
+        "dashboard_expires_at": dashboard_pairing_expires or None,
         "agent": agent_onboarding_status,
         "private_material": "not_in_state_file",
     },
@@ -1000,35 +1031,87 @@ with open(path, "w", encoding="utf-8") as stream:
     json.dump(payload, stream, indent=2, sort_keys=True)
     stream.write("\n")
 os.chmod(path, 0o600)
-print(json.dumps(payload, sort_keys=True))
 PY
 
-echo >&2
-echo "AiDN operator installed: $operator_id" >&2
-echo "  checkout: $install_dir" >&2
-echo "  state:    $data_dir" >&2
-echo "  service:  $service_name" >&2
-echo "  API:      http://$api_host:$api_port" >&2
+display_wallet_id="$wallet_bootstrap_id"
+[[ -n "$display_wallet_id" ]] || display_wallet_id='not available'
+display_wallet_public_key="$wallet_bootstrap_public_key"
+[[ -n "$display_wallet_public_key" ]] || display_wallet_public_key='not available'
+display_pairing_expires="$dashboard_pairing_expires"
+[[ -n "$display_pairing_expires" ]] || display_pairing_expires='unknown'
+display_pairing_code="$dashboard_pairing_code"
+[[ -n "$display_pairing_code" ]] || display_pairing_code='not returned'
+
+printf '\n============================================================\n' >&2
+printf 'AiDN NODE INSTALLATION COMPLETE\n' >&2
+printf '============================================================\n' >&2
+printf '\n[NODE IDENTITY]\n' >&2
+printf '  operator ID       : %s\n' "$operator_id" >&2
+printf '  peer ID           : %s\n' "$peer_id" >&2
+printf '  control group     : %s\n' "$control_group_id" >&2
+printf '  source ref/commit : %s / %s\n' "$ref" "$commit" >&2
+printf '\n[SERVICE AND LINKS]\n' >&2
+printf '  service           : %s\n' "$service_name" >&2
+printf '  API (operator)    : %s\n' "$operator_api_url" >&2
+printf '  dashboard         : %s\n' "$dashboard_url" >&2
+printf '  listener          : %s:%s\n' "$api_host" "$api_port" >&2
 if is_loopback_host "$api_host"; then
-  echo '  Dashboard network: loopback only' >&2
+  printf '  access boundary   : loopback only\n' >&2
 else
-  echo "  Dashboard network: LAN bind ($api_host)" >&2
+  printf '  access boundary   : LAN/non-loopback (firewall and trusted-network policy required)\n' >&2
 fi
-echo "  Capacity: $resource_capacity_path (automatic host probe)" >&2
-echo "  Registry: $registry_state" >&2
+printf '  checkout          : %s\n' "$install_dir" >&2
+printf '  persistent data   : %s\n' "$data_dir" >&2
+printf '  bootstrap state   : %s\n' "$state_path" >&2
+printf '  capacity report   : %s\n' "$resource_capacity_path" >&2
+printf '\n[NETWORK AND CONSENSUS]\n' >&2
+printf '  consensus         : %s\n' "$consensus_mode" >&2
 if [[ "$consensus_mode" == 'validator' ]]; then
-  echo "  CometBFT: local validator $consensus_service_name ($consensus_rpc_host:$consensus_rpc_port)" >&2
+  printf '  CometBFT RPC      : http://%s:%s\n' "$consensus_rpc_host" "$consensus_rpc_port" >&2
+  printf '  CometBFT service  : %s\n' "$consensus_service_name" >&2
 elif [[ "$consensus_mode" == 'non_validator' ]]; then
-  echo "  CometBFT: external RPC observer ($consensus_rpc_endpoint)" >&2
+  printf '  source RPC        : %s\n' "$consensus_rpc_endpoint" >&2
 else
-  echo '  CometBFT: disabled (--no-consensus)' >&2
+  printf '  CometBFT          : disabled\n' >&2
 fi
-echo "  public peer bundle: $registry_root/public-peer.json" >&2
-echo "  public operator identity: $identity_root/operator-public-identity.json" >&2
-echo "  wallet onboarding: $wallet_bootstrap_status${wallet_bootstrap_id:+ ($wallet_bootstrap_id)}" >&2
-echo "  dashboard pairing: $dashboard_pairing_status" >&2
-echo "  agent onboarding: $agent_onboarding_status" >&2
-echo "  operator CLI: $HOME/.local/bin/aidn-operator" >&2
-echo >&2
-echo 'The sudo password was used only by sudo and was not captured by this script.' >&2
-echo 'Do not copy master-key.b64, secrets.json, or operator-attestation-key.raw.' >&2
+printf '  registry          : %s\n' "$registry_state" >&2
+printf '\n[PUBLIC ARTIFACTS — SAFE TO SHARE]\n' >&2
+printf '  public peer bundle: %s\n' "$registry_root/public-peer.json" >&2
+printf '  public identity   : %s\n' "$identity_root/operator-public-identity.json" >&2
+printf '  public key        : %s\n' "$operator_public_key" >&2
+printf '\n[WALLET AND DASHBOARD ACCESS]\n' >&2
+printf '  wallet status     : %s\n' "$wallet_bootstrap_status" >&2
+printf '  wallet ID         : %s\n' "$display_wallet_id" >&2
+printf '  wallet public key : %s\n' "$display_wallet_public_key" >&2
+printf '  dashboard pairing : %s\n' "$dashboard_pairing_status" >&2
+if [[ "$dashboard_pairing_status" == 'created_once' ]]; then
+  printf '  pairing URL       : %s\n' "$dashboard_pairing_url" >&2
+  printf '  pairing expires   : %s\n' "$display_pairing_expires" >&2
+  printf '  one-time code     : %s\n' "$display_pairing_code" >&2
+elif [[ "$dashboard_pairing_status" == 'deferred_no_start' ]]; then
+  printf '  pairing next step : run aidn-operator pair after starting the service\n' >&2
+else
+  printf '  pairing next step : run aidn-operator pair when you are ready\n' >&2
+fi
+printf '\n[PRIVATE MATERIAL — NEVER COPY OR SHARE]\n' >&2
+printf '  encrypted secrets : %s\n' "$registry_root/secrets.json" >&2
+printf '  master key file   : %s\n' "$registry_root/master-key.b64" >&2
+printf '  private identity  : %s\n' "$identity_root/operator-identity.json" >&2
+printf '  attestation key   : %s\n' "$identity_root/operator-attestation-key.raw" >&2
+printf '  The sudo password was used only by sudo and was not captured by this script.\n' >&2
+printf '\n[AGENT ONBOARDING]\n' >&2
+printf '  status            : %s\n' "$agent_onboarding_status" >&2
+if [[ "$agent_onboarding_status" == 'guided_existing_enrollment_boundary' ]]; then
+  printf '  MCP endpoint      : %s/mcp\n' "$operator_api_url" >&2
+  printf '  1. Start the agent with its own X25519 key and submit an enrollment request.\n' >&2
+  printf '  2. Review the label and key fingerprint in Dashboard -> Settings -> Agent enrollment requests.\n' >&2
+  printf '  3. Approve only the expected request; the agent retrieves its sealed credential once.\n' >&2
+  printf '  CLI helpers       : aidn-operator enrollment list\n' >&2
+  printf '                      aidn-operator enrollment approve --request-id <id>\n' >&2
+fi
+printf '\n[NEXT COMMANDS]\n' >&2
+printf '  systemctl --user status %s\n' "$service_name" >&2
+printf '  journalctl --user -u %s -f\n' "$service_name" >&2
+printf '  aidn-operator wallet status\n' >&2
+printf '  aidn-operator pair\n' >&2
+printf '============================================================\n' >&2

@@ -33,10 +33,21 @@ curl --proto '=https' --tlsv1.2 -fsSL \
   | bash -s -- --ref <reviewed-ref>
 ```
 
-The wizard asks only for the operator/node name and deployment defaults. It
-reads from `/dev/tty`, so sudo and wizard prompts work even though the script
-itself is downloaded through a pipe. It never asks for or stores the root
-password.
+The wizard asks for the operator identity and deployment defaults. Each
+interactive choice is preceded by a short explanation of its operational
+consequences (network reachability, consensus participation, persistence,
+wallet ownership, or one-time dashboard access), so accepting a default is
+an informed decision. It reads from `/dev/tty`, so sudo and wizard prompts
+work even though the script itself is downloaded through a pipe. It never asks
+for or stores the root password.
+
+When the installation completes, the installer emits one structured handoff
+report instead of interleaving values throughout the log. The report groups
+node identity, service URLs, consensus and Registry state, public artifacts,
+wallet/dashboard onboarding, agent enrollment steps, and next commands. It
+shows private material only as local file paths (never as secret contents) and
+marks the dashboard pairing code as one-time. The same secret-free summary is
+written to bootstrap-state.json for later automation and support.
 
 For automation with the safe defaults:
 
@@ -134,9 +145,11 @@ For operator `operator-example-1`, defaults are:
 ```
 
 `bootstrap-state.json` contains the exact checkout commit, operator ID, public
-key, service name and public bundle path. It contains no private key or master
-key. `resource-capacity.json` contains no credentials or process payloads. It
-records CPU affinity/cgroup limits, RAM capacity, and GPU VRAM when
+key, service name, operator API/dashboard URLs, persistent paths, wallet public
+metadata, and public bundle path. It contains no private key, master key, or
+one-time dashboard pairing code. `resource-capacity.json` contains no
+credentials or process payloads. It records CPU affinity/cgroup limits, RAM
+capacity, and GPU VRAM when
 `nvidia-smi` is available. Unknown GPU capacity remains explicitly unreported.
 
 The React preview is available at `/operators/dashboard/react`; the legacy
