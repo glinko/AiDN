@@ -249,6 +249,39 @@ The next website increments are integration work, not a redesign:
 - [ ] Add reviewed release/download metadata, deployment status, SEO and
   production hosting acceptance.
 
+## 2026-08-21 RFC-0074 Object Lifecycle, Decommissioning, And Node Reset
+
+[RFC-0074](./docs/product/RFC-0074-object-lifecycle-deletion-decommissioning-and-node-reset.md)
+is now the normative contract for safe removal and reset. It separates local
+physical deletion from distributed retirement, makes dependency-aware
+plan/apply mandatory, and defines how tombstones, Resource Leases, Node
+identity, Wallet identity, network history, and secret erasure interact.
+
+- [x] Add the Draft RFC-0074 normative document covering Disable, Unpublish,
+  Retire, Delete Local, Decommission, Secure Erase, reset profiles, tombstones,
+  audit, and historical-network invariants.
+- [ ] Implement the dependency graph and deterministic Removal Plan with
+  precheck, approval, apply, verification, resumable partial-failure state,
+  and stable plan hashes.
+- [ ] Add lifecycle transitions for Runtime, Provider, Model, Bundle,
+  Endpoint, Validation Report, and Node objects; block destructive deletion
+  while live dependents remain.
+- [ ] Add durable tombstones, soft-delete grace periods, reference-aware
+  artifact garbage collection, stale-command errors, and RFC-0072 lifecycle
+  events.
+- [ ] Implement Runtime Reset and Configuration Reset with RFC-0073 scheduler
+  pause/drain, Lease release, reconciliation, Session/Request handling, and
+  completion proofs.
+- [ ] Implement Identity-Preserving Reset, Node Decommission, forced-local-only
+  recovery, liveness expiry, and public-key continuity verification.
+- [ ] Implement guarded Factory Reset and separate Wallet/secret secure erase;
+  require typed confirmation and non-default MCP capabilities.
+- [ ] Add CLI and MCP plan/apply tools plus Dashboard Maintenance and
+  dependency-aware object actions with exact preserved/deleted summaries.
+- [ ] Add destructive-operation acceptance on a disposable Ubuntu node and
+  recovery tests for interruption, stale commands, missing network, and
+  partial local deletion.
+
 ## 2026-08-14 ECO-0007 Activation Scope Extension And Maturity Completion
 
 Completed in this slice:
@@ -785,6 +818,11 @@ Product alignment summary:
   global reconciliation, warm-runtime eviction, owner priority, and scheduler
   explainability are normative; the implementation remains tracked in the
   dedicated RFC-0073 roadmap slice above.
+- RFC-0074 now defines lifecycle-safe deletion and reset authority. Dependency
+  plans, distributed retirement, tombstones, decommissioning, reset profiles,
+  Wallet/Node identity separation, and explicit secret erasure are normative;
+  implementation remains tracked in the dedicated RFC-0074 roadmap slice
+  above.
 - RFC-0042 v0.3 makes the Network Dispatcher the next infrastructure layer: the
   first implementation slice covers transport-independent envelopes, domain and
   payload validation, Route Generation, bounded admission, local delivery,
