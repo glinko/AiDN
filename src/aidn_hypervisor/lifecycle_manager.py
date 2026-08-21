@@ -160,6 +160,8 @@ class LifecycleManager:
             if operation.get("idempotency_key") not in {None, idempotency_key}:
                 raise LifecycleError("MCP_CONFLICT_IDEMPOTENCY", "Lifecycle operation was already applied with another idempotency key")
             plan = deepcopy(operation["plan"])
+        if plan.get("expires_at") and plan["expires_at"] < _timestamp():
+            raise LifecycleError("REMOVAL_PLAN_STALE", "Removal plan has expired")
 
         self._assert_plan_current(plan)
         self._set_operation(operation, state="PRECHECK", step="PRECHECK", actor=actor, idempotency_key=idempotency_key)
@@ -580,6 +582,8 @@ class ResetManager:
             raise LifecycleError("REMOVAL_PLAN_STALE", "Reset plan hash does not match")
         if operation.get("idempotency_key") not in {None, idempotency_key}:
             raise LifecycleError("MCP_CONFLICT_IDEMPOTENCY", "Reset operation was already applied with another idempotency key")
+        if operation["plan"].get("expires_at") and operation["plan"]["expires_at"] < _timestamp():
+            raise LifecycleError("REMOVAL_PLAN_STALE", "Reset plan has expired")
         profile = operation["plan"]["profile"]
         if profile != "runtime":
             error = LifecycleError("RESET_PROFILE_NOT_IMPLEMENTED", f"Reset profile is planned but not executable yet: {profile}")
