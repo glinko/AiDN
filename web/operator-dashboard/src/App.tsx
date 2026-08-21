@@ -348,6 +348,7 @@ function App() {
             readinessPercent={readinessPercent}
             onNavigate={navigate}
             onToggleAdvanced={() => setAdvanced(!advanced)}
+            className="p-2"
           />
         </aside>
 
@@ -398,13 +399,18 @@ function App() {
 
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
         <SheetTrigger className="hidden" />
-        <SheetContent side="left" className="w-[280px] overflow-y-auto border-r-border bg-[#07111d] p-3">
+        <SheetContent
+          side="left"
+          className="h-[100dvh] max-h-[100dvh] w-[min(21rem,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] gap-0 overflow-hidden rounded-r-2xl border-border bg-card p-0 text-foreground shadow-[0_18px_48px_rgba(32,70,88,0.2)]"
+        >
           <Navigation
             activeScreen={activeScreen}
             advanced={advanced}
             readinessPercent={readinessPercent}
             onNavigate={navigate}
             onToggleAdvanced={() => setAdvanced(!advanced)}
+            panel={false}
+            className="h-full min-h-0 overflow-y-auto p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]"
           />
         </SheetContent>
       </Sheet>
@@ -597,13 +603,15 @@ type NavigationProps = {
   readinessPercent: number
   onNavigate: (screen: DashboardScreen) => void
   onToggleAdvanced: () => void
+  className?: string
+  panel?: boolean
 }
 
-function Navigation({ activeScreen, advanced, readinessPercent, onNavigate, onToggleAdvanced }: NavigationProps) {
+function Navigation({ activeScreen, advanced, readinessPercent, onNavigate, onToggleAdvanced, className, panel = true }: NavigationProps) {
   const items = advanced ? [...navigationItems, ...advancedItems] : navigationItems.filter((item) => !item.advanced)
 
   return (
-    <nav className="operator-panel flex min-h-[calc(100svh-104px)] flex-col p-2 lg:sticky lg:top-[76px]">
+    <nav className={cn(panel && 'operator-panel', 'flex min-h-0 flex-col lg:sticky lg:top-[76px] lg:min-h-[calc(100svh-104px)]', className)}>
       <div className="mb-3 px-2 pt-2">
         <p className="eyebrow">Control Plane</p>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">Bundle-first operations for this Hypervisor.</p>
