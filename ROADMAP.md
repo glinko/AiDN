@@ -1,6 +1,6 @@
 # AiDN Roadmap
 
-Last updated: `2026-08-21`
+Last updated: `2026-08-22`
 
 This is the main public roadmap for the repository.
 
@@ -201,26 +201,59 @@ admission decision-maker.
   residency: lifecycle-aware records, TTL expiry, revoke/release, durable
   snapshot restore, and fail-closed admission while hardware truth is
   uncertain. The legacy reservation/lease projection remains compatible.
-- [ ] Add Runtime Instance Manager states (COLD, STARTING, WARM_IDLE,
-  WARM_ACTIVE, BUSY, EVICTION_CANDIDATE, DRAINING, STOPPING, STOPPED, FAILED)
-  and connect them to the existing Provider/Bundle lifecycle.
-- [ ] Add independent Endpoint queues plus the global fit-aware Admission
-  Scheduler. Recompute the complete Candidate Set after every material
-  resource, Request, Lease, Runtime, Bundle, Endpoint, or owner-state change.
-- [ ] Add warm-runtime retention, policy-controlled eviction, drain/preemption
-  classes, churn protection, wait-time aging, fairness, and local-owner
-  reclamation.
-- [ ] Add conservative Provider resource estimators for model weights, KV cache,
-  context, concurrency, batch, workspace, overhead, fragmentation, and OOM
-  feedback. Treat admission denial as RESOURCE_WAIT rather than Runtime failure.
-- [ ] Add RFC-0072 resource events (lease, pressure, reconciliation,
-  activation-waiting, eviction, capacity, and estimate-failure) and ensure
-  normal scheduling never depends on Agent availability.
-- [ ] Complete MCP inspection/forecast/explain tools: scheduler
-  explain-decision, plus Runtime drain/stop/pin/unpin. Status, leases,
-  forecast, devices, candidates, and the safe reconciliation control are
-  implemented; the remaining mutation/read-model surfaces stay gated for a
-  later slice.
+- [x] Add the first Runtime Instance Manager slice: canonical COLD,
+  STARTING, WARM_IDLE, WARM_ACTIVE, BUSY, EVICTION_CANDIDATE, DRAINING,
+  STOPPING, STOPPED, and FAILED projections are centralized in
+  `runtime_instance_manager.py`, persisted with Runtime snapshots, connected
+  to Provider/Bundle health and task activity, and exposed by the live runtime
+  operations read model. The low-level legacy `status` field remains stable;
+  `lifecycle_state` is the scheduler-facing contract. Warm retention defaults
+  to 300 seconds and is configurable with
+  `AIDN_RUNTIME_WARM_RETENTION_SECONDS`.
+- [x] Add independent Endpoint queues plus the global fit-aware Admission
+  Scheduler. The executable and read-only paths now share one canonical queue
+  key: Endpoint requests are FIFO and isolated from other Endpoint queues,
+  while Bundle-only requests retain fair-share ordering. Every reconciliation
+  pass rebuilds all queue heads, filters by current Resource Broker fit, and
+  continues until stable; Endpoint mutations and dashboard resource probes
+  trigger the same global reevaluation. Candidate diagnostics expose queue
+  policy, depth, position, and head-of-line state so a legitimate
+  `RESOURCE_WAIT` is distinguishable from a provider failure.
+- [x] Add policy-aware warm-runtime retention and idle eviction controls. Bundle
+  revisions now carry preemption class, per-runtime warm retention, and
+  minimum residency settings; eviction decisions expose a reason, honor
+  pinned/non-preemptible runtimes, and allow explicit local-owner reclamation.
+  Runtime handles persist residency metadata and eviction transitions emit
+  RFC-0072-compatible resource events. Existing wait-time aging and fair-share
+  queue ordering remain active in the same reconciliation loop.
+- [ ] Complete active-runtime drain/checkpoint/preemption execution, eviction
+  cooldown/benefit scoring, and operator-facing policy controls/metrics. An
+  active request is never terminated by the current idle-eviction slice.
+- [x] Add the first conservative Provider resource-estimator slice for
+  llama.cpp. Legacy GGUF bundles with an empty profile now derive a bounded
+  model-weight, GPU-layer, KV-cache, context, concurrency, workspace,
+  provider-overhead, staging, and fragmentation estimate; explicit operator
+  ResourceProfile values remain authoritative. Admission diagnostics include
+  confidence, assumptions, and a breakdown, while resource denial remains
+  `RESOURCE_WAIT` rather than Runtime failure.
+- [ ] Extend estimator evidence to Ollama/vLLM/Whisper metadata and feed
+  measured peaks/OOM feedback back into validated profiles.
+- [~] Add RFC-0072 resource events (lease, pressure, reconciliation,
+  activation-waiting, eviction, capacity, and estimate-failure). Scheduler
+  reconciliation now emits durable `reconciliation_started`,
+  `activation_waiting`, and `reconciliation_completed` events without making
+  admission depend on event persistence or Agent availability; lease,
+  pressure, capacity, and estimate-failure producers remain to be wired.
+- [~] Complete MCP inspection/forecast/explain tools: the read-only
+  `aidn.scheduler.explain_decision` tool now explains queue head-of-line,
+  admission/resource shortfall, concurrency, provider-estimate evidence, and
+  eligible eviction options. Status, leases, forecast, devices, candidates,
+  safe reconciliation, and the Runtime Instance read model are implemented.
+  Plan/apply `aidn.runtime.drain`, `aidn.runtime.stop`,
+  `aidn.runtime.pin`, and `aidn.runtime.unpin` are now exposed behind the
+  dedicated `RUNTIME:WRITE` scope and `runtime_control` approval policy;
+  Advanced Mode views and the remaining mutation/read-model surfaces stay
+  gated for a later implementation slice.
 - [ ] Add Advanced Mode Resources, GPUs, Leases, Runtime Instances, Queues,
   Scheduler, and Reconciliation views with P50/P95 queue-wait and admission
   metrics.
@@ -248,6 +281,32 @@ The next website increments are integration work, not a redesign:
   Faucet service with production rate limits, audit, and bounded error states.
 - [ ] Add reviewed release/download metadata, deployment status, SEO and
   production hosting acceptance.
+
+## 2026-08-21 Node Journey / Setup Graph
+
+The Overview now has a canonical, live Node Journey projection. It turns the
+Hypervisor's real wallet, Provider, model, Bundle, Endpoint, validation,
+resource, network, and operations state into one dependency-aware graph while
+keeping desktop and mobile as renderers of the same data.
+
+- [x] Add `JourneyStateService` and the read-only
+  `GET /operators/dashboard/journey` contract with explicit node states,
+  dependencies, progress, reasons, details, and a deterministic recommended
+  action.
+- [x] Add the desktop dependency graph with SVG connectors, status rail,
+  progress, quick actions, legend, node detail panel, and canonical workspace
+  navigation.
+- [x] Add the mobile collapsible journey branches and accessible List mode
+  without creating a second readiness model.
+- [x] Poll Journey alongside existing dashboard read models and include it in
+  the global Refresh path.
+- [x] Document the contract and renderer rules in
+  [UX-0003](./docs/product/UX-0003-node-journey-setup-graph.md) and cover the
+  core state/dependency behavior with focused tests.
+- [ ] Invalidate Journey from RFC-0072 canonical events instead of relying on
+  polling alone; preserve polling as a recovery path.
+- [ ] Add role-specific graphs for Consumer and Validator nodes after the
+  provider-node journey has stabilized.
 
 ## 2026-08-21 RFC-0074 Object Lifecycle, Decommissioning, And Node Reset
 
@@ -291,6 +350,35 @@ identity, Wallet identity, network history, and secret erasure interact.
 - [ ] Add destructive-operation acceptance on a disposable Ubuntu node and
   recovery tests for interruption, stale commands, missing network, and
   partial local deletion.
+
+## 2026-08-22 RFC-0075 Node Intelligence Architecture
+
+[RFC-0075](./docs/product/RFC-0075-node-intelligence-architecture.md) defines
+the next intelligence layer for the Hypervisor. A lightweight Resident Node
+Agent (Node Steward) handles routine operations locally, while a Reasoning
+Router escalates complex work to larger local, AiDN-hosted, or external
+Intelligence Providers. The Steward verifies every returned plan against
+policy, lifecycle dependencies, Resource Broker admission, privacy, budget,
+and approval state before using the normal Hypervisor/MCP control path.
+
+- [x] Add the Draft RFC-0075 normative architecture document covering the
+  Resident Agent, Intelligence Providers, Reasoning Router, Escalation Tasks,
+  trust boundaries, resource leases, Hooks, permissions, redaction, failure
+  handling, Journey integration, and MVP acceptance criteria.
+- [ ] Add the Resident Agent service boundary and a CPU-resident execution
+  profile with durable status, bounded context, and restart recovery.
+- [ ] Connect RFC-0072 Event/Hook delivery to the Steward with event
+  deduplication, causation metadata, cooldowns, and automation-depth limits.
+- [ ] Implement the Reasoning Router and provider registry with deterministic
+  privacy, latency, cost, budget, context, and resource admission checks.
+- [ ] Add durable Escalation Task storage, structured plan results, plan-hash
+  verification, idempotency, approval handoff, and postcondition checking.
+- [ ] Integrate optional `GPU_BURST` Steward leases with RFC-0073 and reliable
+  CPU fallback when the Resource Broker reclaims VRAM.
+- [ ] Expose the initial Steward/reasoning MCP tools and resources, then add
+  Advanced Mode status and escalation detail views.
+- [ ] Add acceptance coverage for stale plans, redaction, provider failure,
+  GPU fallback, disconnected recovery, and automation-loop protection.
 
 ## 2026-08-14 ECO-0007 Activation Scope Extension And Maturity Completion
 
@@ -833,6 +921,12 @@ Product alignment summary:
   Wallet/Node identity separation, and explicit secret erasure are normative;
   implementation remains tracked in the dedicated RFC-0074 roadmap slice
   above.
+- RFC-0075 now defines the two-level Node Intelligence Architecture: a
+  lightweight Resident Node Agent handles routine local control while a
+  policy-aware Reasoning Router escalates complex work to larger local,
+  AiDN-hosted, or external providers. The larger model proposes, the Steward
+  verifies, and the Hypervisor remains authoritative; implementation is tracked
+  in the dedicated RFC-0075 roadmap slice above.
 - RFC-0042 v0.3 makes the Network Dispatcher the next infrastructure layer: the
   first implementation slice covers transport-independent envelopes, domain and
   payload validation, Route Generation, bounded admission, local delivery,

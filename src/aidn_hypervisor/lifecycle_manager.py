@@ -658,16 +658,23 @@ class LifecycleManager:
             actions.append({"action": "DISABLE_ENDPOINT", "target": target["endpoint"].endpoint_id, "scope": "local"})
             if target["endpoint"].publication.visibility != "private" or target["endpoint"].publication.discoverable:
                 actions.extend([
-                    {"action": "UNPUBLISH_ENDPOINT", "target": object_id, "scope": "network"},
-                    {"action": "RETIRE_ENDPOINT", "target": object_id, "scope": "network"},
+                    {"action": "UNPUBLISH_ENDPOINT", "target": target["endpoint"].endpoint_id, "scope": "network"},
+                    {"action": "RETIRE_ENDPOINT", "target": target["endpoint"].endpoint_id, "scope": "network"},
                 ])
-            actions.append({"action": "DELETE_LOCAL", "target": object_id, "scope": "local"})
+            actions.append({"action": "DELETE_LOCAL", "target": target["endpoint"].endpoint_id, "scope": "local"})
         elif object_type == "bundle":
             if target["bundle"].enabled:
-                actions.append({"action": "DISABLE_BUNDLE", "target": object_id, "scope": "local"})
-            actions.append({"action": "DELETE_LOCAL", "target": object_id, "scope": "local"})
+                actions.append({"action": "DISABLE_BUNDLE", "target": target["bundle"].bundle_id, "scope": "local"})
+            actions.append({"action": "DELETE_LOCAL", "target": target["bundle"].bundle_id, "scope": "local"})
         else:
-            actions.append({"action": "DELETE_LOCAL", "target": target.get(object_type.split("_")[-1], object_id), "scope": "local"})
+            target_key = {
+                "provider_instance": "provider",
+                "model_deployment": "deployment",
+                "provider_plugin": "plugin",
+            }.get(object_type)
+            target_object = target.get(target_key) if target_key else None
+            target_id = getattr(target_object, "provider_instance_id", None) or getattr(target_object, "model_deployment_id", None) or getattr(target_object, "plugin_id", None)
+            actions.append({"action": "DELETE_LOCAL", "target": target_id or target.get("id", ""), "scope": "local"})
         return actions
 
     def _network_actions(self, object_type: str, target: dict) -> list[dict]:

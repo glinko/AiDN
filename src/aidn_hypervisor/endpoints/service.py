@@ -26,17 +26,28 @@ class EndpointService:
         store,
         *,
         operation_recorder=None,
+        on_change=None,
         record_creation_operation: bool = True,
         record_update_operation: bool = True,
     ) -> None:
         self.store = store
         self.operation_recorder = operation_recorder
+        # Optional Hypervisor callback.  Endpoint mutations can change which
+        # queued requests are admissible, so the owning service may use this
+        # hook to trigger a global scheduler reconciliation.  Standalone
+        # EndpointService users keep the previous behavior when unset.
+        self.on_change = on_change
         # Validator-mode Endpoint creation is a local draft operation. The
         # canonical ENDPOINT_PUBLISH transaction is submitted separately.
         self.record_creation_operation = record_creation_operation
         # Draft configuration changes are also local projections in validator
         # mode. A future typed consensus transition will own published edits.
         self.record_update_operation = record_update_operation
+
+    def set_change_callback(self, callback) -> None:
+        """Attach the owning Hypervisor's material-change callback."""
+
+        self.on_change = callback
 
     def list_endpoints(self) -> list[EndpointManifest]:
         return self.store.list_manifests()
@@ -108,6 +119,7 @@ class EndpointService:
         self.store.save_configuration_snapshot(snapshot)
         if self.record_creation_operation:
             self._record_endpoint_publish(manifest)
+        self._notify_change("created", manifest.endpoint_id)
         return CreateEndpointResult(endpoint=manifest, snapshot=snapshot)
 
     def update_endpoint(self, cmd: UpdateEndpointCommand) -> UpdateEndpointResult:
@@ -195,6 +207,7 @@ class EndpointService:
             current=updated,
             snapshot=snapshot,
         )
+        self._notify_change("updated", updated.endpoint_id)
         return UpdateEndpointResult(endpoint=updated, snapshot=snapshot)
 
     def set_local_agent_use(self, endpoint_id: str, *, enabled: bool) -> EndpointResult:
@@ -209,6 +222,7 @@ class EndpointService:
             raise EndpointStateError("Local Agent Use cannot be changed on a deleted endpoint")
         updated = current.model_copy(update={"local_agent_use": enabled})
         self.store.save_manifest(updated)
+        self._notify_change("local_agent_use_changed", updated.endpoint_id)
         return EndpointResult(endpoint=updated)
 
     def attach_proxy_target(self, endpoint_id: str, remote_endpoint) -> UpdateEndpointResult:
@@ -278,6 +292,7 @@ class EndpointService:
             current=updated,
             snapshot=snapshot,
         )
+        self._notify_change("proxy_attached", updated.endpoint_id)
         return UpdateEndpointResult(endpoint=updated, snapshot=snapshot)
 
     def detach_proxy_target(self, endpoint_id: str) -> UpdateEndpointResult:
@@ -332,6 +347,7 @@ class EndpointService:
             current=updated,
             snapshot=snapshot,
         )
+        self._notify_change("proxy_detached", updated.endpoint_id)
         return UpdateEndpointResult(endpoint=updated, snapshot=snapshot)
 
     def start_endpoint(self, endpoint_id: str) -> EndpointResult:
@@ -363,6 +379,7 @@ class EndpointService:
             return EndpointResult(endpoint=current)
         updated = current.model_copy(update={"status": "stopped"})
         self.store.save_manifest(updated)
+        self._notify_change("disabled", updated.endpoint_id)
         return EndpointResult(endpoint=updated)
 
     def unpublish_endpoint(self, endpoint_id: str) -> EndpointResult:
@@ -382,6 +399,7 @@ class EndpointService:
             return EndpointResult(endpoint=current)
         updated = current.model_copy(update={"publication": publication})
         self.store.save_manifest(updated)
+        self._notify_change("unpublished", updated.endpoint_id)
         return EndpointResult(endpoint=updated)
 
     def suspend_endpoint(self, endpoint_id: str) -> EndpointResult:
@@ -416,7 +434,25 @@ class EndpointService:
             )
         updated = current.model_copy(update={"status": next_status})
         self.store.save_manifest(updated)
+        self._notify_change(next_status, updated.endpoint_id)
         return EndpointResult(endpoint=updated)
+
+    def _notify_change(self, action: str, endpoint_id: str) -> None:
+        callback = self.on_change
+        if not callable(callback):
+            return
+        trigger = f"endpoint_{action}"
+        try:
+            callback(trigger=trigger)
+        except TypeError:
+            # Keep the callback boundary friendly to small integrations that
+            # accept a single positional trigger string.
+            callback(trigger)
+        except Exception:
+            # The local manifest write is authoritative.  A transient
+            # scheduler/readiness failure must not roll back an Endpoint
+            # mutation; the next queue/resource transition will retry it.
+            return
 
     def _record_endpoint_publish(self, manifest: EndpointManifest) -> None:
         if self.operation_recorder is None or not self.record_creation_operation:

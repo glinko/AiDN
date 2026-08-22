@@ -27,6 +27,12 @@ class RuntimeHandle:
     readiness_message: str | None = None
     readiness_checked_at: str | None = None
     readiness_diagnostic: dict = field(default_factory=dict)
+    # RFC-0073 Runtime Instance projection.  ``status`` remains the low-level
+    # process state for backwards compatibility; these fields describe the
+    # schedulable lifecycle state and warm-retention metadata.
+    lifecycle_state: str = "STARTING"
+    last_activity_at: str | None = None
+    pinned_warm: bool = False
 
 
 class ProviderProcessManager:
@@ -155,6 +161,7 @@ class ProviderProcessManager:
 
     def stop_runtime(self, runtime_id: str) -> RuntimeHandle:
         handle = self._runtimes.pop(runtime_id)
+        handle.lifecycle_state = "STOPPING"
         process = self._processes.pop(runtime_id, None)
         self._pending_state_notifications.discard(runtime_id)
         try:
@@ -170,6 +177,7 @@ class ProviderProcessManager:
             self.port_allocator.release(runtime_id)
             self._cleanup_runtime_paths(self._cleanup_paths.pop(runtime_id, ()))
         handle.status = "stopped"
+        handle.lifecycle_state = "STOPPED"
         handle.readiness_status = "STOPPED"
         handle.readiness_code = "operator_stopped"
         handle.readiness_message = "runtime stopped by operator"
@@ -211,6 +219,7 @@ class ProviderProcessManager:
                 self._close_runtime_log(runtime_id)
                 log_tail = self._read_runtime_log_tail(handle)
                 handle.status = "stopped"
+                handle.lifecycle_state = "FAILED" if returncode else "STOPPED"
                 handle.health_status = "unhealthy"
                 base_error = f"managed runtime exited with code {returncode}"
                 handle.last_error = f"{base_error}: {log_tail}" if log_tail else base_error

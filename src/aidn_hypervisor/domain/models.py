@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field, field_validator
 from aidn_hypervisor.domain.types import (
     AllocationPolicy,
     LaunchMode,
+    PreemptionClass,
     TaskMode,
     WarmPolicy,
 )
@@ -38,6 +39,12 @@ class BundleConfig(BaseModel):
     warm_policy: WarmPolicy
     priority_class: int = 50
     max_parallel_requests: int = 1
+    # RFC-0073 scheduling policy.  These values are part of the Bundle
+    # configuration because they affect which workloads may evict or retain a
+    # runtime.  Defaults preserve the historical scheduler behaviour.
+    preemption_class: PreemptionClass = "DRAINABLE"
+    warm_retention_seconds: int | None = Field(default=None, ge=0)
+    minimum_residency_seconds: int = Field(default=0, ge=0)
     enabled: bool = True
     # Operator-owned generation/runtime values.  A non-empty policy is
     # enforced at the task boundary before a provider sees the request.

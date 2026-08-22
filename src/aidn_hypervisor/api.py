@@ -44,6 +44,7 @@ from aidn_hypervisor.endpoint_publications.signing import sign_consensus_bytes, 
 from aidn_hypervisor.operator_cometbft import build_operator_cometbft_payload
 from aidn_hypervisor.operator_cometbft_install import build_operator_cometbft_install_payload
 from aidn_hypervisor.operator_readiness import build_operator_readiness_payload
+from aidn_hypervisor.journey_read_models import build_journey_payload
 from aidn_hypervisor.operator_views import (
     build_operator_bundles_payload,
     build_operator_endpoints_payload,
@@ -1739,6 +1740,25 @@ def build_api_router(
             market_candidates=market["candidates"],
         )
 
+    @router.get("/operators/dashboard/journey")
+    async def operator_dashboard_journey() -> dict:
+        """Return the canonical setup and operating journey graph.
+
+        The graph is a read-only projection.  It intentionally reuses the
+        same Endpoint publication read model as the Overview and Endpoints
+        screens so a Journey card cannot drift from the operator's actual
+        publication state.
+        """
+
+        _reconcile_endpoint_publications()
+        endpoint_payload = _operator_dashboard_endpoints_payload(
+            service=service,
+            endpoint_service=endpoint_service,
+            endpoint_publication_service=endpoint_publication_service,
+            validation_service=validation_service,
+        )
+        return build_journey_payload(service, endpoint_items=endpoint_payload.get("items", []))
+
     @router.get("/operators/dashboard/readiness")
     async def operator_dashboard_readiness() -> dict:
         _reconcile_endpoint_publications()
@@ -1782,6 +1802,7 @@ def build_api_router(
                 probe=report.metadata(),
                 observed_at=report.observed_at,
             )
+            service.reconcile_scheduler(trigger="resource_probe")
         except (OSError, TypeError, ValueError) as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         return {

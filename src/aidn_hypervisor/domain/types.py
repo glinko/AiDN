@@ -3,6 +3,12 @@ from typing import Literal
 TaskMode = Literal["manual", "auto"]
 AllocationPolicy = Literal["reject", "wait"]
 WarmPolicy = Literal["always", "auto", "never"]
+PreemptionClass = Literal[
+    "NON_PREEMPTIBLE",
+    "DRAINABLE",
+    "CHECKPOINTABLE",
+    "IMMEDIATELY_PREEMPTIBLE",
+]
 LaunchMode = Literal["managed_process", "attached_service"]
 TaskStatus = Literal[
     "queued",

@@ -74,10 +74,11 @@ import {
   shortId,
 } from '@/lib/format'
 import { useDashboardData } from '@/hooks/use-dashboard'
-import { DashboardApiError, dashboardApi, type AccessCredential, type AgentPermissionCatalog, type DashboardAccessStatus, type DashboardRecord, type EnrollmentRequest, type HookDefinition, type HookDelivery, type InferenceCredential, type ProviderArtifactInventory, type ProviderWorkspace } from '@/lib/api'
+import { DashboardApiError, dashboardApi, type AccessCredential, type AgentPermissionCatalog, type DashboardAccessStatus, type DashboardRecord, type EnrollmentRequest, type HookDefinition, type HookDelivery, type InferenceCredential, type LifecyclePlan, type LifecycleTransitionAction, type ProviderArtifactInventory, type ProviderWorkspace } from '@/lib/api'
 import { dashboardScreens, useOperatorDashboardStore, type DashboardScreen } from '@/stores/operator-dashboard'
-import type { Bundle, CometBftDashboard, CometBftInstall, Endpoint, Fleet, Readiness, ReadinessStep, RuntimeOperations, WalletDashboard } from '@/lib/types'
+import type { Bundle, CometBftDashboard, CometBftInstall, Endpoint, Fleet, Readiness, RuntimeOperations, WalletDashboard } from '@/lib/types'
 import { createSavedHypervisor, loadSavedHypervisors, saveSavedHypervisors, type SavedHypervisorConnection } from '@/lib/hypervisor-connections'
+import { JourneyPage } from '@/components/journey/JourneyPage'
 
 type NavigationItem = {
   id: DashboardScreen
@@ -266,7 +267,7 @@ function App() {
   const nodeIdentity = data.home.data?.bootstrap.node_identity ?? data.fleet.data?.node
   const nodeName = getText(nodeIdentity, 'node_id') || 'Local Hypervisor'
   const readinessPercent = data.readiness.data?.progress.percent ?? 0
-  const hasRefreshError = [data.home, data.readiness, data.cometbft, data.cometbftInstall, data.fleet, data.bundles, data.endpoints, data.wallet, data.providers, data.runtimeOperations, data.installs, data.sessions, data.market, data.remoteEndpoints, data.events, data.hooks, data.hookMetrics, data.hookDeliveries, data.hookDeadLetters].some(
+  const hasRefreshError = [data.home, data.journey, data.readiness, data.cometbft, data.cometbftInstall, data.fleet, data.bundles, data.endpoints, data.wallet, data.providers, data.runtimeOperations, data.installs, data.sessions, data.market, data.remoteEndpoints, data.events, data.hooks, data.hookMetrics, data.hookDeliveries, data.hookDeadLetters].some(
     (query) => query.isError,
   )
 
@@ -291,6 +292,7 @@ function App() {
     setRefreshFeedback({ state: 'running', message: 'Refreshing Hypervisor state...' })
     void Promise.allSettled([
       data.home.refetch(),
+      data.journey.refetch(),
       data.readiness.refetch(),
       data.cometbft.refetch(),
       data.cometbftInstall.refetch(),
@@ -334,7 +336,7 @@ function App() {
       <TopBar
         nodeName={nodeName}
         advanced={advanced}
-            isRefreshing={data.home.isFetching || data.readiness.isFetching || data.runtimeOperations.isFetching || data.events.isFetching || data.hooks.isFetching}
+            isRefreshing={data.home.isFetching || data.journey.isFetching || data.readiness.isFetching || data.runtimeOperations.isFetching || data.events.isFetching || data.hooks.isFetching}
         refreshError={hasRefreshError}
         refreshFeedback={refreshFeedback}
         onRefresh={refreshAll}
@@ -364,7 +366,7 @@ function App() {
 
         <main className="min-w-0 flex-1 lg:pl-5">
           {activeScreen === 'overview' ? (
-            <OverviewScreen data={data} onNavigate={navigate} onRefresh={refreshAll} />
+            <JourneyPage graph={data.journey.data} isLoading={data.journey.isLoading} error={data.journey.error} onRefresh={refreshAll} onNavigate={navigate} />
           ) : null}
           {activeScreen === 'bundles' ? (
             <BundlesScreen bundles={data.bundles.data?.items ?? []} isLoading={data.bundles.isLoading} error={data.bundles.error} onNavigate={navigate} onRefresh={refreshAll} readiness={data.readiness.data} fleet={data.fleet.data} providers={data.providers.data} />
@@ -676,246 +678,11 @@ function Navigation({ activeScreen, advanced, readinessPercent, onNavigate, onTo
 
 type DashboardData = ReturnType<typeof useDashboardData>
 
-function OverviewScreen({ data, onNavigate, onRefresh }: { data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
-  const bundles = data.bundles.data?.items ?? []
-  const endpoints = data.endpoints.data?.items ?? []
-  const readiness = data.readiness.data
-  const fleet = data.fleet.data
-  const home = data.home.data
-  const wallet = home?.bootstrap.owner_wallet
-  const nodeIdentity = home?.bootstrap.node_identity ?? fleet?.node
-  const nodeName = getText(nodeIdentity, 'node_id') || 'Local Hypervisor'
-  const publishedCount = data.endpoints.data?.summary.published ?? endpoints.filter((endpoint) => endpoint.publication_status === 'published').length
-  const activeSessions = data.sessions.data?.summary.active ?? fleet?.queue.active ?? 0
-  const queuedSessions = data.sessions.data?.summary.queued ?? fleet?.queue.queued ?? 0
-  const validationSummary = summarizeValidation(endpoints)
-
-  return (
-    <div className="space-y-4 lg:space-y-5">
-      <section className="flex flex-col justify-between gap-4 border-b border-border/75 pb-4 sm:flex-row sm:items-end">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-[-0.045em] text-white sm:text-3xl">Overview</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">{nodeName} at a glance: current execution, capacity, network evidence, and the next safe operator action.</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <SmallInfo label="Node" value={nodeName} />
-          <SmallInfo label="Refresh" value={data.home.isFetching || data.events.isFetching ? 'Updating' : 'Live'} tone={data.home.isFetching || data.events.isFetching ? 'warn' : 'good'} />
-          <Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={onRefresh}>
-            <RefreshCw className={cn('size-3.5', (data.home.isFetching || data.events.isFetching) && 'animate-spin')} />
-            Refresh all
-          </Button>
-        </div>
-      </section>
-
-      <NodeStatusStrip readiness={readiness} fleet={fleet} market={data.market.data} endpoints={data.endpoints.data} isLoading={data.readiness.isLoading || data.fleet.isLoading} />
-
-      <AttentionRequired readiness={readiness} readinessError={data.readiness.error} onNavigate={onNavigate} onRefresh={onRefresh} />
-
-      <section className="grid grid-cols-2 gap-3 xl:grid-cols-5">
-        <MetricCard label="Active Bundles" value={formatCount(bundles.filter((bundle) => bundle.enabled).length)} detail={`${bundles.length} registered · open inventory`} icon={Boxes} tone="cyan" loading={data.bundles.isLoading} onClick={() => onNavigate('bundles')} />
-        <MetricCard label="Published Endpoints" value={formatCount(publishedCount)} detail={`${endpoints.length} configured · open offers`} icon={RadioTower} tone="blue" loading={data.endpoints.isLoading} onClick={() => onNavigate('endpoints')} />
-        <MetricCard label="Running Sessions" value={formatCount(activeSessions)} detail={`${queuedSessions} queued · open queue`} icon={Activity} tone="violet" loading={data.sessions.isLoading || data.fleet.isLoading} onClick={() => onNavigate('agents')} />
-        <MetricCard label="Wallet" value={wallet?.configured ? 'Bound' : 'Setup'} detail={wallet?.configured ? shortId(wallet.wallet_id) : 'Action required · open Wallet'} icon={WalletCards} tone={wallet?.configured ? 'green' : 'amber'} loading={data.home.isLoading} onClick={() => onNavigate('wallet')} />
-        <MetricCard label="Readiness" value={readiness ? formatPercent(readiness.progress.percent) : '—'} detail={readiness?.overall_state ?? 'Status unavailable'} icon={ShieldCheck} tone={readiness?.overall_state === 'ready' ? 'green' : 'amber'} loading={data.readiness.isLoading} onClick={() => onNavigate('network')} />
-      </section>
-
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_296px]">
-        <div className="min-w-0 space-y-4">
-          <BundleTableSection bundles={bundles} isLoading={data.bundles.isLoading} error={data.bundles.error} onNavigate={onNavigate} compact />
-          <SessionQueueOverview sessions={data.sessions.data} isLoading={data.sessions.isLoading} error={data.sessions.error} onNavigate={onNavigate} />
-          <RecentOperations events={data.events.data ?? []} isLoading={data.events.isLoading} error={data.events.error} onNavigate={onNavigate} onRefresh={onRefresh} />
-        </div>
-        <aside className="space-y-4">
-          <ResourceOverview fleet={fleet} isLoading={data.fleet.isLoading} error={data.fleet.error} onNavigate={onNavigate} />
-          <NetworkValidationOverview readiness={readiness} market={data.market.data} remoteEndpoints={data.remoteEndpoints.data} validation={validationSummary} onNavigate={onNavigate} />
-          <SystemState fleet={fleet} home={home} isLoading={data.fleet.isLoading || data.home.isLoading} />
-        </aside>
-      </div>
-
-      <ReadinessWizard readiness={readiness} isLoading={data.readiness.isLoading} error={data.readiness.error} onNavigate={onNavigate} onRefresh={onRefresh} />
-    </div>
-  )
-}
-
-function NodeStatusStrip({ readiness, fleet, market, endpoints, isLoading }: { readiness: DashboardData['readiness']['data']; fleet: DashboardData['fleet']['data']; market: DashboardData['market']['data']; endpoints: DashboardData['endpoints']['data']; isLoading: boolean }) {
-  const discovery = market ? `${formatCount(market.nodes.length)} node${market.nodes.length === 1 ? '' : 's'}` : 'Unknown'
-  const assurance = endpoints ? `${formatCount(endpoints.summary.published)} published` : 'Unknown'
-  return (
-    <section className="grid gap-px overflow-hidden rounded-xl border border-border/80 bg-border/60 sm:grid-cols-2 xl:grid-cols-4">
-      <StatusSignal label="Hypervisor inventory" value={isLoading && !fleet ? 'Checking' : fleet ? 'Ready' : 'Unknown'} detail={fleet ? 'capacity read model available' : 'fleet read model unavailable'} tone={fleet ? 'good' : 'muted'} />
-      <StatusSignal label="Consensus readiness" value={readiness ? readiness.network_ready ? 'Ready' : 'Blocked' : 'Unknown'} detail={readiness ? 'reported by readiness checks' : 'readiness evidence unavailable'} tone={readiness?.network_ready ? 'good' : readiness ? 'bad' : 'muted'} />
-      <StatusSignal label="Execution readiness" value={readiness ? readiness.execution_ready ? 'Ready' : 'Review' : 'Unknown'} detail={readiness ? 'managed Bundle or Provider/Binding path' : 'readiness evidence unavailable'} tone={readiness?.execution_ready ? 'good' : readiness ? 'warn' : 'muted'} />
-      <StatusSignal label="Discovery / assurance" value={`${discovery} · ${assurance}`} detail="current local read models" tone={market && endpoints ? 'good' : 'muted'} />
-    </section>
-  )
-}
-
-function StatusSignal({ label, value, detail, tone }: { label: string; value: string; detail: string; tone: 'good' | 'warn' | 'bad' | 'muted' }) {
-  const dot = tone === 'good' ? 'bg-emerald-300' : tone === 'warn' ? 'bg-amber-300' : tone === 'bad' ? 'bg-rose-300' : 'bg-slate-500'
-  const text = tone === 'good' ? 'text-emerald-300' : tone === 'warn' ? 'text-amber-200' : tone === 'bad' ? 'text-rose-200' : 'text-slate-300'
-  return <div className="bg-[#081522] px-4 py-3.5"><div className="flex items-center gap-2"><span className={cn('size-2 rounded-full', dot)} /><p className="text-xs font-semibold text-slate-200">{label}</p></div><p className={cn('mt-2 font-mono text-sm font-semibold', text)}>{value}</p><p className="mt-1 text-[11px] leading-4 text-muted-foreground">{detail}</p></div>
-}
-
-function AttentionRequired({ readiness, readinessError, onNavigate, onRefresh }: { readiness: DashboardData['readiness']['data']; readinessError: Error | null; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
-  if (readinessError && !readiness) {
-    return <PanelError title="Next action is unavailable" detail="Readiness checks did not return. Refresh to recover the operator path; no mutation was attempted." error={readinessError} onRetry={onRefresh} />
-  }
-  const ready = readiness?.overall_state.toLowerCase() === 'ready' && readiness.execution_ready && readiness.network_ready
-  const executionReady = readiness?.execution_ready === true
-  const localExecutionReady = executionReady && !readiness?.network_ready
-  const action = readiness?.next_action
-  return (
-    <Card className={cn('border-border/80 py-0 shadow-none', ready || localExecutionReady ? 'bg-emerald-300/[0.035]' : 'border-amber-300/25 bg-amber-300/[0.045]')}>
-      <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
-        <div className="flex min-w-0 gap-3">
-          <span className={cn('mt-0.5 grid size-9 shrink-0 place-items-center rounded-lg', ready || localExecutionReady ? 'bg-emerald-300/10 text-emerald-300' : 'bg-amber-300/10 text-amber-200')}><ShieldCheck className="size-4" /></span>
-          <div className="min-w-0"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">{ready ? 'No blocking action reported' : localExecutionReady ? 'Local execution ready' : 'Attention required'}</p><p className="mt-1 font-semibold text-white">{ready ? 'The node passed the current readiness gate.' : localExecutionReady ? 'The managed model runtime can serve local requests.' : action?.label || 'Review readiness checks'}</p><p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">{ready ? 'Use the workspaces below to inspect active objects, capacity, and recent evidence.' : localExecutionReady ? 'The local Bundle path is ready. Network finality remains separate and needs the action shown here before this node is network-ready.' : action?.detail || 'The readiness read model did not provide a next safe action.'}</p></div>
-        </div>
-        {!ready && action ? <ReadinessAction action={action} onNavigate={onNavigate} onRefresh={onRefresh} /> : <Button variant="outline" size="sm" className="shrink-0 border-emerald-300/25 bg-transparent text-emerald-100 hover:bg-emerald-300/10" onClick={() => onNavigate('network')}>Open readiness<ChevronRight /></Button>}
-      </CardContent>
-    </Card>
-  )
-}
-
-function SessionQueueOverview({ sessions, isLoading, error, onNavigate }: { sessions: DashboardData['sessions']['data']; isLoading: boolean; error: Error | null; onNavigate: NavigationProps['onNavigate'] }) {
-  if (isLoading && !sessions) return <PanelSkeleton rows={3} />
-  if (error && !sessions) return <PanelError title="Session queue is unavailable" error={error} />
-  const items = sessions?.items ?? []
-  return <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/75 px-5 py-4"><div><p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Execution pressure</p><CardTitle className="mt-1 text-lg font-semibold tracking-[-0.03em]">Sessions and queue</CardTitle><p className="mt-1 text-sm text-muted-foreground">{sessions?.summary.active ?? 0} active · {sessions?.summary.queued ?? 0} queued · {sessions?.summary.closed ?? 0} closed</p></div><Button variant="ghost" size="sm" className="text-cyan-200 hover:bg-cyan-300/10 hover:text-cyan-100" onClick={() => onNavigate('agents')}>Open Agents<ChevronRight /></Button></CardHeader><CardContent className="divide-y divide-border/70 p-0">{items.length === 0 ? <EmptyState title="No Sessions in the local ledger" detail="Published Endpoints will create Session records when Consumers submit work. This is an empty state, not a failed refresh." actionLabel="Review Endpoints" onAction={() => onNavigate('endpoints')} /> : items.slice(0, 4).map((item, index) => { const session = getRecord(item.session); const id = getText(session, 'session_id') || `session-${index + 1}`; const status = getText(session, 'status') || 'unknown'; return <button type="button" key={id} className="flex w-full items-center gap-3 px-5 py-4 text-left transition-colors hover:bg-white/[0.025] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70" onClick={() => onNavigate('agents')}><span className="grid size-8 shrink-0 place-items-center rounded-lg bg-violet-300/10 text-violet-200"><Activity className="size-4" /></span><span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-medium text-slate-100">{getText(item, 'display_name') || getText(session, 'endpoint_id') || 'Endpoint Session'}</span><StatusBadge value={status} /></span><span className="mt-1 block truncate font-mono text-[11px] text-slate-500">{id} · {getText(session, 'request_count') || '0'} request(s)</span></span><ChevronRight className="size-4 shrink-0 text-slate-500" /></button> })}</CardContent></Card>
-}
-
-function RecentOperations({ events, isLoading, error, onNavigate, onRefresh }: { events: NonNullable<DashboardData['events']['data']>; isLoading: boolean; error: Error | null; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
-  if (isLoading && events.length === 0) return <PanelSkeleton rows={3} />
-  if (error && events.length === 0) return <PanelError title="Recent operations are unavailable" error={error} onRetry={onRefresh} />
-  return <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/75 px-5 py-4"><div><p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">Evidence journal</p><CardTitle className="mt-1 text-lg font-semibold tracking-[-0.03em]">Recent operations</CardTitle></div><Button variant="ghost" size="sm" className="text-cyan-200 hover:bg-cyan-300/10 hover:text-cyan-100" onClick={() => onNavigate('network')}>Open diagnostics<ChevronRight /></Button></CardHeader><CardContent className="divide-y divide-border/70 p-0">{events.length === 0 ? <EmptyState title="No recent operations recorded" detail="The Hypervisor event journal is empty. The dashboard will not manufacture activity entries." actionLabel="Refresh journal" onAction={onRefresh} /> : events.slice().reverse().slice(0, 5).map((event, index) => { const targetScreen: DashboardScreen = event.bundle_id ? 'bundles' : event.task_id ? 'agents' : 'network'; const target = event.bundle_id || event.task_id; return <button type="button" key={`${event.timestamp}:${event.event_type}:${target ?? index}`} className="flex w-full items-start gap-3 px-5 py-3.5 text-left transition-colors hover:bg-white/[0.025] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70" onClick={() => onNavigate(targetScreen)}><span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-md bg-cyan-300/8 text-cyan-200"><Activity className="size-3.5" /></span><span className="min-w-0 flex-1"><span className="flex flex-wrap items-center justify-between gap-2"><span className="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-cyan-100/70">{event.event_type}</span><span className="text-[10px] text-slate-500">{formatTimestamp(event.timestamp)}</span></span><span className="mt-1 block truncate text-xs text-slate-200">{event.message || 'Operation recorded'}</span>{target ? <span className="mt-1 block truncate font-mono text-[10px] text-slate-500">{target}</span> : null}</span><ChevronRight className="mt-1 size-3.5 shrink-0 text-slate-600" /></button> })}</CardContent></Card>
-}
-
-function NetworkValidationOverview({ readiness, market, remoteEndpoints, validation, onNavigate }: { readiness: DashboardData['readiness']['data']; market: DashboardData['market']['data']; remoteEndpoints: DashboardData['remoteEndpoints']['data']; validation: ReturnType<typeof summarizeValidation>; onNavigate: NavigationProps['onNavigate'] }) {
-  return <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="px-4 py-4"><CardTitle className="text-base font-semibold">Network and assurance</CardTitle><p className="mt-1 text-xs leading-5 text-muted-foreground">Evidence is split between readiness, discovery, and Endpoint validation.</p></CardHeader><CardContent className="space-y-3 px-4 pb-4"><button type="button" className="flex w-full items-center gap-3 rounded-lg border border-border/70 bg-black/10 p-3 text-left transition-colors hover:border-cyan-300/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70" onClick={() => onNavigate('network')}><span className="grid size-7 place-items-center rounded-md bg-sky-300/10 text-sky-200"><Network className="size-3.5" /></span><span className="min-w-0 flex-1"><span className="block text-xs font-semibold text-slate-100">Consensus / discovery</span><span className="mt-1 block text-[11px] text-muted-foreground">{readiness ? readiness.network_ready ? 'Readiness reports network-ready' : 'Readiness reports a network blocker' : 'No readiness evidence'} · {market ? `${market.nodes.length} visible nodes` : 'discovery unavailable'} · {remoteEndpoints ? `${remoteEndpoints.summary.attached} attached remote` : 'remote inventory unavailable'}</span></span><ChevronRight className="size-3.5 text-slate-500" /></button><button type="button" className="flex w-full items-center gap-3 rounded-lg border border-border/70 bg-black/10 p-3 text-left transition-colors hover:border-cyan-300/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70" onClick={() => onNavigate('validation')}><span className="grid size-7 place-items-center rounded-md bg-emerald-300/10 text-emerald-200"><ShieldCheck className="size-3.5" /></span><span className="min-w-0 flex-1"><span className="block text-xs font-semibold text-slate-100">Endpoint validation</span><span className="mt-1 block text-[11px] text-muted-foreground">{validation.verified} verified · {validation.pending} pending · {validation.unvalidated} without validation evidence</span></span><ChevronRight className="size-3.5 text-slate-500" /></button></CardContent></Card>
-}
-
 function formatTimestamp(value: string): string {
   if (!value) return 'time unavailable'
   const timestamp = new Date(value)
   if (Number.isNaN(timestamp.getTime())) return value
   return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(timestamp)
-}
-
-function SmallInfo({ label, value, tone = 'muted' }: { label: string; value: string; tone?: 'good' | 'warn' | 'muted' }) {
-  const toneClass = tone === 'good' ? 'text-emerald-300' : tone === 'warn' ? 'text-amber-200' : 'text-slate-200'
-  return (
-    <div className="rounded-md border border-border/75 bg-[#081422] px-2.5 py-1.5">
-      <span className="mr-1.5 font-mono text-[9px] font-semibold uppercase tracking-[0.13em] text-slate-500">{label}</span>
-      <span className={cn('text-xs font-semibold', toneClass)}>{value}</span>
-    </div>
-  )
-}
-
-function MetricCard({ label, value, detail, icon: Icon, tone, loading, onClick }: { label: string; value: string; detail: string; icon: LucideIcon; tone: 'cyan' | 'blue' | 'violet' | 'green' | 'amber'; loading: boolean; onClick: () => void }) {
-  const color = {
-    cyan: 'text-cyan-300 bg-cyan-300/10',
-    blue: 'text-sky-300 bg-sky-300/10',
-    violet: 'text-violet-300 bg-violet-300/10',
-    green: 'text-emerald-300 bg-emerald-300/10',
-    amber: 'text-amber-200 bg-amber-300/10',
-  }[tone]
-  return (
-    <Card className="min-h-32 border-border/80 bg-card py-0 shadow-none transition-colors hover:border-cyan-300/35" size="sm">
-      <button type="button" className="flex h-full w-full flex-col p-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70" onClick={onClick}>
-        <div className="flex items-start justify-between gap-2">
-          <p className="eyebrow">{label}</p>
-          <span className={cn('grid size-8 place-items-center rounded-lg', color)}><Icon className="size-4" /></span>
-        </div>
-        {loading ? <Skeleton className="mt-4 h-8 w-16 bg-white/8" /> : <p className="mt-3 text-2xl font-semibold tracking-[-0.05em] text-white">{value}</p>}
-        <p className="mt-auto flex w-full items-center justify-between gap-2 pt-1 text-xs text-muted-foreground"><span>{detail}</span><ChevronRight className="size-3.5 text-cyan-200/70" /></p>
-      </button>
-    </Card>
-  )
-}
-
-function ReadinessWizard({ readiness, isLoading, error, onNavigate, onRefresh }: { readiness: DashboardData['readiness']['data']; isLoading: boolean; error: Error | null; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
-  if (isLoading && !readiness) {
-    return <PanelSkeleton rows={5} />
-  }
-  if (error && !readiness) {
-    return <PanelError title="Readiness is unavailable" error={error} onRetry={onRefresh} />
-  }
-  if (!readiness) {
-    return <PanelError title="Readiness data has not arrived" detail="Refresh the dashboard to run the operator checks." onRetry={onRefresh} />
-  }
-
-  const nextAction = readiness.next_action
-  return (
-    <Card className="border-border/80 bg-card py-0 shadow-none">
-      <CardHeader className="border-b border-border/75 px-5 py-4">
-        <div>
-          <p className="eyebrow">Operator setup</p>
-          <CardTitle className="mt-1 text-lg font-semibold tracking-[-0.03em]">Readiness Wizard</CardTitle>
-          <p className="mt-1 text-sm text-muted-foreground">A single preflight path from host prerequisites to a usable local Bundle or network Endpoint.</p>
-        </div>
-        <div className="text-right">
-          <p className="font-mono text-2xl font-semibold tracking-[-0.06em] text-cyan-200">{formatPercent(readiness.progress.percent)}</p>
-          <p className="text-xs text-muted-foreground">{readiness.progress.ready} of {readiness.progress.total} checks ready</p>
-        </div>
-      </CardHeader>
-      <CardContent className="p-5">
-        <div className="rounded-lg border border-cyan-300/20 bg-cyan-300/[0.045] p-3.5 sm:flex sm:items-center sm:justify-between sm:gap-4">
-          <div>
-            <p className="eyebrow text-cyan-100/75">Next safe action</p>
-            <p className="mt-1 font-semibold text-white">{nextAction.label}</p>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">{nextAction.detail}</p>
-          </div>
-          <ReadinessAction action={nextAction} onNavigate={onNavigate} onRefresh={onRefresh} />
-        </div>
-        <div className="mt-4 grid gap-2">
-          {readiness.steps.map((step) => <ReadinessStepRow key={step.key} step={step} onNavigate={onNavigate} onRefresh={onRefresh} />)}
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-function ReadinessAction({ action, onNavigate, onRefresh }: { action: { kind: string; label: string; detail: string; screen?: string } | undefined; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
-  if (!action) return null
-  if (action.kind === 'refresh') {
-    return <Button size="sm" variant="outline" className="mt-3 border-cyan-300/25 bg-transparent text-cyan-100 hover:bg-cyan-300/10 sm:mt-0" onClick={onRefresh}><RefreshCw />{action.label}</Button>
-  }
-  return <Button size="sm" className="mt-3 bg-cyan-300 text-[#06121d] hover:bg-cyan-200 sm:mt-0" onClick={() => onNavigate(readinessActionScreen(action))}>{action.label}<ChevronRight /></Button>
-}
-
-function readinessActionScreen(action: { screen?: string; label: string; detail: string }): DashboardScreen {
-  const value = `${action.screen ?? ''} ${action.label} ${action.detail}`.toLowerCase()
-  if (value.includes('wallet')) return 'wallet'
-  if (value.includes('resource') || value.includes('capacity')) return 'settings'
-  if (value.includes('cometbft') || value.includes('consensus')) return 'cometbft'
-  if (value.includes('network')) return 'network'
-  if (value.includes('provider') || value.includes('install')) return 'providers'
-  if (value.includes('model')) return 'models'
-  if (value.includes('validation')) return 'validation'
-  if (value.includes('endpoint')) return 'endpoints'
-  if (value.includes('bundle')) return 'bundles'
-  if (value.includes('market')) return 'market'
-  return 'overview'
-}
-
-function ReadinessStepRow({ step, onNavigate, onRefresh }: { step: ReadinessStep; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
-  const icon = step.status === 'ready' ? <CheckCircle2 className="size-4 text-emerald-300" /> : step.status === 'blocked' ? <XCircle className="size-4 text-rose-300" /> : <CircleDot className="size-4 text-amber-200" />
-  return (
-    <div className="rounded-lg border border-border/70 bg-black/10 p-3.5">
-      <div className="flex gap-3">
-        <span className="mt-0.5 shrink-0">{icon}</span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm font-semibold text-slate-100">{step.title}</p>
-            <StatusBadge value={step.status} />
-          </div>
-          <p className="mt-1 text-xs leading-5 text-slate-300">{step.summary}</p>
-          <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{step.detail}</p>
-          {step.action ? <div className="mt-2"><ReadinessAction action={step.action} onNavigate={onNavigate} onRefresh={onRefresh} /></div> : null}
-        </div>
-      </div>
-    </div>
-  )
 }
 
 function BundleTableSection({ bundles, isLoading, error, onNavigate, compact = false, onAction, onSelect }: { bundles: Bundle[]; isLoading: boolean; error: Error | null; onNavigate: NavigationProps['onNavigate']; compact?: boolean; onAction?: (bundle: Bundle, action: BundleAction) => void; onSelect?: (bundle: Bundle) => void }) {
@@ -940,7 +707,7 @@ function BundleTableSection({ bundles, isLoading, error, onNavigate, compact = f
   )
 }
 
-type BundleAction = 'enable' | 'disable' | 'retry' | 'reset-cooldown'
+type BundleAction = 'enable' | 'disable' | 'retry' | 'reset-cooldown' | 'lifecycle-disable' | 'lifecycle-retire' | 'lifecycle-remove'
 
 function BundleTable({ bundles, onNavigate, onAction, onSelect, compact = false }: { bundles: Bundle[]; onNavigate: NavigationProps['onNavigate']; onAction?: (bundle: Bundle, action: BundleAction) => void; onSelect?: (bundle: Bundle) => void; compact?: boolean }) {
   const columns: ColumnDef<Bundle>[] = [
@@ -962,7 +729,7 @@ function BundleTable({ bundles, onNavigate, onAction, onSelect, compact = false 
     ...(onAction ? [{
       id: 'controls',
       header: 'Controls',
-      cell: ({ row }: { row: { original: Bundle } }) => { const record = getRecord(row.original); const failed = ['failed', 'error', 'cooldown'].includes(bundleLifecycleStatus(row.original)); const hasCooldown = Boolean(valueText(record, 'cooldown_until')); return <div className="flex flex-wrap gap-1.5"><Button variant="outline" size="xs" className="border-border bg-[#091725]" disabled={row.original.enabled && bundleLifecycleStatus(row.original) === 'running'} onClick={() => onAction(row.original, row.original.enabled ? 'disable' : 'enable')}>{row.original.enabled ? 'Pause' : 'Enable'}</Button><Button variant="outline" size="xs" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={!failed} onClick={() => onAction(row.original, 'retry')}>Retry</Button><Button variant="ghost" size="xs" className="text-slate-300" disabled={!hasCooldown} onClick={() => onAction(row.original, 'reset-cooldown')}>Reset</Button></div> },
+      cell: ({ row }: { row: { original: Bundle } }) => { const record = getRecord(row.original); const failed = ['failed', 'error', 'cooldown'].includes(bundleLifecycleStatus(row.original)); const hasCooldown = Boolean(valueText(record, 'cooldown_until')); const retired = normalizeStatus(valueText(record, '_lifecycle_state') || valueText(record, 'lifecycle_state')) === 'retired'; return <div className="flex flex-wrap gap-1.5"><Button variant="outline" size="xs" className="border-border bg-[#091725]" disabled={retired || (!row.original.enabled && bundleLifecycleStatus(row.original) === 'paused')} onClick={() => onAction(row.original, row.original.enabled ? 'lifecycle-disable' : 'enable')}>{row.original.enabled ? 'Disable' : 'Enable'}</Button><Button variant="outline" size="xs" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={!failed} onClick={() => onAction(row.original, 'retry')}>Retry</Button><Button variant="ghost" size="xs" className="text-slate-300" disabled={!hasCooldown} onClick={() => onAction(row.original, 'reset-cooldown')}>Reset</Button><Button variant="ghost" size="xs" className="text-amber-100" disabled={retired || row.original.enabled} onClick={() => onAction(row.original, 'lifecycle-retire')}>Retire</Button><Button variant="ghost" size="xs" className="text-rose-200" disabled={retired} onClick={() => onAction(row.original, 'lifecycle-remove')}>Remove</Button></div> },
     }] satisfies ColumnDef<Bundle>[] : []),
   ]
   const table = useReactTable({ data: bundles, columns, getCoreRowModel: getCoreRowModel() })
@@ -1115,6 +882,75 @@ function BundleCopyValue({ label, value }: { label: string; value: string }) {
   return <div className="min-w-0"><p className="eyebrow">{label}</p><button type="button" className="mt-1 flex max-w-full items-center gap-1 rounded text-left font-mono text-xs text-slate-200 hover:text-cyan-200" onClick={() => void copy()} title="Copy value"><span className="truncate">{value || 'Not reported'}</span>{value && value !== 'Not reported' ? <Copy className="size-3 shrink-0" /> : null}</button>{copied ? <p className="mt-1 text-[10px] text-emerald-300">Copied</p> : null}</div>
 }
 
+type LifecyclePlanKind = 'transition' | 'removal' | 'runtime-reset'
+
+function lifecyclePlanIdentifier(plan: LifecyclePlan, kind: LifecyclePlanKind): string {
+  return getText(plan, kind === 'transition' ? 'transition_id' : kind === 'runtime-reset' ? 'reset_id' : 'plan_id')
+}
+
+function lifecyclePlanItems(plan: LifecyclePlan, key: string): string[] {
+  const value = plan[key]
+  if (!Array.isArray(value)) return []
+  return value.map((item) => {
+    const record = getRecord(item)
+    if (!record) return String(item)
+    const action = getText(record, 'action')
+    const target = getText(record, 'target')
+    const type = getText(record, 'type')
+    const id = getText(record, 'id')
+    return [action, type && id ? `${type}/${id}` : target].filter(Boolean).join(' · ') || JSON.stringify(record)
+  })
+}
+
+function lifecyclePlanSummary(plan: LifecyclePlan, key: string, fallback: string): string[] {
+  const items = lifecyclePlanItems(plan, key)
+  return items.length > 0 ? items : [fallback]
+}
+
+function lifecyclePlanMapItems(plan: LifecyclePlan, key: string): string[] {
+  const value = getRecord(plan[key])
+  if (!value) return []
+  return Object.entries(value).map(([name, item]) => {
+    const label = name.replaceAll('_', ' ')
+    if (Array.isArray(item)) return `${label}: ${item.length} item(s)`
+    if (typeof item === 'object' && item !== null) return `${label}: configured`
+    return `${label}: ${String(item)}`
+  })
+}
+
+function LifecyclePlanSheet({ plan, kind, open, busy, onOpenChange, onApply }: { plan: LifecyclePlan | null; kind: LifecyclePlanKind; open: boolean; busy: boolean; onOpenChange: (open: boolean) => void; onApply: (plan: LifecyclePlan) => void }) {
+  const [acknowledged, setAcknowledged] = useState(false)
+  useEffect(() => {
+    if (!open) setAcknowledged(false)
+  }, [open, plan])
+  if (!plan) return null
+  const target = getRecord(plan.target)
+  const planId = lifecyclePlanIdentifier(plan, kind)
+  const isRemoval = kind === 'removal'
+  const isReset = kind === 'runtime-reset'
+  const title = isReset ? 'Reset runtime state' : isRemoval ? 'Review local removal plan' : `Review ${getText(plan, 'action').toLowerCase() || 'lifecycle'} plan`
+  const description = isReset
+    ? 'The Scheduler will pause, active runtime work will be drained or cancelled according to policy, and leases will be reconciled before normal admission resumes.'
+    : isRemoval
+      ? 'This is a dependency-aware plan. No object is deleted until you apply this exact plan hash.'
+      : 'This transition changes lifecycle state without rewriting immutable history. Review the local and network effects before applying.'
+  const targetLabel = isReset ? 'Node runtime state' : `${getText(target, 'type') || getText(plan, 'target_type') || 'object'} / ${getText(target, 'id') || getText(plan, 'target_id') || '—'}`
+  const actions = isReset ? lifecyclePlanMapItems(plan, 'delete') : lifecyclePlanSummary(plan, 'actions', 'No additional actions reported.')
+  const networkActions = lifecyclePlanSummary(plan, 'network_actions', 'No network transition reported.')
+  const localActions = lifecyclePlanSummary(plan, 'local_actions', 'No local state change reported.')
+  const dependencies = lifecyclePlanSummary(plan, 'dependencies', 'No live dependencies reported.')
+  const preserved = lifecyclePlanMapItems(plan, 'preserve')
+  const estimated = getRecord(plan.estimated_freed)
+  const freed = estimated && Object.keys(estimated).length > 0
+    ? `${formatMemory(Number(estimated.ram_bytes ?? 0) / (1024 * 1024))} RAM · ${formatMemory(Number(estimated.vram_bytes ?? 0) / (1024 * 1024))} VRAM · ${formatMemory(Number(estimated.disk_bytes ?? 0) / (1024 * 1024))} disk`
+    : 'Not reported'
+  return <Sheet open={open} onOpenChange={onOpenChange}><SheetContent side="right" className="w-full overflow-y-auto border-slate-700 bg-[#07111d] p-0 sm:max-w-xl"><SheetHeader className="border-b border-border/70 px-5 py-5"><div className="flex flex-wrap items-center gap-2"><StatusBadge value={isRemoval ? 'destructive plan' : isReset ? 'maintenance' : getText(plan, 'target_state') || 'planned'} /><span className="eyebrow">Plan before apply</span></div><SheetTitle className="pr-8 text-xl text-white">{title}</SheetTitle><SheetDescription>{description}</SheetDescription></SheetHeader><div className="space-y-4 p-5"><Card className="border-cyan-300/20 bg-cyan-300/[0.03] py-0 shadow-none"><CardContent className="grid gap-3 p-4 sm:grid-cols-2"><div><p className="eyebrow">Target</p><p className="mt-1 break-all font-mono text-xs text-slate-100">{targetLabel}</p></div><div><p className="eyebrow">Plan hash</p><p className="mt-1 break-all font-mono text-[10px] text-cyan-100">{getText(plan, 'plan_hash') || 'Not reported'}</p></div><div><p className="eyebrow">Current state</p><p className="mt-1 text-sm text-slate-200">{getText(plan, 'current_state') || 'Not reported'}</p></div><div><p className="eyebrow">Resulting state</p><p className="mt-1 text-sm text-slate-200">{getText(plan, 'target_state') || (isReset ? 'READY' : 'Not reported')}</p></div></CardContent></Card><LifecyclePlanSection title={isReset ? 'Reset cleanup' : 'Planned actions'} items={actions} />{isReset && preserved.length > 0 ? <LifecyclePlanSection title="Preserved state" items={preserved} /> : null}<LifecyclePlanSection title="Network effects" items={networkActions} />{!isReset ? <LifecyclePlanSection title="Local effects" items={localActions} /> : null}<LifecyclePlanSection title="Dependencies" items={dependencies} /><div className="rounded-lg border border-border/70 bg-black/10 p-4"><p className="eyebrow">Estimated resources released</p><p className="mt-1 font-mono text-xs text-slate-200">{freed}</p></div><label className="flex items-start gap-3 rounded-lg border border-amber-300/25 bg-amber-300/[0.05] p-4 text-xs leading-5 text-amber-100"><input type="checkbox" checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)} className="mt-1 size-4 shrink-0" /><span>{isRemoval ? 'I understand that local data may be permanently removed after dependencies drain; distributed history remains preserved.' : isReset ? 'I understand that active runtime work may be cancelled and the Scheduler will enter maintenance during this operation.' : 'I reviewed the resulting state and understand that immutable history is not rewritten.'}</span></label></div><div className="sticky bottom-0 mt-auto flex flex-wrap gap-2 border-t border-border/70 bg-[#07111d] p-4"><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={!acknowledged || busy || !planId || !getText(plan, 'plan_hash')} onClick={() => onApply(plan)}>{busy ? 'Applying…' : isRemoval ? 'Apply removal' : isReset ? 'Reset runtime' : 'Apply transition'}</Button><Button variant="outline" className="border-border bg-[#091725]" disabled={busy} onClick={() => onOpenChange(false)}>Cancel</Button></div></SheetContent></Sheet>
+}
+
+function LifecyclePlanSection({ title, items }: { title: string; items: string[] }) {
+  return <Card className="border-border/70 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-4 py-3"><CardTitle className="text-sm">{title}</CardTitle></CardHeader><CardContent className="p-4"><ul className="space-y-2 text-xs leading-5 text-muted-foreground">{items.map((item, index) => <li key={`${item}:${index}`} className="flex gap-2"><span className="mt-2 size-1.5 shrink-0 rounded-full bg-cyan-300" />{item}</li>)}</ul></CardContent></Card>
+}
+
 function BundleInspector({ bundle, open, onOpenChange, onAction, onNavigate, onPreflight, onClone, preflight, readiness, fleet, providers }: { bundle?: Bundle; open: boolean; onOpenChange: (open: boolean) => void; onAction: (bundle: Bundle, action: BundleAction) => void; onNavigate: NavigationProps['onNavigate']; onPreflight: () => void; onClone: () => void; preflight: boolean; readiness?: Readiness; fleet?: Fleet; providers?: ProviderWorkspace }) {
   if (!bundle) return null
   const record = getRecord(bundle)
@@ -1131,7 +967,7 @@ function BundleInspector({ bundle, open, onOpenChange, onAction, onNavigate, onP
     <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-4 py-3"><div className="flex items-center justify-between gap-3"><CardTitle className="text-sm">Resource profile</CardTitle><StatusBadge value={valueText(record, 'warm_policy', 'auto')} /></div></CardHeader><CardContent className="grid grid-cols-2 gap-x-4 gap-y-4 p-4"><SessionValue label="Activation CPU" value={`${required.cpu.toFixed(1)} cores`} /><SessionValue label="Activation RAM" value={formatMemory(required.ram_mb)} /><SessionValue label="Activation VRAM" value={formatMemory(required.vram_mb)} /><SessionValue label="Steady CPU" value={`${numberValue(profile, 'steady_cpu').toFixed(1)} cores`} /><SessionValue label="Steady RAM" value={formatMemory(numberValue(profile, 'steady_ram_mb'))} /><SessionValue label="Steady VRAM" value={formatMemory(numberValue(profile, 'steady_vram_mb'))} /><SessionValue label="Priority" value={valueText(record, 'priority_class', '50')} /><SessionValue label="Parallel limit" value={valueText(record, 'max_parallel_requests', '1')} /></CardContent></Card>
     {preflight ? <Card className="border-cyan-300/20 bg-cyan-300/[0.03] py-0 shadow-none"><CardHeader className="border-b border-border/70 px-4 py-3"><CardTitle className="text-sm">Current preflight</CardTitle></CardHeader><CardContent className="space-y-2 p-4">{checks.map((check) => <div key={check.key} className="flex items-center gap-2"><BundleCheckIcon state={check.state} /><span className="text-xs text-slate-200">{check.label}</span><StatusBadge value={check.state} /></div>)}</CardContent></Card> : null}
     {metadata && Object.keys(metadata).length > 0 ? <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-4 py-3"><CardTitle className="text-sm">Runtime metadata</CardTitle></CardHeader><CardContent className="space-y-2 p-4">{Object.entries(metadata).slice(0, 8).map(([key, value]) => <div key={key} className="flex items-start justify-between gap-3 text-xs"><span className="font-mono text-slate-500">{key}</span><span className="max-w-[65%] break-all text-right text-slate-300">{typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? String(value) : 'structured value'}</span></div>)}</CardContent></Card> : null}
-  </div><div className="sticky bottom-0 mt-auto flex flex-wrap gap-2 border-t border-border/70 bg-[#07111d] p-4"><Button variant="outline" className="border-border bg-[#091725]" onClick={onPreflight}><Gauge />{preflight ? 'Refresh preflight' : 'Run preflight'}</Button><Button variant="outline" className="border-cyan-300/25 bg-[#091725] text-cyan-100" onClick={onClone}><Boxes />Create revision</Button><Button variant="outline" className="border-border bg-[#091725]" onClick={() => onAction(bundle, bundle.enabled ? 'disable' : 'enable')}>{bundle.enabled ? 'Pause' : 'Enable'}</Button><Button variant="ghost" className="ml-auto" onClick={() => onOpenChange(false)}>Close</Button></div></SheetContent></Sheet>
+  </div><div className="sticky bottom-0 mt-auto flex flex-wrap gap-2 border-t border-border/70 bg-[#07111d] p-4"><Button variant="outline" className="border-border bg-[#091725]" onClick={onPreflight}><Gauge />{preflight ? 'Refresh preflight' : 'Run preflight'}</Button><Button variant="outline" className="border-cyan-300/25 bg-[#091725] text-cyan-100" onClick={onClone}><Boxes />Create revision</Button><Button variant="outline" className="border-border bg-[#091725]" disabled={lifecycle === 'retired'} onClick={() => onAction(bundle, bundle.enabled ? 'lifecycle-disable' : 'enable')}>{bundle.enabled ? 'Disable' : 'Enable'}</Button><Button variant="outline" className="border-amber-300/25 bg-[#091725] text-amber-100" disabled={bundle.enabled || lifecycle === 'retired'} onClick={() => onAction(bundle, 'lifecycle-retire')}>Retire</Button><Button variant="outline" className="border-rose-300/25 bg-[#091725] text-rose-100" disabled={lifecycle === 'retired'} onClick={() => onAction(bundle, 'lifecycle-remove')}>Remove local</Button><Button variant="ghost" className="ml-auto" onClick={() => onOpenChange(false)}>Close</Button></div></SheetContent></Sheet>
 }
 
 function BundleComparison({ source, target }: { source?: Bundle; target?: Bundle }) {
@@ -1166,6 +1002,8 @@ function BundlesScreen({ bundles, isLoading, error, onNavigate, onRefresh, readi
   const [compareSourceId, setCompareSourceId] = useState('')
   const [compareTargetId, setCompareTargetId] = useState('')
   const [revisionSeed, setRevisionSeed] = useState<string | undefined>()
+  const [lifecyclePlan, setLifecyclePlan] = useState<{ plan: LifecyclePlan; kind: LifecyclePlanKind } | null>(null)
+  const [lifecycleBusy, setLifecycleBusy] = useState(false)
 
   const filteredBundles = bundles.filter((bundle) => {
     const haystack = [bundle.bundle_id, bundle.provider_type, bundle.model_id, bundle.plugin_id, bundle.workload_type].join(' ').toLowerCase()
@@ -1185,17 +1023,61 @@ function BundlesScreen({ bundles, isLoading, error, onNavigate, onRefresh, readi
   }
 
   async function runBundleAction(bundle: Bundle, action: BundleAction) {
+    const lifecycleAction: LifecycleTransitionAction | null = action === 'lifecycle-disable'
+      ? 'DISABLE'
+      : action === 'lifecycle-retire'
+        ? 'RETIRE'
+        : null
+    if (lifecycleAction || action === 'lifecycle-remove') {
+      setBusy(`${bundle.bundle_id}:${action}`)
+      setMessage(null)
+      try {
+        const plan = action === 'lifecycle-remove'
+          ? await dashboardApi.lifecycleRemovalPlan({ object_type: 'bundle', object_id: bundle.bundle_id })
+          : await dashboardApi.lifecycleTransitionPlan({ object_type: 'bundle', object_id: bundle.bundle_id, action: lifecycleAction as LifecycleTransitionAction })
+        setLifecyclePlan({ plan, kind: action === 'lifecycle-remove' ? 'removal' : 'transition' })
+        setSelectedBundleId(null)
+        setMessage(`${bundle.bundle_id}: review the lifecycle plan before applying it.`)
+      } catch (cause) {
+        setMessage(cause instanceof Error ? cause.message : 'Lifecycle plan could not be created.')
+      } finally {
+        setBusy(null)
+      }
+      return
+    }
     if (action === 'disable' && !window.confirm(`Pause Bundle ${bundle.bundle_id}? Existing Sessions are not rewritten.`)) return
     setBusy(`${bundle.bundle_id}:${action}`)
     setMessage(null)
     try {
-      await dashboardApi.bundleOperation(bundle.bundle_id, action)
+      await dashboardApi.bundleOperation(bundle.bundle_id, action as 'enable' | 'disable' | 'retry' | 'reset-cooldown')
       setMessage(`${bundle.bundle_id}: ${action.replace('-', ' ')} completed.`)
       onRefresh()
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : 'Bundle operation failed.')
     } finally {
       setBusy(null)
+    }
+  }
+
+  async function applyBundleLifecyclePlan(plan: LifecyclePlan) {
+    if (!lifecyclePlan) return
+    const operationId = lifecyclePlanIdentifier(plan, lifecyclePlan.kind)
+    const planHash = getText(plan, 'plan_hash')
+    if (!operationId || !planHash) return
+    setLifecycleBusy(true)
+    try {
+      if (lifecyclePlan.kind === 'removal') {
+        await dashboardApi.applyLifecycleRemoval(operationId, { plan_hash: planHash })
+      } else {
+        await dashboardApi.applyLifecycleTransition(operationId, { plan_hash: planHash })
+      }
+      setLifecyclePlan(null)
+      setMessage(`${getText(getRecord(plan)?.target, 'id') || 'Bundle'}: lifecycle operation completed.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Lifecycle operation failed.')
+    } finally {
+      setLifecycleBusy(false)
     }
   }
 
@@ -1212,6 +1094,7 @@ function BundlesScreen({ bundles, isLoading, error, onNavigate, onRefresh, readi
       {compareSource && compareTarget ? <div id="bundle-comparison"><BundleComparison source={compareSource} target={compareTarget} /></div> : null}
       {preflightBundle ? <BundlePreflightPanel bundle={preflightBundle} readiness={readiness} fleet={fleet} providers={providers} onNavigate={onNavigate} onRefresh={onRefresh} /> : null}
       <div id="bundle-revision-factory"><BundleRevisionControl key={revisionSeed ?? 'default'} bundles={bundles} onRefresh={onRefresh} initialSourceBundleId={revisionSeed} /></div>
+      <LifecyclePlanSheet plan={lifecyclePlan?.plan ?? null} kind={lifecyclePlan?.kind ?? 'transition'} open={Boolean(lifecyclePlan)} busy={lifecycleBusy} onOpenChange={(open) => { if (!open && !lifecycleBusy) setLifecyclePlan(null) }} onApply={(plan) => void applyBundleLifecyclePlan(plan)} />
       <BundleInspector bundle={selectedBundle} open={Boolean(selectedBundle)} onOpenChange={(open) => { if (!open) setSelectedBundleId(null) }} onAction={(bundle, action) => void runBundleAction(bundle, action)} onNavigate={onNavigate} preflight={Boolean(preflightBundle && selectedBundleId === preflightBundleId)} onPreflight={() => { if (selectedBundle) { setPreflightBundleId(selectedBundle.bundle_id); onRefresh() } }} onClone={() => { if (selectedBundle) { setRevisionSeed(selectedBundle.bundle_id); setSelectedBundleId(null); window.setTimeout(() => document.getElementById('bundle-revision-factory')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0) } }} readiness={readiness} fleet={fleet} providers={providers} />
     </div>
   )
@@ -1282,8 +1165,33 @@ function BundleRevisionControl({ bundles, onRefresh, initialSourceBundleId }: { 
 function EndpointsScreen({ endpoints, isLoading, error, onNavigate, onRefresh, ownerWallet, bundles, bindings }: { endpoints: Endpoint[]; isLoading: boolean; error: Error | null; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void; ownerWallet: string; bundles: Bundle[]; bindings: DashboardRecord[] }) {
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const [lifecyclePlan, setLifecyclePlan] = useState<{ plan: LifecyclePlan; kind: LifecyclePlanKind } | null>(null)
+  const [lifecycleBusy, setLifecycleBusy] = useState(false)
 
-  async function runEndpointAction(endpoint: Endpoint, action: 'publish' | 'validate' | 'toggle-local-agent-use') {
+  async function runEndpointAction(endpoint: Endpoint, action: 'publish' | 'validate' | 'toggle-local-agent-use' | 'lifecycle-disable' | 'lifecycle-unpublish' | 'lifecycle-retire' | 'lifecycle-remove') {
+    const lifecycleAction: LifecycleTransitionAction | null = action === 'lifecycle-disable'
+      ? 'DISABLE'
+      : action === 'lifecycle-unpublish'
+        ? 'UNPUBLISH'
+        : action === 'lifecycle-retire'
+          ? 'RETIRE'
+          : null
+    if (lifecycleAction || action === 'lifecycle-remove') {
+      setBusy(`${endpoint.endpoint_id}:${action}`)
+      setMessage(null)
+      try {
+        const plan = action === 'lifecycle-remove'
+          ? await dashboardApi.lifecycleRemovalPlan({ object_type: 'endpoint', object_id: endpoint.endpoint_id })
+          : await dashboardApi.lifecycleTransitionPlan({ object_type: 'endpoint', object_id: endpoint.endpoint_id, action: lifecycleAction as LifecycleTransitionAction })
+        setLifecyclePlan({ plan, kind: action === 'lifecycle-remove' ? 'removal' : 'transition' })
+        setMessage(`${endpoint.endpoint_id}: review the lifecycle plan before applying it.`)
+      } catch (cause) {
+        setMessage(cause instanceof Error ? cause.message : 'Lifecycle plan could not be created.')
+      } finally {
+        setBusy(null)
+      }
+      return
+    }
     setBusy(`${endpoint.endpoint_id}:${action}`)
     setMessage(null)
     try {
@@ -1316,6 +1224,28 @@ function EndpointsScreen({ endpoints, isLoading, error, onNavigate, onRefresh, o
     }
   }
 
+  async function applyEndpointLifecyclePlan(plan: LifecyclePlan) {
+    if (!lifecyclePlan) return
+    const operationId = lifecyclePlanIdentifier(plan, lifecyclePlan.kind)
+    const planHash = getText(plan, 'plan_hash')
+    if (!operationId || !planHash) return
+    setLifecycleBusy(true)
+    try {
+      if (lifecyclePlan.kind === 'removal') {
+        await dashboardApi.applyLifecycleRemoval(operationId, { plan_hash: planHash })
+      } else {
+        await dashboardApi.applyLifecycleTransition(operationId, { plan_hash: planHash })
+      }
+      setLifecyclePlan(null)
+      setMessage(`${getText(getRecord(plan)?.target, 'id') || 'Endpoint'}: lifecycle operation completed.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Lifecycle operation failed.')
+    } finally {
+      setLifecycleBusy(false)
+    }
+  }
+
   return (
     <div className="space-y-4">
       <ScreenHeading eyebrow="Network-facing service offers" title="Endpoints" detail="Endpoint publication remains commercially distinct from the Bundle that runs it. This table shows the bound configuration, execution state and public readiness." />
@@ -1334,6 +1264,7 @@ function EndpointsScreen({ endpoints, isLoading, error, onNavigate, onRefresh, o
           {endpoints.length > 0 ? <EndpointTable endpoints={endpoints} onAction={runEndpointAction} /> : null}
         </CardContent>
       </Card>
+      <LifecyclePlanSheet plan={lifecyclePlan?.plan ?? null} kind={lifecyclePlan?.kind ?? 'transition'} open={Boolean(lifecyclePlan)} busy={lifecycleBusy} onOpenChange={(open) => { if (!open && !lifecycleBusy) setLifecyclePlan(null) }} onApply={(plan) => void applyEndpointLifecyclePlan(plan)} />
     </div>
   )
 }
@@ -1565,7 +1496,7 @@ function EndpointDraftControl({ ownerWallet, bundles, bindings, onRefresh }: { o
   )
 }
 
-function EndpointTable({ endpoints, onAction }: { endpoints: Endpoint[]; onAction: (endpoint: Endpoint, action: 'publish' | 'validate' | 'toggle-local-agent-use') => void }) {
+function EndpointTable({ endpoints, onAction }: { endpoints: Endpoint[]; onAction: (endpoint: Endpoint, action: 'publish' | 'validate' | 'toggle-local-agent-use' | 'lifecycle-disable' | 'lifecycle-unpublish' | 'lifecycle-retire' | 'lifecycle-remove') => void }) {
   const columns: ColumnDef<Endpoint>[] = [
     { accessorKey: 'display_name', header: 'Endpoint', cell: ({ row }) => <div><p className="font-medium text-slate-100">{row.original.display_name || shortId(row.original.endpoint_id, 22)}</p><p className="mt-0.5 font-mono text-[10px] text-slate-500">{shortId(row.original.endpoint_id)}</p></div> },
     { accessorKey: 'model_class', header: 'Capability', cell: ({ row }) => <span className="text-xs text-slate-200">{row.original.model_class || row.original.capabilities[0] || '—'}</span> },
@@ -1573,7 +1504,21 @@ function EndpointTable({ endpoints, onAction }: { endpoints: Endpoint[]; onActio
     { accessorKey: 'publication_status', header: 'Publication', cell: ({ row }) => <StatusBadge value={row.original.publication_status} /> },
     { accessorKey: 'runtime_status', header: 'Runtime', cell: ({ row }) => <StatusBadge value={row.original.runtime_status} /> },
     { id: 'local_agent', header: 'Local agent', cell: ({ row }) => <Button type="button" variant="outline" size="xs" className={row.original.local_agent_use ? 'border-cyan-300/35 bg-cyan-300/[0.08] text-cyan-100' : 'border-border bg-[#091725] text-slate-300'} aria-pressed={row.original.local_agent_use} onClick={() => onAction(row.original, 'toggle-local-agent-use')}>{row.original.local_agent_use ? 'Enabled' : 'Enable'}</Button> },
-    { id: 'controls', header: 'Controls', cell: ({ row }) => <div className="flex flex-wrap gap-1.5"><Button variant="outline" size="xs" className="border-cyan-300/25 bg-[#091725] text-cyan-100" onClick={() => onAction(row.original, 'publish')}>Publish</Button><Button variant="outline" size="xs" className="border-amber-300/25 bg-[#091725] text-amber-100" onClick={() => onAction(row.original, 'validate')}>Validate</Button></div> },
+    { id: 'controls', header: 'Controls', cell: ({ row }) => {
+      const publication = normalizeStatus(row.original.publication_status)
+      const runtime = normalizeStatus(row.original.runtime_status)
+      const terminal = ['retired', 'deleted'].includes(publication) || ['retired', 'deleted'].includes(runtime)
+      const published = ['published', 'published_drifted', 'active'].includes(publication)
+      const retireReady = publication === 'unpublished'
+      return <div className="flex max-w-[22rem] flex-wrap gap-1.5">
+        <Button variant="outline" size="xs" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={terminal || published} onClick={() => onAction(row.original, 'publish')}>Publish</Button>
+        <Button variant="outline" size="xs" className="border-amber-300/25 bg-[#091725] text-amber-100" disabled={terminal} onClick={() => onAction(row.original, 'validate')}>Validate</Button>
+        <Button variant="outline" size="xs" className="border-border bg-[#091725]" disabled={terminal || publication === 'unpublished' || runtime === 'disabled'} onClick={() => onAction(row.original, 'lifecycle-disable')}>Disable</Button>
+        <Button variant="outline" size="xs" className="border-violet-300/25 bg-[#091725] text-violet-100" disabled={terminal || !published} onClick={() => onAction(row.original, 'lifecycle-unpublish')}>Unpublish</Button>
+        <Button variant="outline" size="xs" className="border-amber-300/25 bg-[#091725] text-amber-100" disabled={terminal || !retireReady} onClick={() => onAction(row.original, 'lifecycle-retire')}>Retire</Button>
+        <Button variant="outline" size="xs" className="border-rose-300/25 bg-[#091725] text-rose-100" disabled={terminal} onClick={() => onAction(row.original, 'lifecycle-remove')}>Remove local</Button>
+      </div>
+    } },
   ]
   const table = useReactTable({ data: endpoints, columns, getCoreRowModel: getCoreRowModel() })
   return <DataTable table={table} />
@@ -1613,6 +1558,8 @@ function ModelsWorkspace({ installs, workspace, isLoading, error, onRefresh, onN
   const [gpuMemoryEditable, setGpuMemoryEditable] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const [modelLifecyclePlan, setModelLifecyclePlan] = useState<LifecyclePlan | null>(null)
+  const [modelLifecycleBusy, setModelLifecycleBusy] = useState(false)
   const plugins = workspace?.plugin_directory ?? []
   const llmPlugins = plugins.filter((plugin) => {
     const capabilities = getTextList(plugin, 'supported_aidn_capabilities')
@@ -1785,6 +1732,38 @@ function ModelsWorkspace({ installs, workspace, isLoading, error, onRefresh, onN
     } catch (cause) { setMessage(cause instanceof Error ? cause.message : 'Runtime Binding creation failed.') } finally { setBusy(null) }
   }
 
+  async function planModelRemoval(deploymentId: string) {
+    if (!deploymentId) return
+    setBusy(`lifecycle-remove:${deploymentId}`)
+    setMessage(null)
+    try {
+      const plan = await dashboardApi.lifecycleRemovalPlan({ object_type: 'model_deployment', object_id: deploymentId })
+      setModelLifecyclePlan(plan)
+      setMessage(`${deploymentId}: review the model deployment removal plan before applying it.`)
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Model deployment removal plan failed.')
+    } finally { setBusy(null) }
+  }
+
+  async function applyModelRemoval(plan: LifecyclePlan) {
+    const planId = lifecyclePlanIdentifier(plan, 'removal')
+    const planHash = getText(plan, 'plan_hash')
+    if (!planId || !planHash) {
+      setMessage('The model deployment removal plan is incomplete. Refresh and generate a new plan.')
+      return
+    }
+    setModelLifecycleBusy(true)
+    try {
+      await dashboardApi.applyLifecycleRemoval(planId, { plan_hash: planHash })
+      setModelLifecyclePlan(null)
+      const targetId = getText(getRecord(plan)?.target, 'id') || 'Model deployment'
+      setMessage(`${targetId}: local removal completed. Artifact cleanup remains reference-aware.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Model deployment removal failed.')
+    } finally { setModelLifecycleBusy(false) }
+  }
+
   return <div className="space-y-4"><ScreenHeading eyebrow="Model materialization pipeline" title="Models" detail="Managed installs become a registered Bundle here. Continue to Endpoints to choose visibility, pricing and marketplace details, then publish the service. Deployments and Runtime Bindings are only needed for externally attached providers." />
     {isLoading && !workspace ? <PanelSkeleton rows={6} /> : null}
     {error && !workspace ? <PanelError title="Model workspace is unavailable" error={error} onRetry={onRefresh} /> : null}
@@ -1796,7 +1775,8 @@ function ModelsWorkspace({ installs, workspace, isLoading, error, onRefresh, onN
     <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Install queue</p><CardTitle className="mt-1 text-lg font-semibold">Model install jobs</CardTitle></CardHeader><CardContent className="divide-y divide-border/70 p-0">{installs.length === 0 ? <p className="px-5 py-6 text-sm text-muted-foreground">No model installs queued.</p> : installs.map((install) => { const id = getText(install, 'install_id'); const status = getText(install, 'install_status') || getText(install, 'status') || 'unknown'; const registered = status === 'registered' && Boolean(getText(install, 'bundle_id')); const canRegister = Boolean(getRecord(install)?.can_register_bundle) || status === 'completed'; return <div key={id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-slate-100">{getText(install, 'model_id')}</p><StatusBadge value={status} /></div><p className="mt-1 break-all font-mono text-[11px] text-slate-500">{getText(install, 'provider_type')} · {id} · {getText(install, 'target_path') || 'target reserved by node'}</p>{registered ? <p className="mt-1 text-xs text-emerald-200">Bundle {getText(install, 'bundle_id')} is ready for Endpoint setup.</p> : null}{getText(install, 'last_error') ? <p className="mt-1 text-xs text-rose-200">{getText(install, 'last_error')}</p> : null}</div>{registered ? <Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" onClick={() => onNavigate('endpoints')}><RadioTower />Create Endpoint</Button> : canRegister ? <Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={busy === `register:${id}`} onClick={() => void registerBundle(install)}><Boxes />Register Bundle</Button> : null}</div> })}</CardContent></Card>
     <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Optional artifact custody</p><CardTitle className="mt-1 text-lg font-semibold">Create immutable model artifact set</CardTitle></CardHeader><CardContent className="grid gap-3 p-5 lg:grid-cols-[1fr_2fr_auto]"><label className="grid gap-2"><span className="eyebrow">Display name</span><input value={artifactSetName} onChange={(event) => setArtifactSetName(event.target.value)} placeholder="Whisper small files" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Files JSON</span><input value={artifactFiles} onChange={(event) => setArtifactFiles(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300" /></label><div className="flex items-end"><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy === 'artifact-set'} onClick={() => void createArtifactSet()}><Layers3 />Create set</Button></div></CardContent></Card>
     <div className="grid gap-4 lg:grid-cols-2"><InventoryCard title="Artifact sets" detail="Content-addressed file manifests. Bind a set to a Model Deployment before Runtime Binding." items={artifactSets} primaryKey="artifact_set_id" /><InventoryCard title="Provider instances" detail={`${instances.length} provider instance(s) available for materialization.`} items={instances} primaryKey="provider_instance_id" /></div>
-    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Optional provider path</p><CardTitle className="mt-1 text-lg font-semibold">Deployments and Runtime Bindings</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">Use this path only when a model comes from an externally attached Provider. Managed installs already have a Bundle and go directly to Endpoint setup above.</p></CardHeader><CardContent className="divide-y divide-border/70 p-0">{deployments.length === 0 ? <p className="px-5 py-6 text-sm text-muted-foreground">No external provider deployments discovered. That is expected for a managed Bundle install.</p> : deployments.map((deployment) => { const id = getText(deployment, 'model_deployment_id'); const artifactId = getText(deployment, 'artifact_set_id'); const providerId = getText(deployment, 'provider_instance_id'); return <div key={id} className="space-y-3 px-5 py-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-medium text-slate-100">{getText(deployment, 'operator_display_name') || getText(deployment, 'provider_model_reference')}</p><p className="mt-1 font-mono text-[11px] text-slate-500">{id} · provider {shortId(providerId)} · artifacts {artifactId || 'not bound'}</p></div><StatusBadge value={getText(deployment, 'artifact_materialization_status') || getText(deployment, 'operational_state') || 'unknown'} /></div><div className="flex flex-wrap gap-2"><select defaultValue={artifactId} onChange={(event) => void bindArtifactSet(deployment, event.target.value)} className="h-9 min-w-52 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300"><option value="">Bind artifact set...</option>{artifactSets.map((item) => <option key={getText(item, 'artifact_set_id')} value={getText(item, 'artifact_set_id')}>{getText(item, 'display_name') || getText(item, 'artifact_set_id')}</option>)}</select>{artifactId ? <Button variant="outline" size="sm" className="border-border bg-[#091725]" disabled={busy === `materialize:${id}`} onClick={() => void materialize(deployment, artifactId)}><Database />Materialize</Button> : null}<Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={busy === `binding:${id}` || (getText(deployment, 'artifact_materialization_required') === 'true' && getText(deployment, 'artifact_materialization_ready') !== 'true')} onClick={() => void createBinding(deployment)}><Zap />Create Runtime Binding</Button></div></div> })}</CardContent></Card>
+    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Optional provider path</p><CardTitle className="mt-1 text-lg font-semibold">Deployments and Runtime Bindings</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">Use this path only when a model comes from an externally attached Provider. Managed installs already have a Bundle and go directly to Endpoint setup above.</p></CardHeader><CardContent className="divide-y divide-border/70 p-0">{deployments.length === 0 ? <p className="px-5 py-6 text-sm text-muted-foreground">No external provider deployments discovered. That is expected for a managed Bundle install.</p> : deployments.map((deployment) => { const id = getText(deployment, 'model_deployment_id'); const artifactId = getText(deployment, 'artifact_set_id'); const providerId = getText(deployment, 'provider_instance_id'); return <div key={id} className="space-y-3 px-5 py-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-medium text-slate-100">{getText(deployment, 'operator_display_name') || getText(deployment, 'provider_model_reference')}</p><p className="mt-1 font-mono text-[11px] text-slate-500">{id} · provider {shortId(providerId)} · artifacts {artifactId || 'not bound'}</p></div><StatusBadge value={getText(deployment, 'artifact_materialization_status') || getText(deployment, 'operational_state') || 'unknown'} /></div><div className="flex flex-wrap gap-2"><select defaultValue={artifactId} onChange={(event) => void bindArtifactSet(deployment, event.target.value)} className="h-9 min-w-52 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300"><option value="">Bind artifact set...</option>{artifactSets.map((item) => <option key={getText(item, 'artifact_set_id')} value={getText(item, 'artifact_set_id')}>{getText(item, 'display_name') || getText(item, 'artifact_set_id')}</option>)}</select>{artifactId ? <Button variant="outline" size="sm" className="border-border bg-[#091725]" disabled={busy === `materialize:${id}`} onClick={() => void materialize(deployment, artifactId)}><Database />Materialize</Button> : null}<Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={busy === `binding:${id}` || (getText(deployment, 'artifact_materialization_required') === 'true' && getText(deployment, 'artifact_materialization_ready') !== 'true')} onClick={() => void createBinding(deployment)}><Zap />Create Runtime Binding</Button><Button variant="outline" size="sm" className="border-rose-300/25 bg-[#091725] text-rose-100" disabled={busy === `lifecycle-remove:${id}` || modelLifecycleBusy} onClick={() => void planModelRemoval(id)}><Trash2 />{busy === `lifecycle-remove:${id}` ? 'Preparing...' : 'Remove local'}</Button></div></div> })}</CardContent></Card>
+    <LifecyclePlanSheet plan={modelLifecyclePlan} kind="removal" open={Boolean(modelLifecyclePlan)} busy={modelLifecycleBusy} onOpenChange={(open) => { if (!open && !modelLifecycleBusy) setModelLifecyclePlan(null) }} onApply={(plan) => void applyModelRemoval(plan)} />
   </div>
 }
 
@@ -2359,9 +2339,47 @@ function SettingsWorkspace({ fleet, endpoints, onRefresh }: { fleet: DashboardDa
   return (
     <div className="space-y-4">
       <ResourceProbeControl fleet={fleet} onRefresh={onRefresh} />
+      <RuntimeResetControl onRefresh={onRefresh} />
       <SettingsAccessWorkspace endpoints={endpoints} />
     </div>
   )
+}
+
+function RuntimeResetControl({ onRefresh }: { onRefresh: () => void }) {
+  const [plan, setPlan] = useState<LifecyclePlan | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  async function createPlan() {
+    setBusy(true)
+    setMessage(null)
+    try {
+      setPlan(await dashboardApi.runtimeResetPlan())
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Runtime reset plan could not be created.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function applyPlan(resetPlan: LifecyclePlan) {
+    const resetId = lifecyclePlanIdentifier(resetPlan, 'runtime-reset')
+    const planHash = getText(resetPlan, 'plan_hash')
+    if (!resetId || !planHash) return
+    setBusy(true)
+    try {
+      await dashboardApi.applyRuntimeReset({ reset_id: resetId, plan_hash: planHash })
+      setPlan(null)
+      setMessage('Runtime state reset completed. Persistent Providers, Bundles, Endpoints and Wallet data were preserved.')
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Runtime reset failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return <Card className="border-amber-300/20 bg-amber-300/[0.03] py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow text-amber-100">Maintenance</p><CardTitle className="mt-1 text-lg font-semibold">Runtime state reset</CardTitle><p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">Drain transient work, stop managed runtimes, release leases and reconcile the scheduler. Persistent Provider, Model, Bundle, Endpoint and Wallet configuration is preserved.</p></div><Button variant="outline" className="border-amber-300/30 bg-transparent text-amber-100" disabled={busy} onClick={() => void createPlan()}><RefreshCw />{busy ? 'Preparing...' : 'Review reset plan'}</Button></div></CardHeader><CardContent className="p-5">{message ? <OperationNotice message={message} onDismiss={() => setMessage(null)} /> : <p className="text-xs leading-5 text-muted-foreground">The reset is plan-first and requires an explicit acknowledgement. It does not factory-reset the node or erase Wallet keys.</p>}<LifecyclePlanSheet plan={plan} kind="runtime-reset" open={Boolean(plan)} busy={busy} onOpenChange={(open) => { if (!open && !busy) setPlan(null) }} onApply={(resetPlan) => void applyPlan(resetPlan)} /></CardContent></Card>
 }
 
 function ResourceProbeControl({ fleet, onRefresh }: { fleet: DashboardData['fleet']['data']; onRefresh: () => void }) {
@@ -2493,6 +2511,8 @@ function ProviderWorkspaceScreen({ screen, workspace, runtimeOperations, isLoadi
   const [runtimeConfiguration, setRuntimeConfiguration] = useState<DashboardRecord>({})
   const [busy, setBusy] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
+  const [lifecyclePlan, setLifecyclePlan] = useState<{ plan: LifecyclePlan; kind: LifecyclePlanKind } | null>(null)
+  const [lifecycleBusy, setLifecycleBusy] = useState(false)
   const plugins = workspace?.plugin_directory ?? []
   const instances = (workspace?.provider_instances ?? []).filter((instance) => getText(instance, 'operational_state') !== 'removed')
   const deployments = workspace?.model_deployments ?? []
@@ -2623,6 +2643,38 @@ function ProviderWorkspaceScreen({ screen, workspace, runtimeOperations, isLoadi
     }
   }
 
+  async function planProviderRemoval(providerInstanceId: string) {
+    setBusy(`${providerInstanceId}:lifecycle-remove`)
+    setMessage(null)
+    try {
+      const plan = await dashboardApi.lifecycleRemovalPlan({ object_type: 'provider_instance', object_id: providerInstanceId })
+      setLifecyclePlan({ plan, kind: 'removal' })
+      setMessage(`${providerInstanceId}: review the dependency-aware removal plan before applying it.`)
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Provider removal plan could not be created.')
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  async function applyProviderLifecyclePlan(plan: LifecyclePlan) {
+    if (!lifecyclePlan) return
+    const operationId = lifecyclePlanIdentifier(plan, lifecyclePlan.kind)
+    const planHash = getText(plan, 'plan_hash')
+    if (!operationId || !planHash) return
+    setLifecycleBusy(true)
+    try {
+      await dashboardApi.applyLifecycleRemoval(operationId, { plan_hash: planHash })
+      setLifecyclePlan(null)
+      setMessage(`${getText(getRecord(plan)?.target, 'id') || 'Provider'}: local removal completed.`)
+      onRefresh()
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : 'Provider removal failed.')
+    } finally {
+      setLifecycleBusy(false)
+    }
+  }
+
   async function applyRuntimeChange(action: 'install' | 'change') {
     const plugin = runtimePlugin
     const providerId = getText(plugin, 'plugin_id')
@@ -2714,8 +2766,9 @@ function ProviderWorkspaceScreen({ screen, workspace, runtimeOperations, isLoadi
     {workspace ? <>
       <Card className="border-cyan-300/20 bg-cyan-300/[0.03] py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow text-cyan-100">Reviewed Ubuntu runtimes</p><CardTitle className="mt-1 text-lg font-semibold">Provider runtime catalog</CardTitle><p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">Select one runtime from the compact catalog. Installed runtimes expose Change and Remove; model selection and downloads remain a separate step.</p></div><StatusBadge value={runtimeInstalled ? 'installed' : runtimeInstallEnabled ? 'available' : 'blocked'} /></div></CardHeader><CardContent className="space-y-4 p-5">{runtimePlugins.length === 0 ? <EmptyState title="No reviewed runtimes available" detail="This node has no Provider Plugin with an allowlisted Ubuntu runtime installer." actionLabel="Refresh catalog" onAction={onRefresh} /> : <><div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(16rem,0.8fr)]"><label className="grid gap-2"><span className="eyebrow">Provider runtime</span><select value={runtimePluginId} onChange={(event) => chooseRuntimePlugin(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300"><optgroup label="Installed">{runtimePlugins.filter((plugin) => installedRuntimeIds.has(getText(plugin, 'plugin_id'))).map((plugin) => <option key={getText(plugin, 'plugin_id')} value={getText(plugin, 'plugin_id')}>{getText(plugin, 'display_name') || getText(plugin, 'plugin_id')}</option>)}</optgroup><optgroup label="Available">{runtimePlugins.filter((plugin) => !installedRuntimeIds.has(getText(plugin, 'plugin_id'))).map((plugin) => <option key={getText(plugin, 'plugin_id')} value={getText(plugin, 'plugin_id')}>{getText(plugin, 'display_name') || getText(plugin, 'plugin_id')}</option>)}</optgroup></select></label><div className="rounded-lg border border-border/70 bg-[#07111d] px-3 py-2"><p className="eyebrow">Pinned runtime</p><p className="mt-1 text-sm text-slate-100">{getText(runtimeInstaller, 'pinned_version') || 'Reviewed version'}</p><p className="mt-1 text-xs text-muted-foreground">{getText(runtimeInstaller, 'platform') || 'ubuntu'} · {runtimeInstalled ? 'Runtime is managed on this node.' : 'Not installed on this node.'}</p></div></div>{runtimeInstalled ? <p className="text-xs leading-5 text-amber-100/80">Change re-runs the reviewed installer against the selected configuration. Remove is blocked while model deployments or runtime bindings still reference this runtime.</p> : <p className="text-xs leading-5 text-muted-foreground">Install is enabled only when the root-owned allowlisted broker is available. Runtime files are separate from model downloads.</p>}{providerInstallFields(runtimePlugin).length > 0 ? <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{providerInstallFields(runtimePlugin).map((field) => { const id = getText(field, 'id'); const type = getText(field, 'type'); const value = providerFieldValue(runtimeConfiguration, field); const options = providerFieldOptions(field); return <label key={id} className="grid gap-2"><span className="eyebrow">{getText(field, 'label') || id}{field.required === true ? ' *' : ''}</span>{type === 'select' ? <select value={String(value)} onChange={(event) => setRuntimeConfiguration((current) => ({ ...current, [id]: event.target.value }))} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300">{options.map((option) => <option key={String(option.value)} value={String(option.value)}>{getText(option, 'label') || String(option.value)}</option>)}</select> : type === 'boolean' ? <span className="flex h-10 items-center gap-2 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-slate-200"><input type="checkbox" checked={value === true} onChange={(event) => setRuntimeConfiguration((current) => ({ ...current, [id]: event.target.checked }))} />Enabled</span> : <input type={type === 'url' ? 'url' : 'text'} value={String(value)} onChange={(event) => setRuntimeConfiguration((current) => ({ ...current, [id]: event.target.value }))} placeholder={String(field.default ?? '')} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" />}</label> })}</div> : null}<div className="flex flex-wrap gap-2">{!runtimeInstalled ? <Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={!runtimeInstallEnabled || busy !== null || Boolean(runtimeConfigurationIssue)} onClick={() => void applyRuntimeChange('install')}><ServerCog />{busy === `runtime:install:${runtimePluginId}` ? 'Installing...' : 'Install runtime'}</Button> : null}{runtimeInstalled ? <><Button variant="outline" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={!runtimeInstallEnabled || busy !== null || Boolean(runtimeConfigurationIssue)} onClick={() => void applyRuntimeChange('change')}><Settings />{busy === `runtime:change:${runtimePluginId}` ? 'Changing...' : 'Change runtime'}</Button><Button variant="destructive" className="border-rose-300/30" disabled={!runtimeInstallEnabled || busy !== null} onClick={() => void removeRuntime()}><Trash2 />{busy === `runtime:remove:${runtimePluginId}` ? 'Removing...' : 'Remove runtime'}</Button></> : null}</div></>}</CardContent></Card>
       <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Attach existing Provider</p><CardTitle className="mt-1 text-lg font-semibold">Create Provider instance</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">Choose a plugin first. The fields below come from that plugin's contract, so vLLM uses its OpenAI-compatible endpoint instead of inheriting an Ollama URL.</p></CardHeader><CardContent className="grid gap-4 p-5 md:grid-cols-2 lg:grid-cols-4"><label className="grid gap-2"><span className="eyebrow">Plugin</span><select value={pluginId} onChange={(event) => choosePlugin(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300">{plugins.map((plugin) => <option key={getText(plugin, 'plugin_id')} value={getText(plugin, 'plugin_id')}>{getText(plugin, 'display_name') || getText(plugin, 'plugin_id')}</option>)}</select></label><label className="grid gap-2"><span className="eyebrow">Provider name</span><input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Local vLLM" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label>{attachFields.filter((field) => getText(field, 'id') !== 'display_name').map((field) => { const id = getText(field, 'id'); const type = getText(field, 'type'); const value = providerFieldValue(configuration, field); const options = providerFieldOptions(field); return <label key={id} className="grid gap-2"><span className="eyebrow">{getText(field, 'label') || id}{field.required === true ? ' *' : ''}</span>{type === 'select' ? <select value={String(value)} onChange={(event) => setConfiguration((current) => ({ ...current, [id]: event.target.value }))} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300">{options.map((option) => <option key={String(option.value)} value={String(option.value)}>{getText(option, 'label') || String(option.value)}</option>)}</select> : type === 'boolean' ? <span className="flex h-10 items-center gap-2 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-slate-200"><input type="checkbox" checked={value === true} onChange={(event) => setConfiguration((current) => ({ ...current, [id]: event.target.checked }))} />Enabled</span> : <input type={type === 'url' ? 'url' : 'text'} value={String(value)} onChange={(event) => setConfiguration((current) => ({ ...current, [id]: event.target.value }))} placeholder={String(field.default ?? '')} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" />}</label> })}<div className="flex items-end"><Button className="w-full bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={busy === 'attach' || plugins.length === 0} onClick={() => void attach()}><ServerCog />{busy === 'attach' ? 'Attaching...' : 'Attach'}</Button></div></CardContent></Card>
-      <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/70 px-5 py-4"><div><p className="eyebrow">Attached inventory</p><CardTitle className="mt-1 text-lg font-semibold">Provider instances</CardTitle><p className="mt-1 text-xs text-muted-foreground">Unhealthy is an observed state, not an installation failure. Open the probe detail before changing runtime or model settings.</p></div><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={onRefresh}><RefreshCw />Refresh</Button></CardHeader><CardContent className="divide-y divide-border/70 p-0">{instances.length === 0 ? <EmptyState title="No Provider instances attached" detail="Attach a known local Provider above. The Dashboard will not guess an upstream endpoint or create credentials." actionLabel="Refresh catalog" onAction={onRefresh} /> : instances.map((instance) => { const id = getText(instance, 'provider_instance_id'); const record = getRecord(instance); const providerConfiguration = getRecord(record?.configuration); const healthError = getText(record, 'last_health_error'); const attached = getText(record, 'connection_mode') === 'attached'; return <div key={id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-white">{getText(instance, 'display_name') || id}</p><StatusBadge value={getText(instance, 'health_status') || 'unknown'} /></div><p className="mt-1 break-all font-mono text-[11px] text-slate-500">{id} · {getText(providerConfiguration, 'endpoint') || getText(providerConfiguration, 'base_url') || 'endpoint not declared'} · {String(record?.model_count ?? 0)} models · {String(record?.runtime_binding_ready_count ?? 0)} ready bindings</p>{healthError ? <p className="mt-2 max-w-3xl text-xs leading-5 text-rose-200">{healthError}</p> : null}</div><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" className="border-border bg-[#091725]" disabled={busy === `${id}:probe`} onClick={() => void runProviderOperation(id, 'probe')}><Gauge />Probe</Button><Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={busy === `${id}:discover-models`} onClick={() => void runProviderOperation(id, 'discover-models')}><Database />Discover models</Button>{attached ? <Button variant="outline" size="sm" className="border-rose-300/25 bg-transparent text-rose-100 hover:bg-rose-300/10" disabled={busy === `${id}:detach`} onClick={() => void runProviderOperation(id, 'detach')}><Trash2 />{busy === `${id}:detach` ? 'Detaching...' : 'Detach'}</Button> : null}</div></div> })}</CardContent></Card>
+      <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="flex-row items-center justify-between gap-3 border-b border-border/70 px-5 py-4"><div><p className="eyebrow">Attached inventory</p><CardTitle className="mt-1 text-lg font-semibold">Provider instances</CardTitle><p className="mt-1 text-xs text-muted-foreground">Unhealthy is an observed state, not an installation failure. Open the probe detail before changing runtime or model settings.</p></div><Button variant="outline" size="sm" className="border-border bg-[#091725]" onClick={onRefresh}><RefreshCw />Refresh</Button></CardHeader><CardContent className="divide-y divide-border/70 p-0">{instances.length === 0 ? <EmptyState title="No Provider instances attached" detail="Attach a known local Provider above. The Dashboard will not guess an upstream endpoint or create credentials." actionLabel="Refresh catalog" onAction={onRefresh} /> : instances.map((instance) => { const id = getText(instance, 'provider_instance_id'); const record = getRecord(instance); const providerConfiguration = getRecord(record?.configuration); const healthError = getText(record, 'last_health_error'); const attached = getText(record, 'connection_mode') === 'attached'; return <div key={id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center"><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="font-medium text-white">{getText(instance, 'display_name') || id}</p><StatusBadge value={getText(instance, 'health_status') || 'unknown'} /></div><p className="mt-1 break-all font-mono text-[11px] text-slate-500">{id} · {getText(providerConfiguration, 'endpoint') || getText(providerConfiguration, 'base_url') || 'endpoint not declared'} · {String(record?.model_count ?? 0)} models · {String(record?.runtime_binding_ready_count ?? 0)} ready bindings</p>{healthError ? <p className="mt-2 max-w-3xl text-xs leading-5 text-rose-200">{healthError}</p> : null}</div><div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" className="border-border bg-[#091725]" disabled={busy === `${id}:probe`} onClick={() => void runProviderOperation(id, 'probe')}><Gauge />Probe</Button><Button variant="outline" size="sm" className="border-cyan-300/25 bg-[#091725] text-cyan-100" disabled={busy === `${id}:discover-models`} onClick={() => void runProviderOperation(id, 'discover-models')}><Database />Discover models</Button>{attached ? <Button variant="outline" size="sm" className="border-rose-300/25 bg-transparent text-rose-100 hover:bg-rose-300/10" disabled={busy === `${id}:detach`} onClick={() => void runProviderOperation(id, 'detach')}><Trash2 />{busy === `${id}:detach` ? 'Detaching...' : 'Detach'}</Button> : null}<Button variant="outline" size="sm" className="border-rose-300/25 bg-[#091725] text-rose-100" disabled={busy === `${id}:lifecycle-remove` || lifecycleBusy} onClick={() => void planProviderRemoval(id)}><Trash2 />Remove local</Button></div></div> })}</CardContent></Card>
       <div className="grid gap-4 lg:grid-cols-2"><InventoryCard title="Model deployments" detail="Discovered model supply. Runtime binding is required before Endpoint admission." items={deployments} primaryKey="model_deployment_id" /><InventoryCard title="Runtime bindings" detail="Compatibility records backing eligible Bundle and Endpoint runtime selection." items={bindings} primaryKey="runtime_binding_id" /></div>
+      <LifecyclePlanSheet plan={lifecyclePlan?.plan ?? null} kind={lifecyclePlan?.kind ?? 'removal'} open={Boolean(lifecyclePlan)} busy={lifecycleBusy} onOpenChange={(open) => { if (!open && !lifecycleBusy) setLifecyclePlan(null) }} onApply={(plan) => void applyProviderLifecyclePlan(plan)} />
     </> : null}
   </div>
 }
@@ -2761,7 +2814,7 @@ function RuntimeOperationsCard({ operations, isLoading, error, onRefresh }: { op
       <div className="grid gap-4 lg:grid-cols-2">
         <div>
           <p className="eyebrow">Runtime instances</p>
-          {runtimes.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">No managed runtime instances are active.</p> : <div className="mt-2 divide-y divide-border/70 rounded-lg border border-border/70">{runtimes.slice(0, 6).map((runtime) => <div key={getText(runtime, 'runtime_id')} className="flex items-center justify-between gap-3 px-3 py-2.5"><div className="min-w-0"><p className="truncate font-mono text-xs text-foreground">{shortId(getText(runtime, 'runtime_id'), 22)}</p><p className="truncate text-[11px] text-muted-foreground">{getText(runtime, 'model_id') || getText(runtime, 'bundle_id') || 'Bundle runtime'} · {getText(runtime, 'readiness_message') || 'No diagnostic message'}</p></div><StatusBadge value={getText(runtime, 'readiness_status') || getText(runtime, 'runtime_status') || 'unknown'} /></div>)}</div>}
+          {runtimes.length === 0 ? <p className="mt-2 text-sm text-muted-foreground">No managed runtime instances are active.</p> : <div className="mt-2 divide-y divide-border/70 rounded-lg border border-border/70">{runtimes.slice(0, 6).map((runtime) => <div key={getText(runtime, 'runtime_id')} className="flex items-center justify-between gap-3 px-3 py-2.5"><div className="min-w-0"><p className="truncate font-mono text-xs text-foreground">{shortId(getText(runtime, 'runtime_id'), 22)}</p><p className="truncate text-[11px] text-muted-foreground">{getText(runtime, 'model_id') || getText(runtime, 'bundle_id') || 'Bundle runtime'} · {getText(runtime, 'readiness_message') || 'No diagnostic message'}</p></div><div className="flex shrink-0 items-center gap-2"><StatusBadge value={getText(runtime, 'lifecycle_state') || getText(runtime, 'runtime_status') || 'unknown'} /><StatusBadge value={getText(runtime, 'readiness_status') || 'unknown'} /></div></div>)}</div>}
         </div>
         <div>
           <p className="eyebrow">Installation jobs</p>
@@ -3882,52 +3935,6 @@ function DataTable<TData>({ table }: { table: ReturnType<typeof useReactTable<TD
       </Table>
     </div>
   )
-}
-
-function ResourceOverview({ fleet, isLoading, error, onNavigate }: { fleet: DashboardData['fleet']['data']; isLoading: boolean; error: Error | null; onNavigate: NavigationProps['onNavigate'] }) {
-  if (isLoading && !fleet) return <PanelSkeleton rows={4} />
-  if (error && !fleet) return <PanelError title="Resource probe is unavailable" error={error} />
-  const resources = fleet?.resources
-  const cpu = resourceUsage(resources?.total.cpu, resources?.free.cpu)
-  const ram = resourceUsage(resources?.total.ram_mb, resources?.free.ram_mb)
-  const vram = resourceUsage(resources?.total.vram_mb, resources?.free.vram_mb)
-  const probe = resources?.probe
-  const gpuReported = Boolean(probe?.gpu_reported)
-  return (
-    <Card className="border-border/80 bg-card py-0 shadow-none">
-      <CardHeader className="flex-row items-start justify-between gap-3 px-4 py-4"><div><p className="eyebrow">Host telemetry</p><CardTitle className="mt-1 text-base font-semibold">Resource usage</CardTitle></div><Button variant="ghost" size="xs" className="text-cyan-200 hover:bg-cyan-300/10" onClick={() => onNavigate('settings')}>Probe details<ChevronRight /></Button></CardHeader>
-      <CardContent className="space-y-4 px-4 pb-4">
-        <ResourceMeter label="CPU" value={cpu.percent} detail={`${formatCount(cpu.used)} / ${formatCount(cpu.total)} cores`} color="cyan" />
-        <ResourceMeter label="RAM" value={ram.percent} detail={`${formatMemory(ram.used)} / ${formatMemory(ram.total)}`} color="violet" />
-        <ResourceMeter label="GPU memory" value={vram.percent} detail={gpuReported ? `${formatMemory(vram.used)} / ${formatMemory(vram.total)}` : 'Not reported by this host'} color="amber" muted={!gpuReported} />
-        <div className="border-t border-border/70 pt-3">
-          <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-slate-500">Probe source</p>
-          <p className="mt-1 text-xs text-slate-300">{getText(probe, 'source') || 'No resource probe record'}</p>
-          {Array.isArray(probe?.limitations) && probe.limitations.length > 0 ? <p className="mt-1 text-xs leading-5 text-amber-200/80">{String(probe.limitations[0])}</p> : null}
-        </div>
-      </CardContent>
-    </Card>
-  )
-}
-
-function ResourceMeter({ label, value, detail, color, muted = false }: { label: string; value: number; detail: string; color: 'cyan' | 'violet' | 'amber'; muted?: boolean }) {
-  const tone = color === 'cyan' ? 'bg-cyan-300' : color === 'violet' ? 'bg-violet-300' : 'bg-amber-300'
-  return <div>
-    <div className="flex items-baseline justify-between gap-2"><p className="font-mono text-[10px] uppercase tracking-[0.12em] text-cyan-100/60">{label}</p><p className={cn('font-mono text-xs font-semibold', muted ? 'text-slate-400' : 'text-white')}>{muted ? '—' : formatPercent(value)}</p></div>
-    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/8"><div className={cn('h-full rounded-full transition-[width]', tone, muted && 'opacity-30')} style={{ width: `${muted ? 0 : Math.min(100, value)}%` }} /></div>
-    <p className="mt-1.5 text-xs text-muted-foreground">{detail}</p>
-  </div>
-}
-
-function SystemState({ fleet, home, isLoading }: { fleet: DashboardData['fleet']['data']; home: DashboardData['home']['data']; isLoading: boolean }) {
-  if (isLoading && !fleet && !home) return <PanelSkeleton rows={3} />
-  const queue = fleet?.queue
-  const providerCount = home?.bootstrap.provider_count ?? 0
-  return <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="px-4 py-4"><div><p className="eyebrow">Control-plane state</p><CardTitle className="mt-1 text-base font-semibold">System health</CardTitle></div></CardHeader><CardContent className="space-y-3 px-4 pb-4"><HealthRow icon={ServerCog} label="Provider plugins" value={formatCount(providerCount)} detail="registered" /><HealthRow icon={Gauge} label="Queue" value={formatCount(queue?.active ?? 0)} detail={`${queue?.queued ?? 0} queued`} /><HealthRow icon={Network} label="Network" value="Linked" detail={getText(fleet?.node, 'base_url') || 'local node'} /></CardContent></Card>
-}
-
-function HealthRow({ icon: Icon, label, value, detail }: { icon: LucideIcon; label: string; value: string; detail: string }) {
-  return <div className="flex items-center gap-3"><span className="grid size-7 place-items-center rounded-md bg-cyan-300/8 text-cyan-200"><Icon className="size-3.5" /></span><div className="min-w-0 flex-1"><p className="text-xs font-medium text-white">{label}</p><p className="truncate text-[11px] text-muted-foreground">{detail}</p></div><span className="font-mono text-xs font-semibold text-emerald-300">{value}</span></div>
 }
 
 function ResourceFooter({ fleet, isLoading, onNavigate, notifications, notificationsExpanded, onToggleNotifications }: { fleet: DashboardData['fleet']['data']; isLoading: boolean; onNavigate: NavigationProps['onNavigate']; notifications: OperationNotification[]; notificationsExpanded: boolean; onToggleNotifications: () => void }) {

@@ -8,6 +8,13 @@ from aidn_hypervisor.bundle_hash import bundle_config_hash
 from aidn_hypervisor.domain.models import BundleConfig, TaskRequest
 from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.resources import ResourceAdmissionError
+from aidn_hypervisor.runtime_instance_manager import (
+    derive_runtime_state,
+    evaluate_runtime_eviction,
+    mark_runtime_residency_started,
+    runtime_preemption_class,
+    runtime_retention_seconds,
+)
 
 _ACTIVE_EXECUTION_STATUSES = {"admitted", "starting", "running"}
 _ACTIVE_RUNTIME_STATUSES = {"starting", "running", "draining"}
@@ -235,7 +242,7 @@ class BundleRuntimePolicyService:
         if bundle_id is None:
             raise KeyError(runtime_id)
         bundle = self.get_bundle(bundle_id)
-        self.stop_runtime_for_bundle(bundle)
+        self.stop_runtime_for_bundle(bundle, reason="operator_force_stop")
         self._host.record_event(
             event_type="runtime.force_stopped",
             message="runtime force-stopped by operator",
@@ -247,6 +254,45 @@ class BundleRuntimePolicyService:
             "runtime_id": runtime_id,
             "bundle_id": bundle_id,
             "status": "force_stopped",
+        }
+
+    def set_runtime_pinned_warm(self, runtime_id: str, pinned: bool) -> dict[str, str | bool]:
+        """Pin or unpin one live Runtime Instance for warm-retention policy.
+
+        Pinning is deliberately an Instance control rather than a Bundle
+        configuration mutation.  It therefore survives ordinary reads and
+        restart snapshots for the current process, but a newly-created
+        Runtime starts unpinned unless an operator explicitly pins it again.
+        Stopped/failed handles cannot be pinned because they hold no warm
+        allocation that the Resource Broker could protect.
+        """
+
+        runtime = self.get_runtime(runtime_id)
+        if runtime.status not in {"starting", "running", "draining"}:
+            raise ValueError(
+                f"Runtime {runtime_id} is not active and cannot be {'pinned' if pinned else 'unpinned'}"
+            )
+        desired = bool(pinned)
+        previous = bool(getattr(runtime, "pinned_warm", False))
+        runtime.pinned_warm = desired
+        self._host.record_event(
+            event_type="runtime.pinned" if desired else "runtime.unpinned",
+            message=(
+                "runtime pinned warm by operator"
+                if desired
+                else "runtime warm pin released by operator"
+            ),
+            bundle_id=runtime.bundle_id,
+            runtime_id=runtime_id,
+            details={"pinned_warm": desired, "previous_pinned_warm": previous},
+        )
+        self._host._persist_state()
+        return {
+            "runtime_id": runtime_id,
+            "bundle_id": runtime.bundle_id,
+            "pinned_warm": desired,
+            "previous_pinned_warm": previous,
+            "status": "pinned" if desired else "unpinned",
         }
 
     def restart_runtime(self, runtime_id: str) -> dict[str, str]:
@@ -269,7 +315,7 @@ class BundleRuntimePolicyService:
             drain_mode=False,
             drain_reason=None,
         )
-        self.stop_runtime_for_bundle(bundle)
+        self.stop_runtime_for_bundle(bundle, reason="operator_restart")
         restarted = self.start_bundle(bundle_id)
         self._host.record_event(
             event_type="runtime.restarted",
@@ -332,6 +378,7 @@ class BundleRuntimePolicyService:
         try:
             if hasattr(self._host.runtimes, "start_runtime"):
                 runtime = self._host.runtimes.start_runtime(launch_spec)
+                self._configure_runtime_policy_metadata(runtime, bundle)
                 self._host.record_event(
                     event_type="runtime.started",
                     message="runtime started",
@@ -356,6 +403,7 @@ class BundleRuntimePolicyService:
                 metadata=dict(launch_spec.get("metadata", {})),
             )
             self._host.runtimes.append(handle)
+            self._configure_runtime_policy_metadata(handle, bundle)
             self._host.record_event(
                 event_type="runtime.started",
                 message="runtime started",
@@ -368,6 +416,31 @@ class BundleRuntimePolicyService:
             if residency_reserved:
                 self.release_runtime_reservation(bundle.bundle_id)
             raise
+
+    @staticmethod
+    def _configure_runtime_policy_metadata(
+        runtime: RuntimeHandle,
+        bundle: BundleConfig,
+    ) -> None:
+        """Attach Bundle scheduling policy to the runtime's durable metadata."""
+
+        metadata = getattr(runtime, "metadata", None)
+        if not isinstance(metadata, dict):
+            return
+        # Defaults remain derived by the policy helpers; persist only explicit
+        # per-bundle controls so legacy Runtime metadata stays compact.
+        if bundle.preemption_class != "DRAINABLE":
+            metadata["preemption_class"] = str(bundle.preemption_class)
+        if bundle.warm_retention_seconds is not None:
+            metadata["warm_retention_seconds"] = str(bundle.warm_retention_seconds)
+        if bundle.minimum_residency_seconds > 0:
+            metadata["minimum_residency_seconds"] = str(bundle.minimum_residency_seconds)
+        if (
+            bundle.preemption_class != "DRAINABLE"
+            or bundle.warm_retention_seconds is not None
+            or bundle.minimum_residency_seconds > 0
+        ):
+            mark_runtime_residency_started(runtime)
 
     def stop_bundle(self, bundle_id: str) -> dict[str, str]:
         bundle = self.get_bundle(bundle_id)
@@ -396,9 +469,46 @@ class BundleRuntimePolicyService:
         return {"bundle_id": bundle.bundle_id, "status": "stopped"}
 
     def list_runtimes(self) -> list[RuntimeHandle]:
+        runtimes = self._list_runtimes_raw()
+        self._sync_runtime_lifecycle_states(runtimes)
+        return runtimes
+
+    def _list_runtimes_raw(self) -> list[RuntimeHandle]:
         if hasattr(self._host.runtimes, "list_runtimes"):
             return list(self._host.runtimes.list_runtimes())
         return list(self._host.runtimes or [])
+
+    def _sync_runtime_lifecycle_states(
+        self,
+        runtimes: list[RuntimeHandle],
+    ) -> bool:
+        """Project low-level process handles into RFC-0073 runtime states."""
+
+        changed = False
+        for runtime in runtimes:
+            bundle_id = runtime.bundle_id or ""
+            bundle = next(
+                (item for item in self._host.bundles if item.bundle_id == bundle_id),
+                None,
+            )
+            try:
+                active_task_count = self.active_bundle_task_count(bundle_id)
+            except (AttributeError, KeyError, TypeError, ValueError):
+                active_task_count = 0
+            try:
+                drain_mode = bool(self.current_bundle_state(bundle_id)["drain_mode"])
+            except (KeyError, TypeError, ValueError):
+                drain_mode = False
+            projected = derive_runtime_state(
+                runtime,
+                active_task_count=active_task_count,
+                drain_mode=drain_mode,
+                warm_retention_seconds_value=runtime_retention_seconds(runtime, bundle),
+            )
+            if getattr(runtime, "lifecycle_state", None) != projected:
+                runtime.lifecycle_state = projected
+                changed = True
+        return changed
 
     def refresh_runtime_health(
         self,
@@ -425,7 +535,8 @@ class BundleRuntimePolicyService:
                 process_state_changed = bool(sync_process_state())
 
             now = time.monotonic()
-            runtimes = self.list_runtimes()
+            runtimes = self._list_runtimes_raw()
+            lifecycle_state_changed = self._sync_runtime_lifecycle_states(runtimes)
             candidates = [
                 runtime
                 for runtime in runtimes
@@ -433,7 +544,7 @@ class BundleRuntimePolicyService:
                 and (bundle_id is None or runtime.bundle_id == bundle_id)
                 and runtime.status in _ACTIVE_RUNTIME_STATUSES
             ]
-            changed = process_state_changed
+            changed = process_state_changed or lifecycle_state_changed
             for runtime in candidates:
                 # A provider cooldown is an intentional circuit-breaker state,
                 # not a stale health probe.  Keep it visible until the
@@ -446,6 +557,7 @@ class BundleRuntimePolicyService:
                         runtime.readiness_message,
                         runtime.readiness_checked_at,
                         runtime.readiness_diagnostic,
+                        runtime.lifecycle_state,
                     )
                     runtime.health_status = "cooldown"
                     runtime.readiness_status = "NOT_READY"
@@ -465,6 +577,7 @@ class BundleRuntimePolicyService:
                         runtime.readiness_message,
                         runtime.readiness_checked_at,
                         runtime.readiness_diagnostic,
+                        runtime.lifecycle_state,
                     )
                     continue
                 last_probe = self._health_probe_at.get(runtime.runtime_id)
@@ -515,6 +628,7 @@ class BundleRuntimePolicyService:
                     runtime.readiness_message,
                     runtime.readiness_checked_at,
                     runtime.readiness_diagnostic,
+                    runtime.lifecycle_state,
                 )
                 checked_at = _now_iso()
                 readiness_diagnostic = _bounded_readiness_diagnostic(diagnostic)
@@ -553,7 +667,13 @@ class BundleRuntimePolicyService:
                     runtime.readiness_message,
                     runtime.readiness_checked_at,
                     runtime.readiness_diagnostic,
+                    runtime.lifecycle_state,
                 )
+
+            # Health probes can promote STARTING -> running.  Re-project after
+            # the probe pass so a successful idle runtime is immediately
+            # visible as WARM_IDLE/WARM_ACTIVE rather than one read behind.
+            changed = self._sync_runtime_lifecycle_states(runtimes) or changed
 
             if changed:
                 self._host._persist_state()
@@ -578,6 +698,10 @@ class BundleRuntimePolicyService:
             "runtime_id": runtime.runtime_id,
             "bundle_id": runtime.bundle_id,
             "runtime_status": runtime.status,
+            "lifecycle_state": runtime.lifecycle_state,
+            "runtime_instance_state": runtime.lifecycle_state,
+            "last_activity_at": runtime.last_activity_at,
+            "pinned_warm": runtime.pinned_warm,
             "health_status": runtime.health_status,
             "readiness": {
                 "status": runtime.readiness_status,
@@ -627,10 +751,29 @@ class BundleRuntimePolicyService:
             return "ready"
         return status
 
-    def stop_runtime_for_bundle(self, bundle: BundleConfig) -> None:
+    def stop_runtime_for_bundle(
+        self,
+        bundle: BundleConfig,
+        *,
+        reason: str = "operator",
+    ) -> None:
         runtime = self.runtime_for_bundle(bundle.bundle_id)
         if runtime is None:
             return
+
+        runtime_id = runtime.runtime_id
+        if reason == "eviction":
+            runtime.lifecycle_state = "EVICTION_CANDIDATE"
+            self._host.record_event(
+                event_type="aidn.resource.runtime_eviction_candidate",
+                message="idle runtime selected for resource reclamation",
+                bundle_id=bundle.bundle_id,
+                runtime_id=runtime_id,
+                details={
+                    "preemption_class": runtime_preemption_class(runtime, bundle),
+                    "warm_policy": bundle.warm_policy,
+                },
+            )
 
         plugin = self._host._get_plugin(bundle.plugin_id)
         plugin.stop(runtime)
@@ -641,6 +784,14 @@ class BundleRuntimePolicyService:
                 item for item in self._host.runtimes if item.runtime_id != runtime.runtime_id
             ]
         self.release_runtime_reservation(bundle.bundle_id)
+        if reason == "eviction":
+            self._host.record_event(
+                event_type="aidn.resource.runtime_evicted",
+                message="idle runtime evicted to admit waiting work",
+                bundle_id=bundle.bundle_id,
+                runtime_id=runtime_id,
+                details={"reason": reason},
+            )
 
     def current_bundle_state(self, bundle_id: str) -> dict:
         state = self._host._bundle_states.get(bundle_id)
@@ -937,14 +1088,20 @@ class BundleRuntimePolicyService:
         }
 
     def eviction_candidates(self, *, waiting_task: TaskRequest) -> list[BundleConfig]:
-        auto_bundles = [bundle for bundle in self._host.bundles if bundle.warm_policy == "auto"]
-        always_bundles = [
-            bundle
-            for bundle in self._host.bundles
-            if bundle.warm_policy == "always"
-            and waiting_task.priority > bundle.priority_class
-        ]
-        return auto_bundles + always_bundles
+        candidates: list[BundleConfig] = []
+        for bundle in self._host.bundles:
+            runtime = self.runtime_for_bundle(bundle.bundle_id)
+            if runtime is None:
+                continue
+            decision = evaluate_runtime_eviction(
+                runtime,
+                bundle,
+                waiting_task,
+                active_task_count=self.active_bundle_task_count(bundle.bundle_id),
+            )
+            if decision["eligible"]:
+                candidates.append(bundle)
+        return candidates
 
     def eviction_blocked(
         self,
@@ -954,25 +1111,28 @@ class BundleRuntimePolicyService:
         if self._host.resources is None:
             return False
 
-        has_auto_runtime = False
-        has_blocking_always_runtime = False
+        has_idle_runtime = False
+        has_eligible_runtime = False
         for bundle in self._host.bundles:
             if bundle.bundle_id == requested_bundle.bundle_id:
                 continue
-            if self.runtime_for_bundle(bundle.bundle_id) is None:
+            runtime = self.runtime_for_bundle(bundle.bundle_id)
+            if runtime is None:
                 continue
-            if self.active_bundle_task_count(bundle.bundle_id) > 0:
+            active_task_count = self.active_bundle_task_count(bundle.bundle_id)
+            if active_task_count > 0:
                 continue
+            has_idle_runtime = True
+            decision = evaluate_runtime_eviction(
+                runtime,
+                bundle,
+                waiting_task,
+                active_task_count=active_task_count,
+            )
+            if decision["eligible"]:
+                has_eligible_runtime = True
 
-            if bundle.warm_policy == "auto":
-                has_auto_runtime = True
-            elif (
-                bundle.warm_policy == "always"
-                and waiting_task.priority <= bundle.priority_class
-            ):
-                has_blocking_always_runtime = True
-
-        return has_blocking_always_runtime and not has_auto_runtime
+        return has_idle_runtime and not has_eligible_runtime
 
     def _bundle_state_is_empty(self, state: dict) -> bool:
         return (

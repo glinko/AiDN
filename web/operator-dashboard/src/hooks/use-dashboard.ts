@@ -13,6 +13,12 @@ export function useDashboardData() {
     staleTime: staleTimeMs,
     refetchInterval: refetchIntervalMs,
   })
+  const journey = useQuery({
+    queryKey: ['operator-dashboard', 'journey'],
+    queryFn: ({ signal }) => dashboardApi.journey(signal),
+    staleTime: staleTimeMs,
+    refetchInterval: refetchIntervalMs,
+  })
   const readiness = useQuery({
     queryKey: ['operator-dashboard', 'readiness'],
     queryFn: ({ signal }) => dashboardApi.readiness(signal),
@@ -122,5 +128,5 @@ export function useDashboardData() {
     refetchInterval: refetchIntervalMs,
   })
 
-  return { home, readiness, cometbft, cometbftInstall, fleet, bundles, endpoints, wallet, providers, runtimeOperations, installs, sessions, market, remoteEndpoints, events, hooks, hookMetrics, hookDeliveries, hookDeadLetters }
+  return { home, journey, readiness, cometbft, cometbftInstall, fleet, bundles, endpoints, wallet, providers, runtimeOperations, installs, sessions, market, remoteEndpoints, events, hooks, hookMetrics, hookDeliveries, hookDeadLetters }
 }

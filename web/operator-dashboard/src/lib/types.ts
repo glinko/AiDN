@@ -282,6 +282,60 @@ const journalEventSchema = z.object({
   details: unknownRecord.default({}),
 }).passthrough()
 
+const journeyActionSchema = z.object({
+  label: stringValue,
+  route: z.string().nullable().optional(),
+  screen: z.string().nullable().optional(),
+}).passthrough()
+
+const journeyNodeSchema = z.object({
+  id: stringValue,
+  type: stringValue,
+  category: stringValue,
+  title: stringValue,
+  description: stringValue,
+  state: z.enum(['ready', 'in_progress', 'not_started', 'blocked', 'warning', 'error']).catch('not_started'),
+  required: z.boolean().catch(false),
+  dependencies: z.array(stringValue).catch([]),
+  action: journeyActionSchema.nullable().optional(),
+  reason: stringValue,
+  details: unknownRecord.default({}),
+}).passthrough()
+
+const journeyEdgeSchema = z.object({
+  from: stringValue,
+  to: stringValue,
+  type: z.enum(['required', 'optional', 'dependency']).catch('required'),
+}).passthrough()
+
+const journeySchema = z.object({
+  generated_at: stringValue,
+  hypervisor: z.object({
+    node_id: stringValue,
+    state: stringValue,
+    network_ready: z.boolean().catch(false),
+    execution_ready: z.boolean().catch(false),
+  }).partial().passthrough().default({}),
+  progress: z.object({
+    required_ready: numberValue,
+    required_total: numberValue,
+    percent: numberValue,
+    optional_ready: numberValue,
+    optional_total: numberValue,
+  }).passthrough(),
+  nodes: z.array(journeyNodeSchema).catch([]),
+  edges: z.array(journeyEdgeSchema).catch([]),
+  recommended_action: z.object({
+    node_id: stringValue.nullable().optional(),
+    title: stringValue,
+    description: stringValue,
+    label: stringValue,
+    route: z.string().nullable().optional(),
+    screen: z.string().nullable().optional(),
+  }).passthrough(),
+  role: stringValue,
+}).passthrough()
+
 export type DashboardHome = z.infer<typeof homeSchema>
 export type Readiness = z.infer<typeof readinessSchema>
 export type ReadinessStep = z.infer<typeof readinessStepSchema>
@@ -298,6 +352,8 @@ export type CometBftDashboard = z.infer<typeof cometBftDashboardSchema>
 export type CometBftInstall = z.infer<typeof cometBftInstallSchema>
 export type RuntimeOperations = z.infer<typeof runtimeOperationsSchema>
 export type JournalEvent = z.infer<typeof journalEventSchema>
+export type JourneyGraph = z.infer<typeof journeySchema>
+export type JourneyNode = z.infer<typeof journeyNodeSchema>
 
 export const dashboardSchemas = {
   home: homeSchema,
@@ -313,4 +369,5 @@ export const dashboardSchemas = {
   cometbftInstall: cometBftInstallSchema,
   runtimeOperations: runtimeOperationsSchema,
   events: z.array(journalEventSchema),
+  journey: journeySchema,
 }

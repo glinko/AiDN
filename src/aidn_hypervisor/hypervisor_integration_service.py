@@ -38,6 +38,11 @@ class HypervisorIntegrationService:
             self.bind_validation_service(validation_service)
         if endpoint_service is not None:
             endpoint_service.operation_recorder = self._host.record_ledger_operation
+            set_change_callback = getattr(endpoint_service, "set_change_callback", None)
+            if callable(set_change_callback):
+                set_change_callback(
+                    lambda *, trigger: self._host.reconcile_scheduler(trigger=trigger)
+                )
         if endpoint_publication_service is not None:
             endpoint_publication_service.operation_recorder = (
                 self._host.record_ledger_operation

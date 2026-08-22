@@ -83,6 +83,24 @@ class SchedulerReconciliationService:
             "waiting": [],
             "stable": False,
         }
+        waiting_events_emitted: set[tuple[str, str]] = set()
+        # Allocation expiry/release already has a durable lifecycle event and
+        # can trigger reconciliation from a read path.  Avoid putting a
+        # scheduler bookkeeping event after that domain event in the journal;
+        # resource hooks still cover explicit/operator and queue transitions.
+        suppressed_event_triggers = (
+            "allocation_",
+            "operator_runtime_",
+            "runtime_exit",
+            "lifecycle_",
+        )
+        emit_events = not state["trigger"].startswith(suppressed_event_triggers)
+        if emit_events:
+            self._emit_resource_event(
+                "aidn.resource.reconciliation_started",
+                "global resource reconciliation started",
+                details={"trigger": state["trigger"], "max_cycles": max_cycles},
+            )
         self._publish_state(state)
 
         if self._host.resources is None or not self._host._has_plugins():
@@ -93,6 +111,12 @@ class SchedulerReconciliationService:
                 waiting=[],
             )
             self._publish_state(state)
+            if emit_events:
+                self._emit_resource_event(
+                    "aidn.resource.reconciliation_completed",
+                    "global resource reconciliation completed without an admission broker",
+                    details=self._event_summary(state),
+                )
             return self._result(state)
 
         # Keep the established admission journal contract.  This is a plan
@@ -127,6 +151,11 @@ class SchedulerReconciliationService:
                 for item in candidates
                 if item.get("status") == "RESOURCE_WAIT"
             ]
+            if emit_events:
+                self._emit_waiting_events(
+                    candidates,
+                    emitted=waiting_events_emitted,
+                )
 
             if self._run_runnable_candidates(candidates, state, reconciliation_rank):
                 continue
@@ -144,7 +173,102 @@ class SchedulerReconciliationService:
             state["status"] = "stable"
         state["completed_at"] = self._now()
         self._publish_state(state)
+        if emit_events:
+            self._emit_resource_event(
+                "aidn.resource.reconciliation_completed",
+                "global resource reconciliation completed",
+                details=self._event_summary(state),
+                severity="WARNING" if state["status"] == "cycle_limit" else "INFO",
+                requires_action=bool(state["waiting"]),
+            )
         return self._result(state)
+
+    def _emit_waiting_events(
+        self,
+        candidates: list[dict[str, Any]],
+        *,
+        emitted: set[tuple[str, str]],
+    ) -> None:
+        """Publish one activation-waiting event per task/reason per pass."""
+
+        for candidate in candidates:
+            if candidate.get("status") != "RESOURCE_WAIT":
+                continue
+            task_id = str(candidate.get("task_id") or "")
+            reason = str(candidate.get("reason") or "insufficient_resources")
+            if not task_id or (task_id, reason) in emitted:
+                continue
+            emitted.add((task_id, reason))
+            self._emit_resource_event(
+                "aidn.resource.activation_waiting",
+                "runtime activation is waiting for allocatable resources",
+                task_id=task_id,
+                bundle_id=(
+                    str(candidate["bundle_id"])
+                    if candidate.get("bundle_id")
+                    else None
+                ),
+                resource_type="task",
+                resource_id=task_id,
+                details={
+                    "queue_key": candidate.get("queue_key"),
+                    "reason": reason,
+                    "required": candidate.get("required", {}),
+                    "free": candidate.get("free", {}),
+                    "shortfall": candidate.get("shortfall", {}),
+                    "eviction_candidates": candidate.get("eviction_candidates", []),
+                },
+                severity="WARNING",
+                requires_action=True,
+            )
+
+    @staticmethod
+    def _event_summary(state: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "trigger": state.get("trigger"),
+            "status": state.get("status"),
+            "stable": state.get("stable"),
+            "cycles": state.get("cycles", 0),
+            "attempted": state.get("attempted", 0),
+            "progressed": state.get("progressed", 0),
+            "evicted": state.get("evicted", 0),
+            "candidate_count": state.get("candidate_count", 0),
+            "waiting_count": len(state.get("waiting", [])),
+        }
+
+    def _emit_resource_event(
+        self,
+        event_type: str,
+        message: str,
+        *,
+        task_id: str | None = None,
+        bundle_id: str | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        details: dict[str, Any] | None = None,
+        severity: str | None = None,
+        requires_action: bool | None = None,
+    ) -> None:
+        recorder = getattr(self._host, "record_event", None)
+        if not callable(recorder):
+            return
+        try:
+            recorder(
+                event_type=event_type,
+                message=message,
+                task_id=task_id,
+                bundle_id=bundle_id,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                details=details,
+                source="scheduler",
+                severity=severity,
+                requires_action=requires_action,
+            )
+        except Exception:
+            # Scheduling safety must never depend on event persistence or a
+            # subscriber.  The reconciliation state remains authoritative.
+            return
 
     def _reconcile_pending_allocations(self) -> bool:
         reconcile = getattr(self._host, "_reconcile_pending_allocations", None)

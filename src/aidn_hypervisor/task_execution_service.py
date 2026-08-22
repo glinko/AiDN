@@ -4,6 +4,10 @@ from aidn_hypervisor.domain.models import BundleConfig, TaskRequest
 from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.resources import ResourceAdmissionError
 from aidn_hypervisor.runtime_parameter_policy import apply_runtime_parameter_policy
+from aidn_hypervisor.runtime_instance_manager import (
+    set_runtime_lifecycle_state,
+    touch_runtime_activity,
+)
 
 
 class TaskExecutionService:
@@ -188,6 +192,11 @@ class TaskExecutionService:
 
             self._host.queue.transition_status(task_id, "running")
             entered_running = True
+            # The request now owns an execution slot.  Mark the Runtime BUSY
+            # immediately; the read-side projection will return it to
+            # WARM_ACTIVE/WARM_IDLE after completion according to retention.
+            set_runtime_lifecycle_state(runtime, "BUSY")
+            touch_runtime_activity(runtime)
             self._host._touch_task_session(task.request)
             self._host._task_results[task_id] = self.invoke_with_retry(
                 plugin,
@@ -199,6 +208,7 @@ class TaskExecutionService:
             self._host._register_bundle_success(bundle.bundle_id, runtime)
             runtime.health_status = "healthy"
             runtime.last_error = None
+            touch_runtime_activity(runtime)
             self._host.queue.transition_status(task_id, "completed")
             self._host.record_event(
                 event_type="task.completed",

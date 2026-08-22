@@ -1084,6 +1084,20 @@ class McpControlPlane:
             "expected_revision": {"type": "string", "minLength": 1},
             "approval_reference": {"type": "string", "minLength": 1},
         }
+        runtime_mutation_schema = {
+            "type": "object",
+            "properties": {
+                "runtime_id": {"type": "string", "minLength": 1},
+                "mode": {"enum": ["plan", "apply"]},
+                "request_id": {"type": "string", "minLength": 1},
+                "idempotency_key": {"type": "string", "minLength": 1},
+                "plan_hash": {"type": "string", "minLength": 1},
+                "expected_revision": {"type": "string", "minLength": 1},
+                "approval_reference": {"type": "string", "minLength": 1},
+            },
+            "required": ["runtime_id", "mode", "request_id", "idempotency_key"],
+            "additionalProperties": False,
+        }
         return {
             "aidn.capabilities.get": McpTool(
                 "aidn.capabilities.get",
@@ -1173,6 +1187,54 @@ class McpControlPlane:
                 ("PROVIDER:READ",),
                 "READ_ONLY",
                 lambda _args: build_runtime_operations_payload(service=self.service),
+            ),
+            "aidn.runtime.instances": McpTool(
+                "aidn.runtime.instances",
+                "Return freshly reconciled Runtime Instance state and warm-retention controls.",
+                read_schema,
+                ("RUNTIME:READ",),
+                "READ_ONLY",
+                lambda _args: self._runtime_instances(),
+            ),
+            "aidn.runtime.drain": McpTool(
+                "aidn.runtime.drain",
+                "Plan or drain a Runtime Instance so it finishes current work and accepts no new work.",
+                runtime_mutation_schema,
+                ("RUNTIME:WRITE",),
+                "RUNTIME_MUTATION",
+                lambda args: self._drain_runtime(args),
+                mutating=True,
+                approval_key="runtime_control",
+            ),
+            "aidn.runtime.stop": McpTool(
+                "aidn.runtime.stop",
+                "Plan or force-stop a Runtime Instance and release its Resource Broker lease.",
+                runtime_mutation_schema,
+                ("RUNTIME:WRITE",),
+                "DISRUPTIVE_MUTATION",
+                lambda args: self._stop_runtime(args),
+                mutating=True,
+                approval_key="runtime_control",
+            ),
+            "aidn.runtime.pin": McpTool(
+                "aidn.runtime.pin",
+                "Plan or pin a live Runtime Instance warm so idle eviction will not reclaim it.",
+                runtime_mutation_schema,
+                ("RUNTIME:WRITE",),
+                "RUNTIME_MUTATION",
+                lambda args: self._pin_runtime(args),
+                mutating=True,
+                approval_key="runtime_control",
+            ),
+            "aidn.runtime.unpin": McpTool(
+                "aidn.runtime.unpin",
+                "Plan or release a Runtime Instance warm pin so normal eviction policy applies.",
+                runtime_mutation_schema,
+                ("RUNTIME:WRITE",),
+                "RUNTIME_MUTATION",
+                lambda args: self._unpin_runtime(args),
+                mutating=True,
+                approval_key="runtime_control",
             ),
             "aidn.model.list": McpTool(
                 "aidn.model.list",
@@ -1406,6 +1468,24 @@ class McpControlPlane:
                 ("SCHEDULER:READ",),
                 "READ_ONLY",
                 lambda args: self._scheduler_candidates(args),
+            ),
+            "aidn.scheduler.explain_decision": McpTool(
+                "aidn.scheduler.explain_decision",
+                (
+                    "Explain why one queued task is runnable, waiting for resources, "
+                    "blocked by policy, or behind another Endpoint queue head."
+                ),
+                {
+                    "type": "object",
+                    "properties": {
+                        "task_id": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["task_id"],
+                    "additionalProperties": False,
+                },
+                ("SCHEDULER:READ",),
+                "READ_ONLY",
+                lambda args: self._scheduler_explain_decision(args),
             ),
             "aidn.scheduler.reconcile": McpTool(
                 "aidn.scheduler.reconcile",
@@ -1930,6 +2010,13 @@ class McpControlPlane:
                 "PROVIDER:READ",
                 lambda _uri: build_runtime_operations_payload(service=self.service),
             ),
+            "aidn://runtime/instances": McpResource(
+                "aidn://runtime/instances",
+                "Runtime instances",
+                "Live Runtime Instance state and warm-retention controls.",
+                "RUNTIME:READ",
+                lambda _uri: self._runtime_instances(),
+            ),
             "aidn://models": McpResource(
                 "aidn://models",
                 "Models",
@@ -2165,7 +2252,11 @@ class McpControlPlane:
             request_id=request_id,
             idempotency_key=idempotency_key,
             action_class=tool.action_class,
-            target=arguments.get("bundle_id") or arguments.get("endpoint_id"),
+            target=(
+                arguments.get("bundle_id")
+                or arguments.get("endpoint_id")
+                or arguments.get("runtime_id")
+            ),
             plan_hash=plan["plan_hash"],
             approval_reference=arguments.get("approval_reference"),
             result="SUCCEEDED",
@@ -2192,7 +2283,11 @@ class McpControlPlane:
         plan_body = {
             "tool": tool.name,
             "request_id": arguments.get("request_id"),
-            "target": arguments.get("bundle_id") or arguments.get("endpoint_id"),
+            "target": (
+                arguments.get("bundle_id")
+                or arguments.get("endpoint_id")
+                or arguments.get("runtime_id")
+            ),
             "arguments": plan_arguments,
             "expected_revision": expected_revision,
             "current_revision": current_revision,
@@ -2241,6 +2336,22 @@ class McpControlPlane:
             return [
                 f"publish Endpoint {arguments.get('endpoint_id', 'unknown')} through the canonical wallet path",
             ]
+        if tool_name == "aidn.runtime.drain":
+            return [
+                f"drain Runtime Instance {arguments.get('runtime_id', 'unknown')} and reject new work",
+            ]
+        if tool_name == "aidn.runtime.stop":
+            return [
+                f"force-stop Runtime Instance {arguments.get('runtime_id', 'unknown')} and release its Resource Lease",
+            ]
+        if tool_name == "aidn.runtime.pin":
+            return [
+                f"pin Runtime Instance {arguments.get('runtime_id', 'unknown')} warm against idle eviction",
+            ]
+        if tool_name == "aidn.runtime.unpin":
+            return [
+                f"release the warm pin for Runtime Instance {arguments.get('runtime_id', 'unknown')}",
+            ]
         if tool_name == "aidn.hook.create":
             return [
                 f"create a {arguments.get('delivery_mode', 'DURABLE_INBOX')} Hook for Agent {arguments.get('target_agent_id', 'current-agent')}",
@@ -2267,6 +2378,12 @@ class McpControlPlane:
             return [
                 "the Endpoint publication becomes visible to network discovery according to its publication policy",
             ]
+        if tool_name == "aidn.runtime.stop":
+            return ["active requests on the Runtime Instance may be interrupted"]
+        if tool_name == "aidn.runtime.drain":
+            return ["new work is rejected while existing requests drain"]
+        if tool_name == "aidn.runtime.unpin":
+            return ["normal warm-runtime eviction policy may reclaim the instance"]
         if tool_name == "aidn.hook.delete":
             return ["future events will no longer be delivered to this Hook"]
         if tool_name in {"aidn.hook.replay", "aidn.hook.dead_letter_retry"}:
@@ -2612,6 +2729,9 @@ class McpControlPlane:
                 return None
             hook = self._owned_hook(arguments)
             return _hash_payload(_json_safe(hook))
+        runtime_id = arguments.get("runtime_id")
+        if runtime_id:
+            return self._runtime_revision(runtime_id)
         if not endpoint_id:
             return None
         if self.endpoint_service is None:
@@ -2627,6 +2747,20 @@ class McpControlPlane:
                 f"Endpoint not found: {endpoint_id}",
             ) from error
         return endpoint.configuration_hash
+
+    def _runtime_revision(self, runtime_id: str) -> str:
+        try:
+            runtime = next(
+                item
+                for item in self.service.list_runtimes()
+                if item.runtime_id == runtime_id
+            )
+        except StopIteration as error:
+            raise McpDomainError(
+                "MCP_RUNTIME_NOT_FOUND",
+                f"Runtime Instance not found: {runtime_id}",
+            ) from error
+        return _hash_payload(_json_safe(runtime))
 
     def _bundle_revision(self, bundle_id: str | None) -> str | None:
         if not bundle_id:
@@ -2785,6 +2919,21 @@ class McpControlPlane:
             )
         return {"items": self.service.scheduler_candidates(limit=limit), "limit": limit}
 
+    def _scheduler_explain_decision(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        task_id = arguments.get("task_id")
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise McpDomainError(
+                "MCP_INVALID_ARGUMENTS",
+                "task_id must be a non-empty string",
+            )
+        try:
+            return self.service.scheduler_explain_decision(task_id)
+        except KeyError as error:
+            raise McpDomainError(
+                "MCP_TASK_NOT_FOUND",
+                f"Task not found: {task_id}",
+            ) from error
+
     def _scheduler_queues(self) -> dict[str, Any]:
         items = []
         for candidate in self.service.scheduler_candidates():
@@ -2799,6 +2948,41 @@ class McpControlPlane:
                 }
             )
         return {"items": items}
+
+    def _runtime_instances(self) -> dict[str, Any]:
+        """Return the live Runtime Instance projection without install-job noise."""
+
+        payload = build_runtime_operations_payload(service=self.service)
+        return {
+            "generated_at": payload.get("generated_at"),
+            "freshness": payload.get("freshness", {}),
+            "summary": payload.get("summary", {}),
+            "instances": payload.get("runtimes", []),
+        }
+
+    def _drain_runtime(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        runtime_id = self._required_string(arguments, "runtime_id")
+        if arguments.get("mode") == "plan":
+            return self._build_plan(self._tools["aidn.runtime.drain"], arguments)
+        return _json_safe(self.service.drain_runtime(runtime_id))
+
+    def _stop_runtime(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        runtime_id = self._required_string(arguments, "runtime_id")
+        if arguments.get("mode") == "plan":
+            return self._build_plan(self._tools["aidn.runtime.stop"], arguments)
+        return _json_safe(self.service.force_stop_runtime(runtime_id))
+
+    def _pin_runtime(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        runtime_id = self._required_string(arguments, "runtime_id")
+        if arguments.get("mode") == "plan":
+            return self._build_plan(self._tools["aidn.runtime.pin"], arguments)
+        return _json_safe(self.service.set_runtime_pinned_warm(runtime_id, True))
+
+    def _unpin_runtime(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        runtime_id = self._required_string(arguments, "runtime_id")
+        if arguments.get("mode") == "plan":
+            return self._build_plan(self._tools["aidn.runtime.unpin"], arguments)
+        return _json_safe(self.service.set_runtime_pinned_warm(runtime_id, False))
 
     def _reconcile_scheduler(self, arguments: dict[str, Any]) -> dict[str, Any]:
         trigger = arguments.get("trigger", "mcp")
@@ -2860,6 +3044,10 @@ class McpControlPlane:
     @staticmethod
     def _map_domain_error(tool_name: str, error: Exception) -> str:
         message = str(error).lower()
+        if "runtime" in message and "not active" in message:
+            return "MCP_RUNTIME_NOT_ACTIVE"
+        if "runtime" in message and "not found" in message:
+            return "MCP_RUNTIME_NOT_FOUND"
         if "bundle" in message and "not" in message:
             return "MCP_BUNDLE_NOT_FOUND"
         if "insufficient" in message or "resource" in message:
@@ -3019,7 +3207,7 @@ def build_mcp_server(
             item.strip()
             for item in os.environ.get(
                 "AIDN_MCP_SCOPES",
-                "CAPABILITIES:READ,HOST:READ,NODE:READ,NETWORK:READ,PROVIDER:READ,MODEL:READ,BUNDLE:READ,ENDPOINT:READ,RESOURCES:READ,SCHEDULER:READ,WALLET:READ,BUDGET:READ,AUDIT:READ",
+                "CAPABILITIES:READ,HOST:READ,NODE:READ,NETWORK:READ,PROVIDER:READ,RUNTIME:READ,MODEL:READ,BUNDLE:READ,ENDPOINT:READ,RESOURCES:READ,SCHEDULER:READ,WALLET:READ,BUDGET:READ,AUDIT:READ",
             ).split(",")
             if item.strip()
         ),
@@ -3033,6 +3221,7 @@ def build_mcp_server(
             "bundle_retire": "OPERATOR_CONFIRMATION",
             "provider_attach": "OPERATOR_CONFIRMATION",
             "endpoint_write": "OPERATOR_CONFIRMATION",
+            "runtime_control": "OPERATOR_CONFIRMATION",
         },
     )
     control = McpControlPlane(
@@ -3073,6 +3262,7 @@ def main(argv: list[str] | None = None) -> None:
         "NODE:READ",
         "NETWORK:READ",
         "PROVIDER:READ",
+        "RUNTIME:READ",
         "MODEL:READ",
         "BUNDLE:READ",
         "ENDPOINT:READ",
@@ -3097,6 +3287,7 @@ def main(argv: list[str] | None = None) -> None:
             "bundle_retire": "OPERATOR_CONFIRMATION",
             "provider_attach": "OPERATOR_CONFIRMATION",
             "endpoint_write": "OPERATOR_CONFIRMATION",
+            "runtime_control": "OPERATOR_CONFIRMATION",
         },
     )
     server = build_mcp_server(

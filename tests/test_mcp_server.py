@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from aidn_hypervisor.bundle_hash import bundle_config_hash
-from aidn_hypervisor.domain.models import BundleConfig, NodeCapacity, ResourceProfile
+from aidn_hypervisor.domain.models import BundleConfig, NodeCapacity, ResourceProfile, TaskRequest
 from aidn_hypervisor.endpoint_publications.service import EndpointPublicationService
 from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
 from aidn_hypervisor.endpoints.models import CreateEndpointCommand
@@ -198,6 +198,7 @@ def test_mcp_resource_broker_and_scheduler_read_models_are_scope_visible() -> No
         "aidn.resources.forecast",
         "aidn.resources.leases",
         "aidn.resource_broker.status",
+        "aidn.resource_broker.devices",
         "aidn.resource_broker.forecast",
         "aidn.scheduler.status",
         "aidn.scheduler.queues",
@@ -225,6 +226,35 @@ def test_mcp_resource_broker_and_scheduler_read_models_are_scope_visible() -> No
         }
     )
     assert resources["result"]["contents"][0]["mimeType"] == "application/json"
+
+
+def test_mcp_scheduler_explain_decision_is_scope_visible_and_actionable() -> None:
+    service = _service()
+    task = service.queue.enqueue(
+        TaskRequest(
+            task_type="llm_text",
+            payload={"prompt": "queued"},
+            constraints={"endpoint_id": "endpoint-test"},
+        )
+    )
+    service._selected_bundles[task.task_id] = "bundle-a"
+    server = build_mcp_server(service, session=_session("SCHEDULER:READ"))
+    _initialize(server)
+
+    listed = server.handle_message(
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}}
+    )
+    assert "aidn.scheduler.explain_decision" in {
+        item["name"] for item in listed["result"]["tools"]
+    }
+
+    explanation = _call(
+        server,
+        "aidn.scheduler.explain_decision",
+        {"task_id": task.task_id},
+    )["structuredContent"]
+    assert explanation["task"]["task_id"] == task.task_id
+    assert explanation["decision"] in {"ADMIT", "WAITING_FOR_RESOURCES"}
 
 
 def test_mcp_scheduler_reconcile_is_plan_apply_and_scope_gated() -> None:
@@ -390,6 +420,95 @@ def test_mcp_runtime_operations_returns_live_readiness_and_job_progress() -> Non
         }
     )
     assert resource["result"]["contents"][0]["mimeType"] == "application/json"
+
+
+def test_mcp_runtime_instances_and_warm_controls_are_plan_bound() -> None:
+    server = _server(
+        "RUNTIME:READ",
+        "RUNTIME:WRITE",
+        approval_policy={"runtime_control": "AUTO"},
+        runtime=True,
+    )
+    _initialize(server)
+
+    listed = server.handle_message(
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}}
+    )
+    names = {item["name"] for item in listed["result"]["tools"]}
+    assert {
+        "aidn.runtime.instances",
+        "aidn.runtime.drain",
+        "aidn.runtime.stop",
+        "aidn.runtime.pin",
+        "aidn.runtime.unpin",
+    } <= names
+
+    instances = _call(server, "aidn.runtime.instances")["structuredContent"]
+    runtime_id = instances["instances"][0]["runtime_id"]
+    request = {
+        "runtime_id": runtime_id,
+        "mode": "plan",
+        "request_id": "request-runtime-pin",
+        "idempotency_key": "idem-runtime-pin",
+    }
+    plan = _call(server, "aidn.runtime.pin", request)["structuredContent"]
+    assert plan["target"] == runtime_id
+    assert plan["requires_approval"] is False
+
+    applied = _call(
+        server,
+        "aidn.runtime.pin",
+        {**request, "mode": "apply", "plan_hash": plan["plan_hash"]},
+    )["structuredContent"]
+    assert applied["status"] == "pinned"
+    assert applied["pinned_warm"] is True
+
+    refreshed = _call(server, "aidn.runtime.instances")["structuredContent"]
+    assert refreshed["instances"][0]["pinned_warm"] is True
+
+    unpin_request = {
+        "runtime_id": runtime_id,
+        "mode": "plan",
+        "request_id": "request-runtime-unpin",
+        "idempotency_key": "idem-runtime-unpin",
+    }
+    unpin_plan = _call(server, "aidn.runtime.unpin", unpin_request)["structuredContent"]
+    unpinned = _call(
+        server,
+        "aidn.runtime.unpin",
+        {**unpin_request, "mode": "apply", "plan_hash": unpin_plan["plan_hash"]},
+    )["structuredContent"]
+    assert unpinned["status"] == "unpinned"
+    assert unpinned["pinned_warm"] is False
+
+
+def test_mcp_runtime_mutation_requires_approval_and_reports_unknown_runtime() -> None:
+    server = _server(
+        "RUNTIME:WRITE",
+        approval_policy={"runtime_control": "OPERATOR_CONFIRMATION"},
+        runtime=True,
+    )
+    _initialize(server)
+    request = {
+        "runtime_id": "rt-missing",
+        "mode": "plan",
+        "request_id": "request-runtime-missing",
+        "idempotency_key": "idem-runtime-missing",
+    }
+    missing = _call(server, "aidn.runtime.stop", request)
+    assert missing["isError"] is True
+    assert missing["structuredContent"]["error"]["code"] == "MCP_RUNTIME_NOT_FOUND"
+
+    runtime = server.control.service.list_runtimes()[0]
+    request["runtime_id"] = runtime.runtime_id
+    plan = _call(server, "aidn.runtime.stop", request)["structuredContent"]
+    denied = _call(
+        server,
+        "aidn.runtime.stop",
+        {**request, "mode": "apply", "plan_hash": plan["plan_hash"]},
+    )
+    assert denied["isError"] is True
+    assert denied["structuredContent"]["error"]["code"] == "MCP_APPROVAL_REQUIRED"
 
 
 def test_mcp_event_inbox_is_durable_and_acknowledgeable() -> None:

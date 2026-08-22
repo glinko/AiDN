@@ -40,6 +40,16 @@ class RuntimeProtocolBoundaryService:
     def force_stop_runtime(self, runtime_id: str) -> dict[str, str]:
         return self._bundle_runtime_policy_facade().force_stop_runtime(runtime_id)
 
+    def set_runtime_pinned_warm(
+        self,
+        runtime_id: str,
+        pinned: bool,
+    ) -> dict[str, str | bool]:
+        return self._bundle_runtime_policy_facade().set_runtime_pinned_warm(
+            runtime_id,
+            pinned,
+        )
+
     def restart_runtime(self, runtime_id: str) -> dict[str, str]:
         return self._bundle_runtime_policy_facade().restart_runtime(runtime_id)
 
@@ -117,8 +127,16 @@ class RuntimeProtocolBoundaryService:
     # Runtime lifecycle helpers
     # ------------------------------------------------------------------
 
-    def _stop_runtime_for_bundle(self, bundle: BundleConfig) -> None:
-        self._bundle_runtime_policy_facade().stop_runtime_for_bundle(bundle)
+    def _stop_runtime_for_bundle(
+        self,
+        bundle: BundleConfig,
+        *,
+        reason: str = "operator",
+    ) -> None:
+        self._bundle_runtime_policy_facade().stop_runtime_for_bundle(
+            bundle,
+            reason=reason,
+        )
 
     def _clear_runtime_reservations(self) -> None:
         self._hv._snapshot_state_facade().clear_runtime_reservations()
@@ -257,6 +275,9 @@ class RuntimeProtocolBoundaryService:
 
     def scheduler_candidates(self, *, limit: int = 200) -> list[dict]:
         return self._admission_planning_facade().scheduler_candidates(limit=limit)
+
+    def scheduler_explain_decision(self, task_id: str) -> dict:
+        return self._admission_planning_facade().scheduler_explain_decision(task_id)
 
     def scheduler_status(self, *, candidate_limit: int = 200) -> dict:
         return self._admission_planning_facade().scheduler_status(

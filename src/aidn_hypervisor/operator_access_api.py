@@ -27,6 +27,7 @@ from aidn_hypervisor.endpoints.models import (
     UpdateEndpointCommand,
 )
 from aidn_hypervisor.ledger.service import STANDARD_NETWORK_FEE_Q_ATOMS
+from aidn_hypervisor.lifecycle_manager import LifecycleError
 from aidn_hypervisor.mcp.credentials import (
     InferenceCredential,
     McpCredential,
@@ -177,6 +178,31 @@ class LocalAgentUseRequest(BaseModel):
     """A local-only inference permission; never part of endpoint publication."""
 
     enabled: bool
+
+
+class LifecyclePlanRequest(BaseModel):
+    """Browser-paired request for a lifecycle transition/removal plan."""
+
+    object_type: str = Field(min_length=1, max_length=64)
+    object_id: str = Field(min_length=1, max_length=256)
+    action: Literal["DISABLE", "UNPUBLISH", "RETIRE"] | None = None
+    cascade: bool = False
+    actor: str = Field(default="operator-dashboard", min_length=1, max_length=128)
+
+
+class LifecycleApplyRequest(BaseModel):
+    plan_hash: str = Field(min_length=1, max_length=256)
+    actor: str = Field(default="operator-dashboard", min_length=1, max_length=128)
+    force: bool = False
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+class RuntimeResetApplyRequest(BaseModel):
+    reset_id: str = Field(min_length=1, max_length=128)
+    plan_hash: str = Field(min_length=1, max_length=256)
+    actor: str = Field(default="operator-dashboard", min_length=1, max_length=128)
+    force: bool = False
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class ConsensusInstallRequest(BaseModel):
@@ -1269,6 +1295,9 @@ def build_operator_access_router(
                 probe=report.metadata(),
                 observed_at=report.observed_at,
             )
+            reconcile = getattr(hypervisor_service, "reconcile_scheduler", None)
+            if callable(reconcile):
+                reconcile(trigger="resource_probe")
         except (OSError, TypeError, ValueError) as error:
             return operation_error(error)
         return JSONResponse(
@@ -1390,6 +1419,123 @@ def build_operator_access_router(
                 return JSONResponse(status_code=422, content={"error": {"code": "DASHBOARD_OPERATION_UNKNOWN"}})
         except (KeyError, ValueError) as error:
             return operation_error(error)
+        return JSONResponse(status_code=200, content=result)
+
+    @router.post("/operations/lifecycle/transition-plan")
+    async def lifecycle_transition_plan(payload: LifecyclePlanRequest, request: Request) -> Response:
+        """Create a paired-browser lifecycle transition plan.
+
+        The generic operator lifecycle API is intentionally not exposed to an
+        unauthenticated LAN browser.  This wrapper keeps the same plan/hash
+        contract while requiring the dashboard pairing session.
+        """
+
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
+        if payload.action is None:
+            return JSONResponse(status_code=422, content={"error": {"code": "DASHBOARD_OPERATION_UNKNOWN", "message": "A transition action is required."}})
+        try:
+            result = hypervisor_service.lifecycle_transition_plan(
+                object_type=payload.object_type,
+                object_id=payload.object_id,
+                action=payload.action,
+                actor=payload.actor,
+            )
+        except LifecycleError as error:
+            return JSONResponse(status_code=409, content={"error": error.as_detail()})
+        return JSONResponse(status_code=200, content=result)
+
+    @router.post("/operations/lifecycle/transition-plans/{transition_id}/apply")
+    async def apply_lifecycle_transition(transition_id: str, payload: LifecycleApplyRequest, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
+        try:
+            result = hypervisor_service.apply_lifecycle_transition(
+                transition_id,
+                plan_hash=payload.plan_hash,
+                actor=payload.actor,
+                idempotency_key=payload.idempotency_key,
+            )
+        except LifecycleError as error:
+            status_code = 404 if error.code == "OBJECT_NOT_FOUND" else 409
+            return JSONResponse(status_code=status_code, content={"error": error.as_detail()})
+        return JSONResponse(status_code=200, content=result)
+
+    @router.post("/operations/lifecycle/removal-plan")
+    async def lifecycle_removal_plan(payload: LifecyclePlanRequest, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
+        try:
+            result = hypervisor_service.lifecycle_removal_plan(
+                object_type=payload.object_type,
+                object_id=payload.object_id,
+                cascade=payload.cascade,
+                actor=payload.actor,
+            )
+        except LifecycleError as error:
+            return JSONResponse(status_code=409, content={"error": error.as_detail()})
+        return JSONResponse(status_code=200, content=result)
+
+    @router.post("/operations/lifecycle/removal-plans/{plan_id}/apply")
+    async def apply_lifecycle_removal(plan_id: str, payload: LifecycleApplyRequest, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
+        try:
+            result = hypervisor_service.apply_lifecycle_removal(
+                plan_id,
+                plan_hash=payload.plan_hash,
+                actor=payload.actor,
+                force=payload.force,
+                idempotency_key=payload.idempotency_key,
+            )
+        except LifecycleError as error:
+            status_code = 404 if error.code == "OBJECT_NOT_FOUND" else 409
+            return JSONResponse(status_code=status_code, content={"error": error.as_detail()})
+        return JSONResponse(status_code=200, content=result)
+
+    @router.post("/operations/lifecycle/runtime-reset/plan")
+    async def runtime_reset_plan(request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
+        try:
+            result = hypervisor_service.runtime_reset_plan(actor="operator-dashboard")
+        except LifecycleError as error:
+            return JSONResponse(status_code=409, content={"error": error.as_detail()})
+        return JSONResponse(status_code=200, content=result)
+
+    @router.post("/operations/lifecycle/runtime-reset/apply")
+    async def apply_runtime_reset(payload: RuntimeResetApplyRequest, request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(status_code=503, content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}})
+        try:
+            result = hypervisor_service.apply_runtime_reset(
+                payload.reset_id,
+                plan_hash=payload.plan_hash,
+                actor=payload.actor,
+                force=payload.force,
+                idempotency_key=payload.idempotency_key,
+            )
+        except LifecycleError as error:
+            status_code = 404 if error.code == "OBJECT_NOT_FOUND" else 409
+            return JSONResponse(status_code=status_code, content={"error": error.as_detail()})
         return JSONResponse(status_code=200, content=result)
 
     @router.post("/operations/providers/attach")

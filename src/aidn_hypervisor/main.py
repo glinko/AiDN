@@ -578,6 +578,31 @@ def _is_validator_consensus_write_path(path: str, method: str | None = None) -> 
         and (method is None or method == "POST")
     ):
         return True
+    if (
+        (
+            len(parts) == 6
+            and parts[:5] == ["operators", "dashboard", "access", "operations", "lifecycle"]
+            and parts[5] in {"transition-plan", "removal-plan"}
+        )
+        or (
+            len(parts) == 8
+            and parts[:6] == ["operators", "dashboard", "access", "operations", "lifecycle", "transition-plans"]
+            and parts[7] == "apply"
+        )
+        or (
+            len(parts) == 8
+            and parts[:6] == ["operators", "dashboard", "access", "operations", "lifecycle", "removal-plans"]
+            and parts[7] == "apply"
+        )
+        or (
+            len(parts) == 7
+            and parts[:6] == ["operators", "dashboard", "access", "operations", "lifecycle", "runtime-reset"]
+            and parts[6] in {"plan", "apply"}
+        )
+    ) and (method is None or method == "POST"):
+        # Lifecycle plans and applies are destructive-capable local controls,
+        # but remain behind the paired dashboard session and exact plan hash.
+        return True
     if parts == ["operators", "dashboard", "access", "operations", "providers", "attach"]:
         return True
     if (

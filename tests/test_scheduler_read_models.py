@@ -1,4 +1,7 @@
 from aidn_hypervisor.domain.models import BundleConfig, NodeCapacity, ResourceProfile, TaskRequest
+from aidn_hypervisor.endpoints.models import CreateEndpointCommand
+from aidn_hypervisor.endpoints.service import EndpointService
+from aidn_hypervisor.endpoints.store import EndpointStore
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.process_manager import ProviderProcessManager
@@ -78,6 +81,114 @@ def test_scheduler_candidates_represent_all_endpoint_queues_and_explain_fit() ->
     assert by_endpoint["endpoint-small"]["reason"] == "resources_fit"
 
 
+def test_scheduler_explain_decision_returns_resource_factors() -> None:
+    service = _service()
+    candidate = next(
+        item
+        for item in service.scheduler_candidates()
+        if item["endpoint_id"] == "endpoint-large"
+    )
+
+    explanation = service.scheduler_explain_decision(candidate["task_id"])
+
+    assert explanation["decision"] == "WAITING_FOR_RESOURCES"
+    assert explanation["reason"] == "insufficient_resources"
+    assert explanation["queue"]["head_of_line"] is True
+    assert explanation["candidate"]["shortfall"]["vram_mb"] == 576
+    assert {item["name"] for item in explanation["factors"]} >= {
+        "queue_order",
+        "priority",
+        "required",
+        "free",
+        "shortfall",
+        "eviction_candidates",
+    }
+
+
+def test_scheduler_explain_decision_identifies_endpoint_head_of_line() -> None:
+    service = _service()
+    first = next(
+        item
+        for item in service.scheduler_candidates()
+        if item["endpoint_id"] == "endpoint-large"
+    )
+    later = service.queue.enqueue(
+        TaskRequest(
+            task_type="llm_text",
+            payload={"prompt": "later"},
+            constraints={"endpoint_id": "endpoint-large"},
+        )
+    )
+    service._selected_bundles[later.task_id] = "bundle-large"
+
+    explanation = service.scheduler_explain_decision(later.task_id)
+
+    assert explanation["decision"] == "WAITING_FOR_QUEUE"
+    assert explanation["reason"] == "head_of_line"
+    assert explanation["queue"]["head_task_id"] == first["task_id"]
+    assert explanation["queue"]["position"] == 2
+
+
+def test_endpoint_queue_is_fifo_without_blocking_a_fitting_peer() -> None:
+    service = _service()
+    existing_large = next(
+        item for item in service.scheduler_candidates() if item["endpoint_id"] == "endpoint-large"
+    )
+    later_large = service.queue.enqueue(
+        TaskRequest(
+            task_type="llm_text",
+            payload={"prompt": "later"},
+            priority=100,
+            constraints={"endpoint_id": "endpoint-large"},
+        )
+    )
+    service._selected_bundles[later_large.task_id] = "bundle-large"
+
+    candidates = service.scheduler_candidates()
+    large = next(item for item in candidates if item["endpoint_id"] == "endpoint-large")
+
+    # Endpoint queues are FIFO even when a newer request has a higher
+    # priority.  The peer Endpoint remains independently schedulable.
+    assert large["task_id"] == existing_large["task_id"]
+    assert large["queue_key"] == "endpoint:endpoint-large"
+    assert large["queue_policy"] == "fifo"
+    assert large["queue_position"] == 1
+    assert large["head_of_line"] is True
+    assert large["queue_depth"] == 2
+    small = next(item for item in candidates if item["endpoint_id"] == "endpoint-small")
+
+    service.process_pending()
+
+    assert service.get_task(later_large.task_id).status == "queued"
+    assert service.get_task(existing_large["task_id"]).status == "queued"
+    assert service.get_task(small["task_id"]).status == "completed"
+
+
+def test_endpoint_mutations_trigger_global_reconciliation_callback() -> None:
+    service = _service()
+    endpoint_service = EndpointService(
+        EndpointStore(),
+        record_creation_operation=False,
+        record_update_operation=False,
+    )
+    triggers: list[str] = []
+    service.reconcile_scheduler = lambda *, trigger: triggers.append(trigger)
+    service.bind_external_services(endpoint_service=endpoint_service)
+
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-test",
+            bundle_id="bundle-small",
+            bundle_hash="bundle-small-hash",
+            display_name="Small endpoint",
+            model_class="llm_text",
+        )
+    )
+    endpoint_service.disable_endpoint(created.endpoint.endpoint_id)
+
+    assert triggers == ["endpoint_created", "endpoint_disabled"]
+
+
 def test_scheduler_status_includes_queue_and_resource_projection() -> None:
     service = _service()
 
@@ -110,3 +221,28 @@ def test_global_reconciliation_runs_fitting_peer_and_reports_resource_wait() -> 
     assert reconciliation["status"] == "stable"
     assert reconciliation["cycles"] >= 2
     assert reconciliation["waiting"][0]["task_id"] == large_task_id
+
+
+def test_global_reconciliation_emits_resource_lifecycle_events() -> None:
+    service = _service()
+
+    service.process_pending()
+
+    events = [
+        event
+        for event in service.event_journal()
+        if event.event_type.startswith("aidn.resource.reconciliation")
+        or event.event_type == "aidn.resource.activation_waiting"
+    ]
+    assert [event.event_type for event in events].count(
+        "aidn.resource.reconciliation_started"
+    ) == 1
+    assert [event.event_type for event in events].count(
+        "aidn.resource.reconciliation_completed"
+    ) == 1
+    waiting = [
+        event for event in events if event.event_type == "aidn.resource.activation_waiting"
+    ]
+    assert waiting
+    assert waiting[0].task_id
+    assert waiting[0].details["shortfall"]["vram_mb"] == 576

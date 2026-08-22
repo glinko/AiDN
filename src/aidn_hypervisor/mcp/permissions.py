@@ -66,6 +66,14 @@ AGENT_PERMISSION_CATALOG: tuple[McpAgentPermission, ...] = (
         ("aidn.provider.list",),
     ),
     McpAgentPermission(
+        "RUNTIME:READ",
+        "Runtime instances",
+        "Read live Runtime Instance state, readiness, leases, and warm-retention flags.",
+        "Read",
+        "low",
+        ("aidn.runtime.instances",),
+    ),
+    McpAgentPermission(
         "MODEL:READ",
         "Model inventory",
         "Read model deployments and installation jobs.",
@@ -113,6 +121,7 @@ AGENT_PERMISSION_CATALOG: tuple[McpAgentPermission, ...] = (
             "aidn.resources.forecast",
             "aidn.resources.leases",
             "aidn.resource_broker.status",
+            "aidn.resource_broker.devices",
             "aidn.resource_broker.forecast",
             "aidn.resource_broker.leases",
             "aidn.resource_broker.explain_denial",
@@ -130,6 +139,7 @@ AGENT_PERMISSION_CATALOG: tuple[McpAgentPermission, ...] = (
             "aidn.scheduler.status",
             "aidn.scheduler.queues",
             "aidn.scheduler.candidates",
+            "aidn.scheduler.explain_decision",
         ),
     ),
     McpAgentPermission(
@@ -235,6 +245,23 @@ AGENT_PERMISSION_CATALOG: tuple[McpAgentPermission, ...] = (
         "critical",
         ("aidn.bundle.retire",),
         "bundle_retire",
+    ),
+    McpAgentPermission(
+        "RUNTIME:WRITE",
+        "Control Runtime instances",
+        (
+            "Drain, stop, pin, or unpin a Runtime Instance through plan/apply. "
+            "Mutations remain subject to the operator approval policy and Resource Broker."
+        ),
+        "Actions",
+        "critical",
+        (
+            "aidn.runtime.drain",
+            "aidn.runtime.stop",
+            "aidn.runtime.pin",
+            "aidn.runtime.unpin",
+        ),
+        "runtime_control",
     ),
 )
 

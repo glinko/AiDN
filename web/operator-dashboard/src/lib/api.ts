@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { dashboardSchemas, type BundlePayload, type CometBftDashboard, type CometBftInstall, type DashboardHome, type EndpointPayload, type Fleet, type MarketDashboard, type Readiness, type RemoteEndpointsDashboard, type RuntimeOperations, type SessionDashboard, type WalletDashboard } from '@/lib/types'
+import { dashboardSchemas, type BundlePayload, type CometBftDashboard, type CometBftInstall, type DashboardHome, type EndpointPayload, type Fleet, type JourneyGraph, type MarketDashboard, type Readiness, type RemoteEndpointsDashboard, type RuntimeOperations, type SessionDashboard, type WalletDashboard } from '@/lib/types'
 
 const apiRoot = (import.meta.env.VITE_AIDN_API_ROOT ?? '').replace(/\/$/, '')
 const requestTimeoutMs = 15_000
@@ -104,6 +104,19 @@ export type AgentPermissionCatalog = {
 }
 
 export type DashboardRecord = Record<string, unknown>
+
+export type LifecycleTransitionAction = 'DISABLE' | 'UNPUBLISH' | 'RETIRE'
+
+export type LifecyclePlan = DashboardRecord & {
+  plan_id?: string
+  transition_id?: string
+  plan_hash?: string
+  target?: DashboardRecord
+  action?: string
+  current_state?: string
+  target_state?: string
+  requires_approval?: boolean
+}
 
 export type ProviderArtifactInventory = DashboardRecord[] | DashboardRecord
 
@@ -313,6 +326,7 @@ async function writeDashboard<T>(path: string, init: RequestInit): Promise<T | u
 
 export const dashboardApi = {
   home: (signal?: AbortSignal): Promise<DashboardHome> => readDashboard('/operators/dashboard/home', dashboardSchemas.home, signal),
+  journey: (signal?: AbortSignal): Promise<JourneyGraph> => readDashboard('/operators/dashboard/journey', dashboardSchemas.journey, signal),
   readiness: (signal?: AbortSignal): Promise<Readiness> => readDashboard('/operators/dashboard/readiness', dashboardSchemas.readiness, signal),
   cometbft: (signal?: AbortSignal): Promise<CometBftDashboard> => readDashboard('/operators/dashboard/cometbft', dashboardSchemas.cometbft, signal),
   cometbftInstall: (signal?: AbortSignal): Promise<CometBftInstall> => readDashboard('/operators/dashboard/cometbft/install', dashboardSchemas.cometbftInstall, signal),
@@ -357,6 +371,12 @@ export const dashboardApi = {
   previewWalletTransfer: (payload: { recipient_wallet: string; amount_q_atoms: number; memo?: string }) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/wallet/transfer/preview', { method: 'POST', body: JSON.stringify(payload) }),
   submitWalletTransfer: (payload: { recipient_wallet: string; amount_q_atoms: number; memo?: string }) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/wallet/transfer', { method: 'POST', body: JSON.stringify(payload) }),
   bundleOperation: (bundleId: string, action: 'enable' | 'disable' | 'retry' | 'reset-cooldown') => writeDashboard(`/operators/dashboard/access/operations/bundles/${encodeURIComponent(bundleId)}/${action}`, { method: 'POST' }),
+  lifecycleTransitionPlan: (payload: { object_type: string; object_id: string; action: LifecycleTransitionAction }): Promise<LifecyclePlan> => writeDashboard<LifecyclePlan>('/operators/dashboard/access/operations/lifecycle/transition-plan', { method: 'POST', body: JSON.stringify(payload) }) as Promise<LifecyclePlan>,
+  applyLifecycleTransition: (transitionId: string, payload: { plan_hash: string; force?: boolean; idempotency_key?: string }) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/lifecycle/transition-plans/${encodeURIComponent(transitionId)}/apply`, { method: 'POST', body: JSON.stringify(payload) }),
+  lifecycleRemovalPlan: (payload: { object_type: string; object_id: string; cascade?: boolean }): Promise<LifecyclePlan> => writeDashboard<LifecyclePlan>('/operators/dashboard/access/operations/lifecycle/removal-plan', { method: 'POST', body: JSON.stringify(payload) }) as Promise<LifecyclePlan>,
+  applyLifecycleRemoval: (planId: string, payload: { plan_hash: string; force?: boolean; idempotency_key?: string }) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/lifecycle/removal-plans/${encodeURIComponent(planId)}/apply`, { method: 'POST', body: JSON.stringify(payload) }),
+  runtimeResetPlan: (): Promise<LifecyclePlan> => writeDashboard<LifecyclePlan>('/operators/dashboard/access/operations/lifecycle/runtime-reset/plan', { method: 'POST' }) as Promise<LifecyclePlan>,
+  applyRuntimeReset: (payload: { reset_id: string; plan_hash: string; force?: boolean; idempotency_key?: string }) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/lifecycle/runtime-reset/apply', { method: 'POST', body: JSON.stringify(payload) }),
   attachProvider: (payload: { plugin_id: string; display_name: string; configuration: DashboardRecord }) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/providers/attach', { method: 'POST', body: JSON.stringify(payload) }),
   installProviderRuntime: (pluginId: string, configuration: DashboardRecord, operatorNote?: string, upgradeAcknowledged = false) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/provider-plugins/${encodeURIComponent(pluginId)}/install`, { method: 'POST', body: JSON.stringify({ configuration, upgrade_acknowledged: upgradeAcknowledged, ...(operatorNote ? { operator_note: operatorNote } : {}) }) }),
   providerRuntimeAction: (pluginId: string, action: 'install' | 'change' | 'remove', configuration: DashboardRecord = {}, operatorNote?: string, upgradeAcknowledged = false) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/provider-plugins/${encodeURIComponent(pluginId)}/runtime/${action}`, { method: 'POST', body: JSON.stringify({ configuration, upgrade_acknowledged: upgradeAcknowledged, ...(operatorNote ? { operator_note: operatorNote } : {}) }) }),

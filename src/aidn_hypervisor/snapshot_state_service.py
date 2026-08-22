@@ -133,6 +133,9 @@ class SnapshotStateService:
                     readiness_message=runtime.readiness_message,
                     readiness_checked_at=runtime.readiness_checked_at,
                     readiness_diagnostic=dict(runtime.readiness_diagnostic),
+                    lifecycle_state=runtime.lifecycle_state,
+                    last_activity_at=runtime.last_activity_at,
+                    pinned_warm=runtime.pinned_warm,
                 )
                 for runtime in self._host.list_runtimes()
             ],
@@ -682,6 +685,9 @@ class SnapshotStateService:
                 readiness_message=runtime.readiness_message,
                 readiness_checked_at=runtime.readiness_checked_at,
                 readiness_diagnostic=dict(runtime.readiness_diagnostic),
+                lifecycle_state=runtime.lifecycle_state,
+                last_activity_at=runtime.last_activity_at,
+                pinned_warm=runtime.pinned_warm,
             )
             if self._host._bundle_in_cooldown(runtime.bundle_id):
                 recovered_runtime.health_status = "cooldown"

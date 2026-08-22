@@ -2228,6 +2228,19 @@ class HypervisorService:
         self.reconcile_scheduler(trigger="operator_runtime_stop")
         return result
 
+    def set_runtime_pinned_warm(
+        self,
+        runtime_id: str,
+        pinned: bool,
+    ) -> dict[str, str | bool]:
+        result = self._runtime_boundary.set_runtime_pinned_warm(runtime_id, pinned)
+        # A pin changes the eviction candidate set, so re-run the same global
+        # reconciliation used by every other operator Runtime control.
+        self.reconcile_scheduler(
+            trigger="operator_runtime_pin" if pinned else "operator_runtime_unpin"
+        )
+        return result
+
     # RFC-0074/IMP-0002 lifecycle boundary.  Callers should use these
     # facades instead of deleting Provider/Bundle/Endpoint state directly.
     def lifecycle_removal_plan(self, object_type: str, object_id: str, **kwargs) -> dict:
@@ -2340,6 +2353,11 @@ class HypervisorService:
         """Return the read-only fit-aware candidate projection."""
 
         return self._runtime_boundary.scheduler_candidates(limit=limit)
+
+    def scheduler_explain_decision(self, task_id: str) -> dict:
+        """Explain the current queue/admission decision for one task."""
+
+        return self._runtime_boundary.scheduler_explain_decision(task_id)
 
     def scheduler_status(self, *, candidate_limit: int = 200) -> dict:
         """Return the read-only Resource Broker/Scheduler status projection."""
@@ -2539,8 +2557,13 @@ class HypervisorService:
     def _release_runtime_reservation(self, bundle_id: str) -> None:
         self._runtime_boundary._release_runtime_reservation(bundle_id)
 
-    def _stop_runtime_for_bundle(self, bundle: BundleConfig) -> None:
-        self._runtime_boundary._stop_runtime_for_bundle(bundle)
+    def _stop_runtime_for_bundle(
+        self,
+        bundle: BundleConfig,
+        *,
+        reason: str = "operator",
+    ) -> None:
+        self._runtime_boundary._stop_runtime_for_bundle(bundle, reason=reason)
 
     def _runtime_reservation_id(self, bundle_id: str) -> str:
         return self._runtime_boundary._runtime_reservation_id(bundle_id)

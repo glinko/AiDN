@@ -132,6 +132,9 @@ class RuntimeSnapshot(BaseModel):
     readiness_message: str | None = None
     readiness_checked_at: str | None = None
     readiness_diagnostic: dict = Field(default_factory=dict)
+    lifecycle_state: str = "STARTING"
+    last_activity_at: str | None = None
+    pinned_warm: bool = False
 
 
 class BundleStateSnapshot(BaseModel):
