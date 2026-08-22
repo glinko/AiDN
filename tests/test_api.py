@@ -2221,6 +2221,21 @@ def test_operator_dashboard_fleet_endpoint_returns_aggregated_payload(tmp_path) 
     assert response.json()["node_identity"]["node_id"] == service.node_id
 
 
+def test_operator_dashboard_resources_endpoint_returns_broker_projection() -> None:
+    service = _service()
+    client = TestClient(build_app(service=service))
+
+    response = client.get("/operators/dashboard/resources")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is True
+    assert body["hardware"]["cpu"]["physical_cores"] == 8.0
+    assert body["leases"]
+    assert body["runtime_summary"]["runtime_total"] == 1
+    assert "queue_wait" in body["metrics"]
+
+
 def test_operator_dashboard_market_endpoint_marks_own_and_external_candidates() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
     registry = RegistryService()
@@ -11665,3 +11680,143 @@ def test_operator_wallet_corrections_export_empty() -> None:
     assert len(body["items"]) == 0
     assert "next_after_sequence" in body
     assert "cursor_status" in body
+
+
+def test_operator_steward_action_guard_returns_causal_cooldown_state(monkeypatch) -> None:
+    monkeypatch.setenv("AIDN_STEWARD_ENABLED", "1")
+    client = TestClient(build_app(service=_service()))
+
+    first = client.post(
+        "/operators/dashboard/steward/action-guard",
+        json={
+            "action": "aidn.provider.restart",
+            "target_id": "provider-1",
+            "event_id": "evt-1",
+            "event_type": "aidn.provider.failed",
+            "correlation_id": "incident-1",
+            "cooldown_seconds": 60,
+        },
+    )
+    assert first.status_code == 200
+    assert first.json()["allowed"] is True
+    assert first.json()["lineage"]["causation_id"] == "evt-1"
+
+    second = client.post(
+        "/operators/dashboard/steward/action-guard",
+        json={
+            "action": "aidn.provider.restart",
+            "target_id": "provider-1",
+            "event_id": "evt-2",
+        },
+    )
+    assert second.status_code == 200
+    assert second.json()["code"] == "ACTION_COOLDOWN_ACTIVE"
+
+
+def test_operator_steward_reasoning_router_is_read_only_and_explainable() -> None:
+    service = _service()
+    service.reasoning_provider_register(
+        {
+            "provider_id": "local-api-test",
+            "kind": "LOCAL_MODEL",
+            "model_id": "small-local",
+            "capabilities": ["diagnostic"],
+            "context_limit": 8192,
+            "allowed_data_classes": ["OPERATOR"],
+            "latency_ms": 25,
+            "available": True,
+            "enabled": True,
+            "trusted": True,
+        }
+    )
+    client = TestClient(build_app(service=service))
+
+    providers = client.get("/operators/dashboard/steward/reasoning/providers")
+    assert providers.status_code == 200
+    assert "local-api-test" in {item["provider_id"] for item in providers.json()["registry"]["items"]}
+
+    decision = client.post(
+        "/operators/dashboard/steward/reasoning/route",
+        json={"capability": "diagnostic", "minimum_context": 4096},
+    )
+    assert decision.status_code == 200
+    assert decision.json()["selected_provider"]["provider_id"] == "local-api-test"
+    assert decision.json()["execution"] == {"started": False, "side_effects": False}
+
+
+def test_operator_steward_escalation_is_plan_before_apply() -> None:
+    service = _service()
+    service.reasoning_provider_register(
+        {
+            "provider_id": "local-escalation-test",
+            "kind": "LOCAL_MODEL",
+            "model_id": "large-local",
+            "capabilities": ["general"],
+            "context_limit": 131072,
+            "allowed_data_classes": ["OPERATOR"],
+            "available": True,
+            "enabled": True,
+            "trusted": True,
+        }
+    )
+    client = TestClient(build_app(service=service))
+    created = client.post(
+        "/operators/dashboard/steward/escalations",
+        json={
+            "goal": "Compare a provider migration",
+            "idempotency_key": "api-escalation-1",
+            "postconditions": [{"path": "status", "expected": "ready"}],
+        },
+    )
+    assert created.status_code == 200
+    task = created.json()
+    assert task["state"] == "CONTEXT_PREPARED"
+    assert task["plan"] is None
+
+    planned = client.post(
+        f"/operators/dashboard/steward/escalations/{task['task_id']}/plan",
+        json={"idempotency_key": "api-plan-1", "plan": {"actions": [{"tool": "aidn.provider.list", "arguments": {}}]}},
+    )
+    assert planned.status_code == 200
+    assert planned.json()["state"] == "WAITING_APPROVAL"
+
+    approved = client.post(
+        f"/operators/dashboard/steward/escalations/{task['task_id']}/approve",
+        json={
+            "plan_hash": planned.json()["plan_hash"],
+            "approval_reference": "operator-approval-1",
+            "approver_id": "operator-test",
+        },
+    )
+    assert approved.status_code == 200
+    assert approved.json()["state"] == "APPROVED"
+
+    verified = client.post(
+        f"/operators/dashboard/steward/escalations/{task['task_id']}/verify",
+        json={"observed": {"status": "ready"}},
+    )
+    assert verified.status_code == 200
+    assert verified.json()["state"] == "COMPLETED"
+
+
+def test_operator_steward_policy_and_inference_read_models_are_explicit() -> None:
+    service = _service()
+    client = TestClient(build_app(service=service))
+
+    initial = client.get("/operators/dashboard/steward/action-policy")
+    assert initial.status_code == 200
+    assert "provider.health_check" in initial.json()["auto_actions"]
+    assert any(item["action"] == "runtime.restart" for item in initial.json()["catalog"])
+
+    updated = client.post(
+        "/operators/dashboard/steward/action-policy",
+        json={"auto_actions": [], "approval_actions": ["provider.health_check"], "max_actions_per_hour": 4},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["auto_actions"] == []
+    assert updated.json()["approval_actions"] == ["provider.health_check"]
+    assert updated.json()["max_actions_per_hour"] == 4
+
+    inference = client.get("/operators/dashboard/steward/inference")
+    assert inference.status_code == 200
+    assert inference.json()["state"] in {"NOT_CONFIGURED", "DISABLED", "READY_TO_START"}

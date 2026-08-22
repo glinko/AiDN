@@ -228,6 +228,28 @@ def build_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        steward_worker_enabled = _env_bool(
+            "AIDN_STEWARD_WORKER_ENABLED",
+            default=_env_bool("AIDN_STEWARD_ENABLED", default=False),
+        )
+        steward_worker_interval = _env_int(
+            "AIDN_STEWARD_WORKER_INTERVAL_SECONDS",
+            default=15,
+            minimum=1,
+            maximum=300,
+        )
+        configure_steward_worker = getattr(
+            resolved_service, "configure_resident_worker", None
+        )
+        start_steward_worker = getattr(resolved_service, "start_resident_worker", None)
+        stop_steward_worker = getattr(resolved_service, "stop_resident_worker", None)
+        if callable(configure_steward_worker):
+            configure_steward_worker(
+                enabled=steward_worker_enabled,
+                interval_seconds=steward_worker_interval,
+            )
+        if steward_worker_enabled and callable(start_steward_worker):
+            start_steward_worker()
         if resolved_remote_trust_anchor_runtime is not None:
             resolved_remote_trust_anchor_runtime.refresh()
         if resolved_registry_replication_runtime is not None:
@@ -237,6 +259,8 @@ def build_app(
         try:
             yield
         finally:
+            if callable(stop_steward_worker):
+                stop_steward_worker()
             if resolved_consensus_service is not None:
                 resolved_consensus_service.stop_validator_abci_server()
             if resolved_registry_replication_runtime is not None:
@@ -841,6 +865,30 @@ def _build_default_service(
     )
     if state_store is not None:
         service.restore_state(state_store.load())
+    # Explicit environment values are operator configuration.  They may
+    # override a persisted enablement flag, but an absent value leaves a
+    # restored state untouched for embedded/test callers.
+    if os.getenv("AIDN_STEWARD_ENABLED") is not None:
+        service.resident_agent.set_enabled(
+            _env_bool("AIDN_STEWARD_ENABLED", default=False), persist=False
+        )
+    model_path = os.getenv("AIDN_STEWARD_MODEL_PATH")
+    if model_path:
+        service.resident_agent.configure_model(
+            model_path=model_path,
+            model_repo=os.getenv(
+                "AIDN_STEWARD_MODEL_REPO", "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
+            ),
+            model_file=os.getenv(
+                "AIDN_STEWARD_MODEL_FILE",
+                "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+            ),
+            quantization=os.getenv("AIDN_STEWARD_MODEL_QUANT", "Q4_K_M"),
+            ram_budget_mb=_env_int(
+                "AIDN_STEWARD_RAM_BUDGET_MB", default=1024, minimum=128, maximum=131072
+            ),
+            persist=False,
+        )
     return service
 
 

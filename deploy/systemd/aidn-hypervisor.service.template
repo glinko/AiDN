@@ -9,11 +9,15 @@ User=aidn
 Group=aidn
 WorkingDirectory=/opt/aidn/AiDN
 EnvironmentFile=/etc/aidn/hypervisor.env
+Environment=AIDN_STEWARD_WORKER_ENABLED=true
+Environment=AIDN_STEWARD_WORKER_INTERVAL_SECONDS=15
 # Protect the environment file (root:aidn, mode 0640) and use an OS/KMS
 # secret injection mechanism for AIDN_SECRET_MANAGER_MASTER_KEY in production.
 ExecStart=/usr/local/bin/uv run uvicorn aidn_hypervisor.main:build_app --factory --host 127.0.0.1 --port 8766
 Restart=on-failure
 RestartSec=5
+WatchdogSec=45
+NotifyAccess=main
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectHome=yes

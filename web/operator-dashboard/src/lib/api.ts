@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { dashboardSchemas, type BundlePayload, type CometBftDashboard, type CometBftInstall, type DashboardHome, type EndpointPayload, type Fleet, type JourneyGraph, type MarketDashboard, type Readiness, type RemoteEndpointsDashboard, type RuntimeOperations, type SessionDashboard, type WalletDashboard } from '@/lib/types'
+import { dashboardSchemas, type BundlePayload, type CometBftDashboard, type CometBftInstall, type DashboardHome, type EndpointPayload, type EscalationTasks, type Fleet, type InstallationPlan, type JourneyGraph, type MarketDashboard, type Readiness, type RemoteEndpointsDashboard, type ResidentAgentStatus, type ResidentInference, type ResourceBrokerDashboard, type RuntimeOperations, type SessionDashboard, type StewardActionPolicy, type WalletDashboard } from '@/lib/types'
 
 const apiRoot = (import.meta.env.VITE_AIDN_API_ROOT ?? '').replace(/\/$/, '')
 const requestTimeoutMs = 15_000
@@ -336,6 +336,12 @@ export const dashboardApi = {
   wallet: (signal?: AbortSignal): Promise<WalletDashboard> => readDashboard('/operators/dashboard/wallet', dashboardSchemas.wallet, signal),
   providers: (signal?: AbortSignal): Promise<ProviderWorkspace> => readDashboard('/operators/dashboard/providers', providerWorkspaceSchema, signal),
   runtimeOperations: (signal?: AbortSignal): Promise<RuntimeOperations> => readDashboard('/operators/dashboard/runtime-operations', dashboardSchemas.runtimeOperations, signal),
+  resourceBroker: (signal?: AbortSignal): Promise<ResourceBrokerDashboard> => readDashboard('/operators/dashboard/resources', dashboardSchemas.resourceBroker, signal),
+  residentAgent: (signal?: AbortSignal): Promise<ResidentAgentStatus> => readDashboard('/operators/dashboard/steward', dashboardSchemas.residentAgent, signal),
+  escalations: (signal?: AbortSignal): Promise<EscalationTasks> => readDashboard('/operators/dashboard/steward/escalations?limit=64', dashboardSchemas.escalations, signal),
+  stewardActionPolicy: (signal?: AbortSignal): Promise<StewardActionPolicy> => readDashboard('/operators/dashboard/steward/action-policy', dashboardSchemas.stewardActionPolicy, signal),
+  residentInference: (signal?: AbortSignal): Promise<ResidentInference> => readDashboard('/operators/dashboard/steward/inference', dashboardSchemas.residentInference, signal),
+  installationPlan: (signal?: AbortSignal): Promise<InstallationPlan> => readDashboard('/operators/dashboard/installation-plan', dashboardSchemas.installationPlan, signal),
   installs: (signal?: AbortSignal): Promise<ModelInstallWorkspace> => readDashboard('/operators/dashboard/installs', modelInstallWorkspaceSchema, signal),
   sessions: (signal?: AbortSignal): Promise<SessionDashboard> => readDashboard('/operators/dashboard/sessions', dashboardSchemas.sessions, signal),
   market: (signal?: AbortSignal): Promise<MarketDashboard> => readDashboard('/operators/dashboard/market', dashboardSchemas.market, signal),
@@ -361,6 +367,13 @@ export const dashboardApi = {
   rotateInferenceCredential: (credentialId: string) => writeDashboard<InferenceCredential & { base_url: string }>(`/operators/dashboard/access/inference-credentials/${encodeURIComponent(credentialId)}/rotate`, { method: 'POST' }),
   revokeInferenceCredential: (credentialId: string) => writeDashboard(`/operators/dashboard/access/inference-credentials/${encodeURIComponent(credentialId)}`, { method: 'DELETE' }),
   logoutDashboardAccess: () => writeDashboard('/operators/dashboard/access/logout', { method: 'POST' }),
+  setResidentAgentEnabled: (enabled: boolean) => writeDashboard<ResidentAgentStatus>('/operators/dashboard/steward/enabled', { method: 'POST', body: JSON.stringify({ enabled }) }),
+  updateStewardActionPolicy: (payload: { auto_actions?: string[]; approval_actions?: string[]; max_actions_per_hour?: number }) => writeDashboard<StewardActionPolicy>('/operators/dashboard/steward/action-policy', { method: 'POST', body: JSON.stringify(payload) }),
+  prepareResidentInference: (payload: { model_path: string; provider_type?: string; plugin_id?: string; profile?: 'CPU_RESIDENT' | 'IGPU_RESIDENT' | 'GPU_RESIDENT' | 'GPU_BURST'; cpu?: number; ram_mb?: number; vram_mb?: number; request_cpu?: number; request_ram_mb?: number; request_vram_mb?: number; lease_seconds?: number; fallback_enabled?: boolean; runtime_parameter_policy?: DashboardRecord; source_url?: string; expected_sha256?: string; download?: boolean; max_download_bytes?: number; readiness_timeout_seconds?: number }) => writeDashboard<ResidentInference>('/operators/dashboard/steward/inference/prepare', { method: 'POST', body: JSON.stringify(payload) }),
+  prepareResidentModel: (payload: { source_url: string; target_path: string; expected_sha256?: string; max_download_bytes?: number }) => writeDashboard<ResidentInference>('/operators/dashboard/steward/inference/model/prepare', { method: 'POST', body: JSON.stringify(payload) }),
+  verifyResidentModel: (payload: { model_path: string; expected_sha256?: string }) => writeDashboard<DashboardRecord>('/operators/dashboard/steward/inference/model/verify', { method: 'POST', body: JSON.stringify(payload) }),
+  startResidentInference: () => writeDashboard<ResidentInference>('/operators/dashboard/steward/inference/start', { method: 'POST' }),
+  stopResidentInference: () => writeDashboard<ResidentInference>('/operators/dashboard/steward/inference/stop', { method: 'POST' }),
   enrollmentRequests: () => writeDashboard<{ items: EnrollmentRequest[] }>('/operators/dashboard/access/enrollment-requests', { method: 'GET' }),
   approveEnrollment: (requestId: string) => writeDashboard<EnrollmentRequest>(`/operators/dashboard/access/enrollment-requests/${requestId}/approve`, { method: 'POST' }),
   rejectEnrollment: (requestId: string) => writeDashboard<EnrollmentRequest>(`/operators/dashboard/access/enrollment-requests/${requestId}/reject`, { method: 'POST' }),
@@ -376,6 +389,7 @@ export const dashboardApi = {
   lifecycleRemovalPlan: (payload: { object_type: string; object_id: string; cascade?: boolean }): Promise<LifecyclePlan> => writeDashboard<LifecyclePlan>('/operators/dashboard/access/operations/lifecycle/removal-plan', { method: 'POST', body: JSON.stringify(payload) }) as Promise<LifecyclePlan>,
   applyLifecycleRemoval: (planId: string, payload: { plan_hash: string; force?: boolean; idempotency_key?: string }) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/lifecycle/removal-plans/${encodeURIComponent(planId)}/apply`, { method: 'POST', body: JSON.stringify(payload) }),
   runtimeResetPlan: (): Promise<LifecyclePlan> => writeDashboard<LifecyclePlan>('/operators/dashboard/access/operations/lifecycle/runtime-reset/plan', { method: 'POST' }) as Promise<LifecyclePlan>,
+  applyInstallationPlan: (payload: { plan_hash: string; actor?: string; idempotency_key?: string }) => writeDashboard<InstallationPlan & { job?: DashboardRecord }>('/operators/dashboard/access/operations/installation-plan/apply', { method: 'POST', body: JSON.stringify(payload) }),
   applyRuntimeReset: (payload: { reset_id: string; plan_hash: string; force?: boolean; idempotency_key?: string }) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/lifecycle/runtime-reset/apply', { method: 'POST', body: JSON.stringify(payload) }),
   attachProvider: (payload: { plugin_id: string; display_name: string; configuration: DashboardRecord }) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/providers/attach', { method: 'POST', body: JSON.stringify(payload) }),
   installProviderRuntime: (pluginId: string, configuration: DashboardRecord, operatorNote?: string, upgradeAcknowledged = false) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/provider-plugins/${encodeURIComponent(pluginId)}/install`, { method: 'POST', body: JSON.stringify({ configuration, upgrade_acknowledged: upgradeAcknowledged, ...(operatorNote ? { operator_note: operatorNote } : {}) }) }),

@@ -131,6 +131,10 @@ class ModelInstallOperationRequest(BaseModel):
     source_url: str = Field(min_length=1, max_length=2048)
     requested_by: str = Field(default="operator-dashboard", min_length=1, max_length=128)
     runtime_parameter_policy: dict[str, Any] = Field(default_factory=dict, max_length=16)
+    resident_adapter_requested: bool = False
+    resident_execution_profile: str | None = Field(default=None, max_length=32)
+    resident_resource_request: dict[str, Any] = Field(default_factory=dict, max_length=16)
+    resident_fallback_enabled: bool = True
 
 
 class RegisterBundleOperationRequest(BaseModel):
@@ -162,6 +166,14 @@ class RuntimeBindingOperationRequest(BaseModel):
     capability_id: str = Field(min_length=1, max_length=128)
     capability_version: str = Field(min_length=1, max_length=64)
     capability_definition_hash: str = Field(min_length=1, max_length=256)
+
+
+class InstallationPlanApplyRequest(BaseModel):
+    """Explicit browser confirmation for a persisted assisted setup plan."""
+
+    plan_hash: str = Field(min_length=1, max_length=256)
+    actor: str = Field(default="operator-dashboard", min_length=1, max_length=128)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class BundleRevisionOperationRequest(BaseModel):
@@ -1536,6 +1548,31 @@ def build_operator_access_router(
         except LifecycleError as error:
             status_code = 404 if error.code == "OBJECT_NOT_FOUND" else 409
             return JSONResponse(status_code=status_code, content={"error": error.as_detail()})
+        return JSONResponse(status_code=200, content=result)
+
+    @router.post("/operations/installation-plan/apply")
+    async def apply_installation_plan(
+        payload: InstallationPlanApplyRequest,
+        request: Request,
+    ) -> Response:
+        """Apply one plan-bound, policy-gated assisted-installation step."""
+
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if hypervisor_service is None:
+            return JSONResponse(
+                status_code=503,
+                content={"error": {"code": "DASHBOARD_OPERATIONS_UNAVAILABLE"}},
+            )
+        try:
+            result = hypervisor_service.apply_installation_plan(
+                plan_hash=payload.plan_hash,
+                actor=payload.actor,
+                idempotency_key=payload.idempotency_key,
+            )
+        except ValueError as error:
+            return operation_error(error)
         return JSONResponse(status_code=200, content=result)
 
     @router.post("/operations/providers/attach")

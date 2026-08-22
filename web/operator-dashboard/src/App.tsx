@@ -79,6 +79,9 @@ import { dashboardScreens, useOperatorDashboardStore, type DashboardScreen } fro
 import type { Bundle, CometBftDashboard, CometBftInstall, Endpoint, Fleet, Readiness, RuntimeOperations, WalletDashboard } from '@/lib/types'
 import { createSavedHypervisor, loadSavedHypervisors, saveSavedHypervisors, type SavedHypervisorConnection } from '@/lib/hypervisor-connections'
 import { JourneyPage } from '@/components/journey/JourneyPage'
+import { ResourceBrokerWorkspace } from '@/components/resources/ResourceBrokerWorkspace'
+import { StewardEscalationPanel } from '@/components/steward/StewardEscalationPanel'
+import { StewardPolicyPanel } from '@/components/steward/StewardPolicyPanel'
 
 type NavigationItem = {
   id: DashboardScreen
@@ -104,6 +107,7 @@ const advancedItems: NavigationItem[] = [
   { id: 'validation', label: 'Validation', icon: ShieldCheck, advanced: true },
   { id: 'network', label: 'Network', icon: Network, advanced: true },
   { id: 'cometbft', label: 'CometBFT', icon: GitBranch, advanced: true },
+  { id: 'resources', label: 'Resources', icon: Gauge, advanced: true },
   { id: 'hooks', label: 'Automation', icon: BellRing, advanced: true },
 ]
 
@@ -192,7 +196,7 @@ function terminalSessionLabel(value: string): string {
   }
 }
 
-type OperationsScreen = Exclude<DashboardScreen, 'overview' | 'bundles' | 'endpoints' | 'settings'>
+type OperationsScreen = Exclude<DashboardScreen, 'overview' | 'bundles' | 'endpoints' | 'settings' | 'resources'>
 
 type RefreshFeedback = {
   state: 'idle' | 'running' | 'success' | 'error'
@@ -267,7 +271,7 @@ function App() {
   const nodeIdentity = data.home.data?.bootstrap.node_identity ?? data.fleet.data?.node
   const nodeName = getText(nodeIdentity, 'node_id') || 'Local Hypervisor'
   const readinessPercent = data.readiness.data?.progress.percent ?? 0
-  const hasRefreshError = [data.home, data.journey, data.readiness, data.cometbft, data.cometbftInstall, data.fleet, data.bundles, data.endpoints, data.wallet, data.providers, data.runtimeOperations, data.installs, data.sessions, data.market, data.remoteEndpoints, data.events, data.hooks, data.hookMetrics, data.hookDeliveries, data.hookDeadLetters].some(
+  const hasRefreshError = [data.home, data.journey, data.readiness, data.cometbft, data.cometbftInstall, data.fleet, data.bundles, data.endpoints, data.wallet, data.providers, data.runtimeOperations, data.residentAgent, data.residentInference, data.stewardActionPolicy, data.installationPlan, data.installs, data.sessions, data.market, data.remoteEndpoints, data.events, data.hooks, data.hookMetrics, data.hookDeliveries, data.hookDeadLetters].some(
     (query) => query.isError,
   )
 
@@ -302,6 +306,12 @@ function App() {
       data.wallet.refetch(),
       data.providers.refetch(),
       data.runtimeOperations.refetch(),
+      data.resourceBroker.refetch(),
+      data.residentAgent.refetch(),
+      data.escalations.refetch(),
+      data.stewardActionPolicy.refetch(),
+      data.residentInference.refetch(),
+      data.installationPlan.refetch(),
       data.installs.refetch(),
       data.sessions.refetch(),
       data.market.refetch(),
@@ -336,7 +346,7 @@ function App() {
       <TopBar
         nodeName={nodeName}
         advanced={advanced}
-            isRefreshing={data.home.isFetching || data.journey.isFetching || data.readiness.isFetching || data.runtimeOperations.isFetching || data.events.isFetching || data.hooks.isFetching}
+                isRefreshing={data.home.isFetching || data.journey.isFetching || data.readiness.isFetching || data.runtimeOperations.isFetching || data.resourceBroker.isFetching || data.residentAgent.isFetching || data.escalations.isFetching || data.stewardActionPolicy.isFetching || data.residentInference.isFetching || data.installationPlan.isFetching || data.events.isFetching || data.hooks.isFetching}
         refreshError={hasRefreshError}
         refreshFeedback={refreshFeedback}
         onRefresh={refreshAll}
@@ -366,7 +376,15 @@ function App() {
 
         <main className="min-w-0 flex-1 lg:pl-5">
           {activeScreen === 'overview' ? (
-            <JourneyPage graph={data.journey.data} isLoading={data.journey.isLoading} error={data.journey.error} onRefresh={refreshAll} onNavigate={navigate} />
+            <JourneyPage graph={data.journey.data} residentAgent={data.residentAgent.data} installationPlan={data.installationPlan.data} isLoading={data.journey.isLoading} error={data.journey.error} onRefresh={refreshAll} onNavigate={navigate} onApplyInstallationPlan={async (planHash) => {
+              try {
+                await dashboardApi.applyInstallationPlan({ plan_hash: planHash, idempotency_key: `dashboard-${planHash}` })
+                pushNotification('Assisted installation plan accepted; the next reviewed step is now visible.')
+                await data.installationPlan.refetch()
+              } catch (error) {
+                pushNotification(error instanceof Error ? error.message : 'Assisted installation plan was rejected.')
+              }
+            }} />
           ) : null}
           {activeScreen === 'bundles' ? (
             <BundlesScreen bundles={data.bundles.data?.items ?? []} isLoading={data.bundles.isLoading} error={data.bundles.error} onNavigate={navigate} onRefresh={refreshAll} readiness={data.readiness.data} fleet={data.fleet.data} providers={data.providers.data} />
@@ -379,6 +397,7 @@ function App() {
           ) : null}
           {activeScreen === 'settings' ? <SettingsWorkspace fleet={data.fleet.data} endpoints={data.endpoints.data?.items ?? []} onRefresh={refreshAll} /> : null}
           {activeScreen === 'wallet' ? <WalletWorkspace wallet={data.wallet.data} isLoading={data.wallet.isLoading} error={data.wallet.error} onRefresh={refreshAll} /> : null}
+          {activeScreen === 'resources' ? <ResourceBrokerWorkspace data={data.resourceBroker.data} isLoading={data.resourceBroker.isLoading} error={data.resourceBroker.error} isFetching={data.resourceBroker.isFetching} onRefresh={refreshAll} /> : null}
           {activeScreen === 'providers' || activeScreen === 'catalog' ? (
             <ProviderWorkspaceScreen screen={activeScreen} workspace={data.providers.data} runtimeOperations={data.runtimeOperations.data} isLoading={data.providers.isLoading || data.runtimeOperations.isLoading} error={data.providers.error ?? data.runtimeOperations.error} onRefresh={refreshAll} />
           ) : null}
@@ -3093,7 +3112,19 @@ function HooksWorkspace({ data, onRefresh }: { data: DashboardData; onRefresh: (
 }
 
 function AgentsWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
-  return <AgentsSessionsWorkspace data={data} onNavigate={onNavigate} onRefresh={onRefresh} />
+  const refreshSteward = () => { void data.residentAgent.refetch(); void data.escalations.refetch(); void data.stewardActionPolicy.refetch(); void data.residentInference.refetch() }
+  return <div className="space-y-4"><StewardEscalationPanel status={data.residentAgent.data} tasks={data.escalations.data?.items ?? []} isLoading={data.escalations.isLoading} error={data.escalations.error} isFetching={data.escalations.isFetching} onRefresh={refreshSteward} /><StewardPolicyPanel
+    status={data.residentAgent.data}
+    policy={data.stewardActionPolicy.data}
+    inference={data.residentInference.data}
+    isFetching={data.stewardActionPolicy.isFetching || data.residentInference.isFetching}
+    onRefresh={refreshSteward}
+    onSavePolicy={async (payload) => { await dashboardApi.updateStewardActionPolicy(payload); refreshSteward() }}
+    onToggle={async (enabled) => { await dashboardApi.setResidentAgentEnabled(enabled); refreshSteward() }}
+    onPrepare={async (payload) => { await dashboardApi.prepareResidentInference(payload); refreshSteward() }}
+    onStart={async () => { await dashboardApi.startResidentInference(); refreshSteward() }}
+    onStop={async () => { await dashboardApi.stopResidentInference(); refreshSteward() }}
+  /><AgentsSessionsWorkspace data={data} onNavigate={onNavigate} onRefresh={onRefresh} /></div>
 }
 
 function AgentsSessionsWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {

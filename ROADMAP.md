@@ -59,6 +59,11 @@ Next implementation increments:
 - [x] Extend the existing one-line Ubuntu bootstrap with post-install wallet
   create/import/skip, dashboard pairing, agent-enrollment guidance, health
   verification, and a secret-free completion summary.
+- [x] Add the first-question installation mode choice (`manual` or
+  `ai_assisted`) while keeping every required node parameter mandatory and
+  explained. AI-assisted installs now persist a bounded, resumable Provider →
+  model → private Endpoint → Dashboard/Steward handoff plan; no host mutation
+  or public publication is implicit.
 - [ ] Complete fresh-VM, interrupted-rerun, existing-identity reuse, and
   uninstall/recovery acceptance on Ubuntu 22.04 and 24.04.
 
@@ -254,9 +259,13 @@ admission decision-maker.
   dedicated `RUNTIME:WRITE` scope and `runtime_control` approval policy;
   Advanced Mode views and the remaining mutation/read-model surfaces stay
   gated for a later implementation slice.
-- [ ] Add Advanced Mode Resources, GPUs, Leases, Runtime Instances, Queues,
-  Scheduler, and Reconciliation views with P50/P95 queue-wait and admission
-  metrics.
+- [x] Add the Advanced Mode Resources workspace at
+  `/operators/dashboard/resources`: live CPU/RAM/per-GPU VRAM capacity,
+  safety headroom and reconciliation evidence, active leases, runtime
+  instances, independent queue candidates, admission decisions, and current
+  queue-wait/admission metrics. Queue P50/P95 are explicitly labelled as a
+  sample of currently queued requests until durable scheduler telemetry is
+  available; no historical latency is fabricated by the UI.
 - [ ] Defer optimal bin packing, learned/predictive scheduling, distributed
   resource pooling, live model migration, cross-node checkpoint migration,
   and advanced economic optimization.
@@ -365,20 +374,100 @@ and approval state before using the normal Hypervisor/MCP control path.
   Resident Agent, Intelligence Providers, Reasoning Router, Escalation Tasks,
   trust boundaries, resource leases, Hooks, permissions, redaction, failure
   handling, Journey integration, and MVP acceptance criteria.
-- [ ] Add the Resident Agent service boundary and a CPU-resident execution
-  profile with durable status, bounded context, and restart recovery.
-- [ ] Connect RFC-0072 Event/Hook delivery to the Steward with event
-  deduplication, causation metadata, cooldowns, and automation-depth limits.
-- [ ] Implement the Reasoning Router and provider registry with deterministic
-  privacy, latency, cost, budget, context, and resource admission checks.
-- [ ] Add durable Escalation Task storage, structured plan results, plan-hash
-  verification, idempotency, approval handoff, and postcondition checking.
-- [ ] Integrate optional `GPU_BURST` Steward leases with RFC-0073 and reliable
-  CPU fallback when the Resource Broker reclaims VRAM.
-- [ ] Expose the initial Steward/reasoning MCP tools and resources, then add
-  Advanced Mode status and escalation detail views.
-- [ ] Add acceptance coverage for stale plans, redaction, provider failure,
-  GPU fallback, disconnected recovery, and automation-loop protection.
+- [x] Add the Resident Agent service boundary and a CPU-resident execution
+  profile with durable status, bounded model metadata, RFC-0072 event cursor,
+  and restart recovery. The reference profile is the official Apache-2.0
+  `Qwen/Qwen2.5-0.5B-Instruct-GGUF:Q4_K_M`; no weights are downloaded or VRAM
+  lease is taken by this slice.
+- [x] Expose the read-only Steward projection through the operator API, MCP
+  (`aidn.steward.status`), and the Journey rail, including the CPU-first
+  profile, model/license reference, event counters, and restart state.
+- [x] Connect the canonical RFC-0072 event bus to the Steward with a durable
+  subscription and event-ID deduplication.
+- [x] Add a bounded canonical context projection (fresh resources, queue, and
+  inventory read models with event cursor metadata) and a deterministic local
+  decision loop. Observe/diagnose goals can receive read-only inspection
+  recommendations; mutation, external-provider use, and automation are
+  explicitly denied at this boundary.
+- [x] Add causation metadata, cooldowns, and automation-depth limits to the
+  event-to-action path. The Resident Steward now exposes a claim-only action
+  guard with bounded per-action/per-target cooldowns, explicit lineage, a
+  default depth limit of zero, restart-safe bounded state, and the
+  `aidn.steward.action_guard` MCP tool; guarded actions still require normal
+  Hypervisor policy and approval checks.
+- [x] Implement the deterministic Reasoning Router and non-secret provider
+  registry. Operator API and read-only MCP route decisions now enforce
+  privacy, trust, external-provider policy, latency, cost, delegated budget,
+  context, and Resource Broker admission checks without invoking a model or
+  mutating node state.
+- [x] Add durable Escalation Task storage, structured typed plan results,
+  plan-hash verification, idempotency, operator approval handoff, and
+  postcondition checking. The task store is bounded/redacted, survives
+  snapshots, and never executes a provider or MCP action.
+- [x] Integrate optional `GPU_BURST` Steward leases with RFC-0073 and reliable
+  CPU fallback when the Resource Broker reclaims VRAM. Lease loss is reconciled
+  on the next status/request pass, the runtime is stopped safely, and the
+  adapter re-enters admission on CPU when GPU capacity is still unavailable.
+- [x] Expose the initial Steward/reasoning MCP tools and resources, including
+  provider inventory and read-only route decisions.
+- [x] Add Advanced Mode Steward status and Escalation Task detail views with
+  refresh, loading/empty/error states, durable task metadata, plan-hash and
+  postcondition inspection, and an explicit no-execution control boundary.
+- [x] Add acceptance coverage for stale plans, redaction, provider failure,
+  GPU fallback, disconnected recovery, and automation-loop protection across
+  the escalation, routing, resident-agent, and inference-adapter fixtures.
+- [x] Add the Resident Worker/systemd watchdog loop with bounded heartbeats,
+  durable event-bus subscription, deduplication, and restart-safe state
+  recovery that never revives an unverified process or Resource Lease.
+- [x] Add explicit Resident model lifecycle controls: atomic local/HTTPS
+  preparation, checksum verification, byte limits, readiness probes, bounded
+  inference timeout metadata, streaming intent, and stop/lease cleanup.
+- [x] Add execution adapters for resident-local callbacks and bounded HTTP
+  Local/AiDN/External reasoning providers, including HTTPS enforcement,
+  operator-controlled credential lookup, and deterministic route metadata.
+- [x] Add the bounded action executor with plan hashes, policy modes,
+  approval references, automation-depth/rate/cooldown guards, Hypervisor
+  dispatch, verification, and causation-linked result events.
+- [x] Add Agents → Steward operations controls for enablement, per-action
+  AUTO/APPROVAL/DISABLED policy, hourly action limits, model profile/path,
+  explicit download/prepare, and start/stop lifecycle actions.
+- [x] Add model-manager, adapter, worker, policy, timeout, and lifecycle
+  integration fixtures plus the operator runbook for preparing and recovering
+  the Resident Steward.
+- [ ] Add true token streaming, benchmark-driven provider selection, signed
+  webhooks/runtime wake adapters, a dedicated external SecretStore, and
+  multi-node Steward federation.
+
+## 2026-08-22 Interactive Hypervisor Installation UX
+
+The Ubuntu bootstrap now starts with an explicit operator choice between a
+manual step-by-step install and an AI-assisted setup. Both paths collect and
+validate the same required identity, network, consensus, wallet, storage, API,
+and Registry parameters. Assisted mode adds consequence-aware questions for a
+reviewed Provider, model source, private Endpoint action, and handoff target.
+
+- [x] Add `--setup-mode manual|ai_assisted` and matching non-interactive flags.
+- [x] Persist an owner-only `installation-plan.json` plus its path in
+  `bootstrap-state.json` so interrupted installs can resume without repeating
+  wallet or network transitions.
+- [x] Configure the CPU-first Resident Steward boundary for assisted mode while
+  keeping provider installation, model downloads, resource admission, and
+  publication explicitly review/policy gated.
+- [x] Add bounded model-source validation and structured completion output.
+- [x] Document the CLI flow in
+  [interactive Hypervisor installation](./docs/development/interactive-hypervisor-installation.md).
+- [x] Add the read-only Dashboard installation-plan surface and a narrow
+  plan-hash-bound “Review assisted setup” apply flow. It only queues a model
+  broker job when the selected Provider is already installed; provider install,
+  Bundle creation, Runtime activation, validation, and publication remain
+  separate policy-gated steps. Reviewed model jobs may now prepare the
+  lease-gated Resident Inference Adapter, but runtime activation remains an
+  explicit operator action and never starts autonomously.
+- [x] Add the lease-gated Resident Inference Adapter and connect a reviewed
+  model job to the Resource Broker admission/lease path. CPU-resident starts,
+  explicit operator enablement, per-request leases, GPU_BURST admission with
+  CPU fallback, collision-safe managed runtime launch, and stop/error cleanup
+  are now covered; autonomous execution remains opt-in and policy-gated.
 
 ## 2026-08-14 ECO-0007 Activation Scope Extension And Maturity Completion
 

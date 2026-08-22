@@ -96,6 +96,10 @@ class ModelInstallRequest(BaseModel):
     source_url: str
     requested_by: str
     runtime_parameter_policy: dict[str, object] = Field(default_factory=dict)
+    resident_adapter_requested: bool = False
+    resident_execution_profile: str | None = None
+    resident_resource_request: dict[str, object] = Field(default_factory=dict)
+    resident_fallback_enabled: bool = True
 
 
 class RegisterBundleFromInstallRequest(BaseModel):

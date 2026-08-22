@@ -22,6 +22,10 @@ class ModelInstallService:
         source_url: str,
         requested_by: str,
         runtime_parameter_policy: dict | None = None,
+        resident_adapter_requested: bool = False,
+        resident_execution_profile: str | None = None,
+        resident_resource_request: dict | None = None,
+        resident_fallback_enabled: bool = True,
     ) -> dict:
         if self._host.model_store is None:
             raise ValueError("Model store is not configured")
@@ -46,6 +50,21 @@ class ModelInstallService:
             "bundle_id": None,
             "last_error": None,
         }
+        # Keep the historical response shape for ordinary model installs.
+        # The resident execution projection is added only for an explicitly
+        # requested assisted runtime, so existing clients do not have to
+        # understand optional control-plane fields.
+        if resident_adapter_requested:
+            job.update(
+                {
+                    "resident_adapter_requested": True,
+                    "resident_execution_profile": resident_execution_profile,
+                    "resident_resource_request": dict(resident_resource_request or {}),
+                    "resident_fallback_enabled": bool(resident_fallback_enabled),
+                    "resident_adapter_status": "PENDING_MODEL",
+                    "resident_adapter_error": None,
+                }
+            )
         for key in ("source_kind", "provider_model_reference", "resolved_source_url"):
             if key in source:
                 job[key] = source[key]
@@ -123,6 +142,18 @@ class ModelInstallService:
             else:
                 job["status"] = "completed"
                 job["last_error"] = None
+                if job.get("resident_adapter_requested"):
+                    try:
+                        self._host.prepare_resident_inference_from_install(
+                            str(job["install_id"]),
+                            persist=False,
+                        )
+                    except Exception as error:
+                        # A successful download remains successful even when
+                        # provider preparation needs operator remediation.
+                        # Keep that distinction visible to the Dashboard.
+                        job["resident_adapter_status"] = "BLOCKED"
+                        job["resident_adapter_error"] = str(error)[:512]
                 self._host.record_event(
                     event_type="model.install.completed",
                     message="model install completed",

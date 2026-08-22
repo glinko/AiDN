@@ -71,6 +71,8 @@ Implemented tools are filtered by the active Control Session:
 - Provider and model inventory;
 - Bundle and Endpoint inventory, Endpoint draft creation and publication;
 - resources, scheduler policy, wallet summary and delegated budget;
+- Resident Steward status/context, deterministic reasoning routing, and
+  durable bounded Escalation Task hand-offs;
 - local MCP audit query;
 - Bundle activation and retirement through plan/apply.
 
@@ -124,6 +126,25 @@ Provider attachment is deliberately narrower than Plugin installation: it
 accepts only a validated configuration for an already reachable endpoint and
 does not download packages, execute host commands, manage models, or expose
 credentials. It requires `PROVIDER:WRITE` and an explicit operator approval.
+
+### Resident Steward escalation boundary
+
+The `STEWARD:ESCALATE` permission exposes only non-executing hand-off tools:
+
+- `aidn.steward.escalate` creates a durable task with an idempotency key and a
+  fresh, bounded, redacted context;
+- `aidn.steward.escalation.plan` attaches typed actions and a canonical plan
+  hash;
+- `aidn.steward.escalation.verify` checks declared postconditions;
+- `aidn.steward.escalation.cancel` closes a hand-off without executing it.
+
+`aidn.steward.escalations` and `aidn.steward.escalation.get` are read tools
+under `STEWARD:READ`. Operator approval is deliberately outside the Agent
+tool catalog and is performed through the operator API with an exact plan
+hash and approval reference. None of these tools invokes a model, reserves a
+Resource Broker lease, or executes the returned plan. The durable task store
+rejects idempotency conflicts, redacts credential-looking context keys, and
+rejects `SECRET` escalation payloads.
 
 The current implementation does not expose wallet transfers, private keys,
 arbitrary shell execution, consensus bypass, validation bypass, Provider
@@ -235,6 +256,18 @@ the plan/apply `aidn.scheduler.reconcile` control; it only requests the local
 fixed-point loop and cannot override Resource Broker admission or approval
 policy. Runtime drain/stop/pin/unpin controls remain deferred until the full
 Lease and Runtime state machine is in place.
+
+## RFC-0075 Reasoning Router Extension
+
+The first Reasoning Router slice is read-only. `STEWARD:READ` credentials can
+call `aidn.steward.reasoning.providers` and
+`aidn.steward.reasoning.route`, or read
+`aidn://steward/reasoning/providers`. The Router applies provider capability,
+context, privacy, trust, external-provider, latency, cost, delegated-budget,
+and Resource Broker checks and returns typed rejection reasons. It never calls
+a model or reserves a lease. Provider registration is an operator API action
+and stores only bounded non-secret metadata; credential material remains in
+the provider adapter/SecretStore boundary.
 
 ## Deferred Slices
 

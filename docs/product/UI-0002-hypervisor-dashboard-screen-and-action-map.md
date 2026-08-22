@@ -162,6 +162,8 @@ Provider Plugins
 Models
 Validation
 Network
+Resources
+Automation
 ```
 
 Each menu item SHALL navigate to exactly one canonical screen and visibly mark
@@ -176,7 +178,8 @@ being displayed as zero.
 
 Target actions:
 
-- CPU/RAM/GPU/storage opens Settings at Resource Probe evidence;
+- CPU/RAM/GPU/storage opens Resources in Advanced Mode, or Settings at Resource
+  Probe evidence when the full broker view is unavailable;
 - Sessions opens Agents & Sessions;
 - Jobs opens Models at the install/materialization queue;
 - network opens Network diagnostics.
@@ -685,7 +688,7 @@ several read tools may be combined in one inspector.
 | Bundle list/get/activate/retire | Bundles |
 | Endpoint list/publication/Validation | Endpoints, Validation |
 | Wallet summary | Wallet |
-| Scheduler policy and execution state | Agents & Sessions |
+| Scheduler policy and execution state | Resources, Agents & Sessions |
 | Budget status | Wallet, Agents & Sessions |
 | Audit query | Settings and object-specific activity inspectors |
 | Agent credential permissions | Settings |

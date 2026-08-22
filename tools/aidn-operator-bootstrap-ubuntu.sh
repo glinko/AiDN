@@ -44,6 +44,12 @@ Options:
   --wallet-action ACTION    create, import, or skip (interactive default: create)
   --dashboard-pairing ACTION create or skip (interactive default: create)
   --agent-action ACTION     guide or skip existing MCP enrollment (default: guide)
+  --setup-mode MODE         manual or ai_assisted (interactive default: manual)
+  --setup-provider ID       skip, ollama, llama.cpp, or vllm for AI-assisted setup
+  --setup-model ID           provider/model identifier for AI-assisted setup
+  --setup-model-source SRC  HTTPS or hf:// model source (never a secret-bearing URL)
+  --setup-endpoint ACTION   skip, draft, or start a private endpoint plan
+  --setup-handoff TARGET    continue or dashboard after the AI-assisted plan
   --non-interactive         Use defaults and supplied flags; fail if a value is unsafe
   -h, --help                Show this help
 
@@ -55,6 +61,13 @@ Interactive choices include a short consequence note. On success the installer
 prints one structured handoff with URLs, identities, public artifacts, wallet
 and pairing state, private-file locations, and next commands; secret contents
 are never printed.
+
+The first interactive question is the setup mode. Manual keeps the existing
+step-by-step flow. AI-assisted still asks and validates every required node
+parameter, then records an explicit, resumable plan for the CPU-first Resident
+Steward to review. Provider installation, model downloads, endpoint start, and
+publication never happen implicitly; they remain bounded, operator-approved
+actions that can be continued from the dashboard.
 
 The installer creates a host-local encrypted Registry Secret Manager and an
 Ed25519 operator identity. The private material stays below --data-dir with
@@ -156,6 +169,21 @@ prompt_yes_no() {
   [[ "$answer" == 'y' || "$answer" == 'yes' ]]
 }
 
+valid_model_id() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$ && "$1" != *".."* ]]
+}
+
+valid_model_source() {
+  local source="$1"
+  [[ -n "$source" && ${#source} -le 2048 ]] || return 1
+  [[ "$source" != *"@"* && "$source" != *"?"* && "$source" != *"#"* ]] || return 1
+  if [[ "$source" == hf://* ]]; then
+    [[ "$source" =~ ^hf://[^/]+/[^/]+(/[^[:space:]]+)?$ ]]
+    return
+  fi
+  [[ "$source" =~ ^https://[^[:space:]/]+(/[^[:space:]]*)?$ ]]
+}
+
 shell_quote() {
   printf '%q' "$1"
 }
@@ -186,6 +214,12 @@ non_interactive='false'
 wallet_action=''
 dashboard_pairing_action=''
 agent_action=''
+setup_mode='manual'
+setup_provider='skip'
+setup_model_id='skip'
+setup_model_source=''
+setup_endpoint_action='skip'
+setup_handoff='dashboard'
 operator_id_supplied='false'
 enable_registry_supplied='false'
 consensus_mode_supplied='false'
@@ -193,6 +227,12 @@ consensus_rpc_supplied='false'
 wallet_action_supplied='false'
 dashboard_pairing_supplied='false'
 agent_action_supplied='false'
+setup_mode_supplied='false'
+setup_provider_supplied='false'
+setup_model_id_supplied='false'
+setup_model_source_supplied='false'
+setup_endpoint_supplied='false'
+setup_handoff_supplied='false'
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -322,6 +362,42 @@ while [[ $# -gt 0 ]]; do
       agent_action_supplied='true'
       shift 2
       ;;
+    --setup-mode)
+      require_value "$1" "$@"
+      setup_mode="$2"
+      setup_mode_supplied='true'
+      shift 2
+      ;;
+    --setup-provider)
+      require_value "$1" "$@"
+      setup_provider="$2"
+      setup_provider_supplied='true'
+      shift 2
+      ;;
+    --setup-model)
+      require_value "$1" "$@"
+      setup_model_id="$2"
+      setup_model_id_supplied='true'
+      shift 2
+      ;;
+    --setup-model-source)
+      require_value "$1" "$@"
+      setup_model_source="$2"
+      setup_model_source_supplied='true'
+      shift 2
+      ;;
+    --setup-endpoint)
+      require_value "$1" "$@"
+      setup_endpoint_action="$2"
+      setup_endpoint_supplied='true'
+      shift 2
+      ;;
+    --setup-handoff)
+      require_value "$1" "$@"
+      setup_handoff="$2"
+      setup_handoff_supplied='true'
+      shift 2
+      ;;
     --non-interactive)
       non_interactive='true'
       shift
@@ -341,6 +417,18 @@ done
 if [[ "$non_interactive" != 'true' ]]; then
   [[ -r /dev/tty ]] || die 'interactive mode requires /dev/tty; use --non-interactive with explicit flags'
   exec 3</dev/tty
+fi
+
+if [[ "$setup_mode_supplied" != 'true' && "$non_interactive" != 'true' ]]; then
+  setup_mode="$(prompt_value 'Installation mode (manual/ai_assisted)' 'manual' 'Manual asks each operator question and leaves the next actions to you. AI-assisted asks the same required questions, then prepares a bounded plan for the local CPU-first Resident Steward; it does not silently install software, download a model, or publish an endpoint.')"
+fi
+case "${setup_mode,,}" in
+  manual) setup_mode='manual' ;;
+  ai|ai_assisted) setup_mode='ai_assisted' ;;
+  *) die 'setup mode must be manual or ai_assisted' ;;
+esac
+if [[ "$setup_mode" == 'manual' && ( "$setup_provider_supplied" == 'true' || "$setup_model_id_supplied" == 'true' || "$setup_model_source_supplied" == 'true' || "$setup_endpoint_supplied" == 'true' || "$setup_handoff_supplied" == 'true' ) ]]; then
+  die 'AI-assisted setup flags require --setup-mode ai_assisted'
 fi
 
 if [[ -z "$operator_id" ]]; then
@@ -467,6 +555,69 @@ if [[ -z "$advertise_host" ]]; then
 fi
 [[ -n "$registry_listen_host" && "$registry_listen_host" != *[[:space:]]* ]] || die 'Registry bind address is invalid'
 [[ -n "$advertise_host" && "$advertise_host" != *[[:space:]]* ]] || die 'advertise host is invalid'
+
+if [[ "$setup_mode" == 'ai_assisted' ]]; then
+  if [[ "$setup_provider_supplied" != 'true' ]]; then
+    setup_provider="$(prompt_value 'AI-assisted provider (skip/ollama/llama.cpp/vllm)' 'skip' 'Choose one reviewed provider for the next guided step. Selecting a provider only records intent and opens a reviewed installation path; it does not execute arbitrary plugin code or grant the agent host access.')"
+  fi
+  setup_provider="${setup_provider,,}"
+  case "$setup_provider" in
+    skip|ollama|llama.cpp|vllm) ;;
+    *) die 'setup provider must be skip, ollama, llama.cpp, or vllm' ;;
+  esac
+  if [[ "$setup_provider" == 'skip' && ( "$setup_model_id_supplied" == 'true' || "$setup_model_source_supplied" == 'true' || "$setup_endpoint_supplied" == 'true' ) ]]; then
+    die 'setup model and endpoint flags require a selected setup provider'
+  fi
+
+  if [[ "$setup_provider" != 'skip' ]]; then
+    if [[ "$setup_model_id_supplied" != 'true' && "$non_interactive" != 'true' ]]; then
+      setup_model_id="$(prompt_value 'AI-assisted model ID' 'skip' 'Give a bounded provider/model identifier, or skip to finish provider setup later in the dashboard. The model is not downloaded until the source and resource policy are reviewed.')"
+    fi
+    if [[ -z "$setup_model_id" ]]; then
+      setup_model_id='skip'
+    fi
+    if [[ "$setup_model_id" != 'skip' ]]; then
+      valid_model_id "$setup_model_id" || die 'setup model ID contains unsupported characters'
+      if [[ "$setup_model_source_supplied" != 'true' && "$non_interactive" != 'true' ]]; then
+        setup_model_source="$(prompt_value 'AI-assisted model source (HTTPS or hf://)' '' 'Use a public HTTPS artifact or Hugging Face reference without credentials, query strings, or fragments. The installer stores the reference in the plan; the model download remains an explicit reviewed operation.')"
+      fi
+      valid_model_source "$setup_model_source" || die 'setup model source must be an HTTPS URL or hf://owner/repository reference without credentials or query data'
+    else
+      setup_model_source=''
+      setup_endpoint_action='skip'
+    fi
+  else
+    setup_model_id='skip'
+    setup_model_source=''
+    setup_endpoint_action='skip'
+  fi
+
+  if [[ "$setup_model_id" != 'skip' ]]; then
+    if [[ "$setup_endpoint_supplied" != 'true' && "$non_interactive" != 'true' ]]; then
+      setup_endpoint_action="$(prompt_value 'AI-assisted endpoint step (skip/draft/start)' 'draft' 'Skip leaves the model staged only. Draft prepares a private Bundle/Endpoint review. Start asks the Steward to continue only after resource and port checks; public publication still requires validation and operator policy.')"
+    fi
+    setup_endpoint_action="${setup_endpoint_action,,}"
+    case "$setup_endpoint_action" in
+      skip|draft|start) ;;
+      *) die 'setup endpoint action must be skip, draft, or start' ;;
+    esac
+  fi
+
+  if [[ "$setup_handoff_supplied" != 'true' && "$non_interactive" != 'true' ]]; then
+    setup_handoff="$(prompt_value 'After base install (continue/dashboard)' 'dashboard' 'Continue leaves the bounded plan for the Resident Steward to review. Dashboard hands you the browser URL immediately; both paths preserve the plan and let you stop or resume without repeating the required node questions.')"
+  fi
+  setup_handoff="${setup_handoff,,}"
+  case "$setup_handoff" in
+    continue|dashboard) ;;
+    *) die 'setup handoff must be continue or dashboard' ;;
+  esac
+else
+  setup_provider='skip'
+  setup_model_id='skip'
+  setup_model_source=''
+  setup_endpoint_action='skip'
+  setup_handoff='dashboard'
+fi
 
 if [[ "$EUID" -eq 0 ]]; then
   sudo_cmd=()
@@ -663,6 +814,9 @@ python_q="$(shell_quote "$python_bin")"
 bind_host_q="$(shell_quote "$bind_host_path")"
 api_host_q="$(shell_quote "$api_host")"
 api_port_q="$(shell_quote "$api_port")"
+setup_mode_q="$(shell_quote "$setup_mode")"
+setup_plan_path="$data_dir/installation-plan.json"
+setup_plan_q="$(shell_quote "$setup_plan_path")"
 cat > "$wrapper" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -685,6 +839,8 @@ export AIDN_HYPERVISOR_API_HOST="\$api_host"
 export AIDN_HYPERVISOR_API_PORT=$api_port_q
 export AIDN_HYPERVISOR_BIND_HOST_PATH="\$bind_host_path"
 export AIDN_HYPERVISOR_RESTART_ON_BIND_CHANGE=true
+export AIDN_INSTALLATION_SETUP_MODE=$setup_mode_q
+export AIDN_INSTALLATION_PLAN_PATH=$setup_plan_q
 # The supported bootstrap uses browser pairing over the selected local or
 # trusted-LAN HTTP boundary. Provider runtimes remain loopback-only.
 export AIDN_DASHBOARD_ACCESS_ALLOW_INSECURE_LAN=true
@@ -695,6 +851,18 @@ export AIDN_RESOURCE_CAPACITY_PATH="\$data/resource-capacity.json"
 export AIDN_SECRET_MANAGER_PATH="\$data/registry-replication/secrets.json"
 export AIDN_SECRET_MANAGER_MASTER_KEY="\$(tr -d '\r\n' < "\$data/registry-replication/master-key.b64")"
 export AIDN_MCP_REMOTE_ENABLED=true
+if [[ "$AIDN_INSTALLATION_SETUP_MODE" == 'ai_assisted' ]]; then
+  # This enables the Resident Steward control-plane boundary only.  The
+  # current adapter is CPU-first and does not imply model download, tool
+  # execution, or Endpoint publication.
+  export AIDN_STEWARD_ENABLED=true
+  export AIDN_STEWARD_EXECUTION_PROFILE=CPU_RESIDENT
+  export AIDN_STEWARD_MODEL_REPO='Qwen/Qwen2.5-0.5B-Instruct-GGUF'
+  export AIDN_STEWARD_MODEL_QUANT=Q4_K_M
+  export AIDN_STEWARD_RAM_BUDGET_MB=1024
+else
+  export AIDN_STEWARD_ENABLED=false
+fi
 export AIDN_ENABLE_PROVIDER_RUNTIME_INSTALL=true
 export AIDN_PROVIDER_RUNTIME_DISPATCHER=/usr/libexec/aidn-provider-runtime/aidn-provider-runtime-ubuntu.sh
 export AIDN_PROVIDER_RUNTIME_BROKER_SOCKET=$runtime_broker_socket
@@ -940,7 +1108,9 @@ fi
   "$install_dir" "$data_dir" "$dashboard_url" "$operator_api_url" \
   "$dashboard_pairing_url" "$dashboard_pairing_expires" \
   "$wallet_action" "$wallet_bootstrap_status" "$wallet_bootstrap_id" \
-  "$wallet_bootstrap_public_key" "$dashboard_pairing_status" "$agent_onboarding_status" <<'PY'
+  "$wallet_bootstrap_public_key" "$dashboard_pairing_status" "$agent_onboarding_status" \
+  "$setup_mode" "$setup_provider" "$setup_model_id" "$setup_model_source" \
+  "$setup_endpoint_action" "$setup_handoff" "$setup_plan_path" <<'PY'
 import json
 import os
 import sys
@@ -980,7 +1150,27 @@ import sys
     wallet_bootstrap_public_key,
     dashboard_pairing_status,
     agent_onboarding_status,
+    setup_mode,
+    setup_provider,
+    setup_model_id,
+    setup_model_source,
+    setup_endpoint_action,
+    setup_handoff,
+    setup_plan_path,
 ) = sys.argv[1:]
+from aidn_hypervisor.installation_onboarding import (
+    InstallationOnboardingPlan,
+    write_installation_plan,
+)
+installation_plan = InstallationOnboardingPlan(
+    setup_mode=setup_mode,
+    provider=setup_provider,
+    model_id=setup_model_id,
+    model_source=setup_model_source or None,
+    endpoint_action=setup_endpoint_action,
+    handoff=setup_handoff,
+)
+installation_plan_payload = write_installation_plan(setup_plan_path, installation_plan)
 payload = {
     "status": "ok",
     "operator_id": operator_id,
@@ -1025,6 +1215,12 @@ payload = {
         "agent": agent_onboarding_status,
         "private_material": "not_in_state_file",
     },
+    "installation": {
+        "mode": setup_mode,
+        "ai_assisted": setup_mode == "ai_assisted",
+        "plan_path": setup_plan_path,
+        "plan": installation_plan_payload,
+    },
 }
 os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
 with open(path, "w", encoding="utf-8") as stream:
@@ -1032,6 +1228,16 @@ with open(path, "w", encoding="utf-8") as stream:
     stream.write("\n")
 os.chmod(path, 0o600)
 PY
+
+setup_plan_hash="$($python_bin - "$setup_plan_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    plan = json.load(stream)
+print(plan.get("plan_hash", "not available"))
+PY
+)"
 
 display_wallet_id="$wallet_bootstrap_id"
 [[ -n "$display_wallet_id" ]] || display_wallet_id='not available'
@@ -1075,6 +1281,21 @@ else
   printf '  CometBFT          : disabled\n' >&2
 fi
 printf '  registry          : %s\n' "$registry_state" >&2
+printf '\n[INSTALLATION MODE]\n' >&2
+printf '  mode              : %s\n' "$setup_mode" >&2
+printf '  plan              : %s\n' "$setup_plan_path" >&2
+printf '  plan hash         : %s\n' "$setup_plan_hash" >&2
+if [[ "$setup_mode" == 'ai_assisted' ]]; then
+  printf '  provider intent   : %s\n' "$setup_provider" >&2
+  printf '  model intent      : %s\n' "$setup_model_id" >&2
+  [[ -n "$setup_model_source" ]] && printf '  model source      : %s\n' "$setup_model_source" >&2
+  printf '  endpoint intent   : %s\n' "$setup_endpoint_action" >&2
+  printf '  handoff           : %s\n' "$setup_handoff" >&2
+  printf '  steward           : CPU-first, bounded, review required\n' >&2
+  printf '  note              : no provider, model, or public Endpoint is changed implicitly\n' >&2
+else
+  printf '  next step         : continue configuration from the Dashboard or CLI\n' >&2
+fi
 printf '\n[PUBLIC ARTIFACTS — SAFE TO SHARE]\n' >&2
 printf '  public peer bundle: %s\n' "$registry_root/public-peer.json" >&2
 printf '  public identity   : %s\n' "$identity_root/operator-public-identity.json" >&2

@@ -71,6 +71,23 @@ def test_release_operator_bootstrap_uses_safe_defaults_and_user_systemd() -> Non
     assert "AIDN_SECRET_MANAGER_MASTER_KEY" in script
     assert "operator-attestation-key.raw" in script
     assert "--consensus-mode MODE" in script
+    assert "--setup-mode MODE" in script
+    assert "--setup-provider ID" in script
+    assert "--setup-model ID" in script
+    assert "--setup-model-source SRC" in script
+    assert "--setup-endpoint ACTION" in script
+    assert "--setup-handoff TARGET" in script
+    assert "Installation mode (manual/ai_assisted)" in script
+    assert "AI-assisted provider (skip/ollama/llama.cpp/vllm)" in script
+    assert "AI-assisted endpoint step (skip/draft/start)" in script
+    assert "installation-plan.json" in script
+    assert "AIDN_INSTALLATION_SETUP_MODE" in script
+    assert "AIDN_INSTALLATION_PLAN_PATH" in script
+    assert "AIDN_STEWARD_ENABLED=true" in script
+    assert "no provider, model, or public Endpoint is changed implicitly" in script
+    assert script.index("Installation mode (manual/ai_assisted)") < script.index(
+        "Operator/node name"
+    )
     assert "install-cometbft-ubuntu.sh" in script
     assert "AIDN_COMETBFT_SERVICE" in script
     assert "systemctl --user enable --now \"$consensus_service_name\"" in script

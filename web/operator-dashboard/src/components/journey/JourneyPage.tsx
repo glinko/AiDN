@@ -29,16 +29,19 @@ import {
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
-import type { JourneyGraph, JourneyNode } from '@/lib/types'
+import type { InstallationPlan, JourneyGraph, JourneyNode, ResidentAgentStatus } from '@/lib/types'
 import { dashboardScreens, type DashboardScreen } from '@/stores/operator-dashboard'
 import { cn } from '@/lib/utils'
 
 type JourneyPageProps = {
   graph: JourneyGraph | undefined
+  residentAgent: ResidentAgentStatus | undefined
+  installationPlan: InstallationPlan | undefined
   isLoading: boolean
   error: Error | null
   onRefresh: () => void
   onNavigate: (screen: DashboardScreen) => void
+  onApplyInstallationPlan: (planHash: string) => Promise<void>
 }
 
 type JourneyView = 'journey' | 'list'
@@ -219,13 +222,69 @@ function JourneyList({ graph, onSelect, onNavigate }: { graph: JourneyGraph; onS
   return <div className="space-y-2" aria-label="Node journey list">{graph.nodes.map((node) => <div key={node.id} className="flex items-center gap-3 rounded-xl border border-border bg-white/75 p-3"><span className={cn('grid size-9 shrink-0 place-items-center rounded-lg border', nodeAccent[node.state])}><NodeStateIcon state={node.state} /></span><button type="button" className="min-h-11 min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={() => onSelect(node)}><span className="block truncate text-sm font-semibold text-foreground">{node.title}</span><span className="block truncate text-xs text-muted-foreground">{node.reason}</span></button><JourneyStatus state={node.state} />{routeFor(node) ? <Button variant="ghost" size="icon" className="size-11 shrink-0 text-primary" aria-label={node.action?.label ?? `Open ${node.title}`} onClick={() => { const route = routeFor(node); if (route) onNavigate(route) }}><ChevronRight className="size-4" /></Button> : null}</div>)}</div>
 }
 
-function JourneyRail({ graph, onNavigate }: { graph: JourneyGraph; onNavigate: (screen: DashboardScreen) => void }) {
+function AssistedSetupCard({ plan, onNavigate, onApply }: { plan: InstallationPlan | undefined; onNavigate: (screen: DashboardScreen) => void; onApply: (planHash: string) => Promise<void> }) {
+  const [applying, setApplying] = useState(false)
+  if (!plan?.available || !plan.ai_assisted || plan.status === 'MANUAL') return null
+  const status = plan.status.toLowerCase()
+  const modelId = plan.model.id && plan.model.id !== 'skip' ? plan.model.id : 'No model selected'
+  const provider = plan.provider && plan.provider !== 'skip' ? plan.provider : 'No provider selected'
+  const reviewable = Boolean(plan.plan_hash) && status === 'ready_for_review' && plan.integrity === 'verified'
+  const needsRegeneration = ['legacy_review_required', 'stale'].includes(status) || plan.integrity !== 'verified'
+  const destination = status === 'waiting_for_provider' ? 'providers' : status === 'model_install_queued' ? 'models' : null
+  const statusLabel = status === 'ready_for_review' || status === 'legacy_review_required'
+    ? 'Review required'
+    : status === 'model_install_queued'
+      ? 'Model queued'
+      : status === 'waiting_for_provider'
+        ? 'Provider required'
+        : plan.status.replaceAll('_', ' ')
+  return (
+    <section className="rounded-2xl border border-primary/25 bg-primary/[0.045] p-4" aria-label="Assisted installation plan">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-primary">Installer handoff</p>
+          <h2 className="mt-1 text-sm font-bold text-foreground">Assisted setup</h2>
+        </div>
+        <span className="rounded-full border border-primary/20 bg-white px-2 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-primary">{statusLabel}</span>
+      </div>
+      <p className="mt-2 text-xs leading-5 text-muted-foreground">The terminal wizard saved a reviewable plan. It never installs or publishes without this operator boundary.</p>
+      <dl className="mt-3 space-y-2 text-xs">
+        <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Provider</dt><dd className="font-mono text-foreground">{provider}</dd></div>
+        <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Model</dt><dd className="max-w-[12rem] truncate font-mono text-foreground" title={modelId}>{modelId}</dd></div>
+        <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Endpoint</dt><dd className="font-mono text-foreground">{plan.endpoint.requested_action}</dd></div>
+      </dl>
+      {plan.reason ? <p className="mt-3 rounded-xl border border-border bg-white/75 p-3 text-xs leading-5 text-muted-foreground">{plan.reason}</p> : null}
+      {needsRegeneration ? <p className="mt-3 text-xs leading-5 text-amber-800">Run the installer again to create a fresh, hash-bound plan before continuing.</p> : null}
+      {reviewable ? <Button
+        className="mt-4 min-h-11 w-full justify-between"
+        disabled={applying}
+        onClick={() => {
+          if (!plan.plan_hash) return
+          setApplying(true)
+          void onApply(plan.plan_hash).finally(() => setApplying(false))
+        }}
+      >{applying ? 'Applying…' : 'Review and continue'}<ArrowUpRight className="size-4" /></Button> : destination ? <Button variant="outline" className="mt-4 min-h-11 w-full justify-between" onClick={() => onNavigate(destination)}>{status === 'waiting_for_provider' ? 'Open providers' : 'Open models'}<ArrowUpRight className="size-4" /></Button> : null}
+    </section>
+  )
+}
+
+function JourneyRail({ graph, residentAgent, installationPlan, onNavigate, onApplyInstallationPlan }: { graph: JourneyGraph; residentAgent: ResidentAgentStatus | undefined; installationPlan: InstallationPlan | undefined; onNavigate: (screen: DashboardScreen) => void; onApplyInstallationPlan: (planHash: string) => Promise<void> }) {
   const next = graph.recommended_action
   const route = next.screen && dashboardScreens.includes(next.screen as DashboardScreen) ? next.screen as DashboardScreen : null
   const nodeId = graph.hypervisor.node_id || 'local-node'
   return (
     <aside className="space-y-3 xl:sticky xl:top-4 xl:self-start">
       <section className="rounded-2xl border border-border bg-white/80 p-4"><div className="flex items-center justify-between gap-3"><h2 className="text-sm font-bold text-foreground">Node status</h2><span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-700/25 bg-emerald-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-800"><span className="size-1.5 rounded-full bg-emerald-700" />{graph.hypervisor.state === 'ready' ? 'Online' : 'Starting'}</span></div><dl className="mt-4 space-y-2 text-xs"><div className="flex justify-between gap-3"><dt className="text-muted-foreground">Node ID</dt><dd className="max-w-[11rem] truncate font-mono text-foreground">{nodeId}</dd></div><div className="flex justify-between gap-3"><dt className="text-muted-foreground">Role</dt><dd className="font-medium capitalize text-foreground">{graph.role}</dd></div><div className="flex justify-between gap-3"><dt className="text-muted-foreground">Network</dt><dd className="font-medium text-foreground">{graph.hypervisor.network_ready ? 'Ready' : 'Evidence pending'}</dd></div></dl><Button variant="outline" size="sm" className="mt-4 min-h-11 w-full justify-between" onClick={() => onNavigate('settings')}>Node settings<ChevronRight className="size-3.5" /></Button></section>
+      <section className="rounded-2xl border border-primary/20 bg-primary/[0.045] p-4" aria-label="Resident Node Steward status">
+        <div className="flex items-start justify-between gap-3">
+          <div><p className="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-primary">RFC-0075</p><h2 className="mt-1 text-sm font-bold text-foreground">Resident Steward</h2></div>
+          <span className={cn('rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.1em]', residentAgent?.enabled ? 'border-emerald-700/25 bg-emerald-50 text-emerald-800' : 'border-slate-300 bg-slate-50 text-slate-600')}>{residentAgent?.enabled ? residentAgent.state : 'Disabled'}</span>
+        </div>
+        <p className="mt-2 text-xs leading-5 text-muted-foreground">CPU-first local control agent. It observes the event stream but cannot execute tools or reserve VRAM in this slice.</p>
+        <dl className="mt-3 space-y-2 text-xs"><div className="flex justify-between gap-3"><dt className="text-muted-foreground">Profile</dt><dd className="font-mono font-medium text-foreground">{residentAgent?.execution.profile ?? 'CPU_RESIDENT'}</dd></div><div className="flex justify-between gap-3"><dt className="text-muted-foreground">Model</dt><dd className="max-w-[11rem] truncate font-mono text-foreground">{residentAgent?.model.llama_cpp_reference ?? 'Qwen2.5-0.5B:Q4_K_M'}</dd></div><div className="flex justify-between gap-3"><dt className="text-muted-foreground">Events seen</dt><dd className="font-mono text-foreground">{residentAgent?.event_ingestion.events_seen ?? 0}</dd></div></dl>
+        <p className="mt-3 text-[11px] leading-4 text-muted-foreground">{residentAgent?.health === 'NOT_RUNNING' ? 'Inference adapter is not started; no model weights are downloaded automatically.' : residentAgent?.last_error ?? 'Status is reported by the Hypervisor.'}</p>
+      </section>
+      <AssistedSetupCard plan={installationPlan} onNavigate={onNavigate} onApply={onApplyInstallationPlan} />
       <section className="rounded-2xl border border-border bg-white/80 p-4"><div className="flex items-end justify-between gap-3"><div><h2 className="text-sm font-bold text-foreground">Progress overview</h2><p className="mt-1 text-xs text-muted-foreground">Required stages</p></div><strong className="text-3xl font-bold tracking-[-0.06em] text-primary">{graph.progress.percent}%</strong></div><div className="mt-4 h-2 overflow-hidden rounded-full bg-secondary"><div className="h-full rounded-full bg-primary transition-[width] duration-500" style={{ width: `${graph.progress.percent}%` }} /></div><div className="mt-4 grid grid-cols-2 gap-2 text-xs"><span className="text-muted-foreground"><b className="text-foreground">{graph.progress.required_ready}</b> ready</span><span className="text-right text-muted-foreground"><b className="text-foreground">{graph.progress.required_total - graph.progress.required_ready}</b> remaining</span></div></section>
       <section className="rounded-2xl border border-primary/25 bg-primary/[0.06] p-4"><p className="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-primary">Next recommended</p><h2 className="mt-2 text-base font-bold text-foreground">{next.title}</h2><p className="mt-1 text-xs leading-5 text-muted-foreground">{next.description}</p>{route ? <Button className="mt-4 min-h-11 w-full justify-between" onClick={() => onNavigate(route)}>{next.label}<ArrowUpRight className="size-4" /></Button> : null}</section>
       <section className="rounded-2xl border border-border bg-white/80 p-4"><h2 className="text-sm font-bold text-foreground">Quick actions</h2><div className="mt-2 divide-y divide-border/70">{([{ label: 'Dashboard', screen: 'overview' as DashboardScreen, icon: Boxes }, { label: 'Resource broker', screen: 'settings' as DashboardScreen, icon: Gauge }, { label: 'Event log', screen: 'hooks' as DashboardScreen, icon: BellRing }, { label: 'Documentation', screen: 'catalog' as DashboardScreen, icon: Sparkles }]).map(({ label, screen, icon: Icon }) => <button type="button" key={label} className="flex min-h-12 w-full items-center justify-between gap-3 text-left text-xs font-semibold text-foreground hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={() => onNavigate(screen)}><span className="flex items-center gap-2"><Icon className="size-4 text-primary" />{label}</span><ChevronRight className="size-3.5 text-muted-foreground" /></button>)}</div></section>
@@ -260,7 +319,7 @@ function JourneyDetailSheet({ node, open, onOpenChange, onNavigate }: { node: Jo
   return <Sheet open={open} onOpenChange={onOpenChange}><SheetContent side={mobile ? 'bottom' : 'right'} className={cn('border-border bg-popover p-0 text-popover-foreground', mobile ? 'max-h-[82dvh] rounded-t-2xl' : 'w-[min(25rem,calc(100vw-1rem))]')}><SheetHeader className="border-b border-border/80 p-5"><div className="flex items-center gap-3"><span className={cn('grid size-10 place-items-center rounded-xl border', node ? nodeAccent[node.state] : 'border-border bg-secondary text-muted-foreground')}>{node ? <NodeStateIcon state={node.state} /> : <CircleDot className="size-5" />}</span><div className="min-w-0"><SheetTitle className="truncate text-lg">{node?.title ?? 'Journey detail'}</SheetTitle><SheetDescription>{node ? stateLabel[node.state] : 'Select a stage to inspect it.'}</SheetDescription></div></div></SheetHeader>{node ? <div className="space-y-5 overflow-y-auto p-5"><p className="text-sm leading-6 text-muted-foreground">{node.description}</p><div className="rounded-xl border border-border bg-secondary/50 p-4"><p className="font-mono text-[10px] font-medium uppercase tracking-[0.13em] text-muted-foreground">Current evidence</p><p className="mt-2 text-sm leading-6 text-foreground">{node.reason}</p></div>{node.dependencies.length ? <div><p className="font-mono text-[10px] font-medium uppercase tracking-[0.13em] text-muted-foreground">Requires</p><div className="mt-2 flex flex-wrap gap-2">{node.dependencies.map((dependency) => <span key={dependency} className="rounded-full border border-border bg-white px-2.5 py-1 text-xs text-muted-foreground">{dependency.replaceAll('_', ' ')}</span>)}</div></div> : null}{node.details && Object.keys(node.details).length ? <div><p className="font-mono text-[10px] font-medium uppercase tracking-[0.13em] text-muted-foreground">Details</p><dl className="mt-2 divide-y divide-border/70 rounded-xl border border-border bg-white">{Object.entries(node.details).slice(0, 6).map(([key, value]) => <div key={key} className="flex justify-between gap-4 px-3 py-2.5 text-xs"><dt className="text-muted-foreground">{key.replaceAll('_', ' ')}</dt><dd className="max-w-[12rem] truncate font-mono text-foreground">{typeof value === 'object' ? JSON.stringify(value) : String(value ?? '—')}</dd></div>)}</dl></div> : null}{route ? <Button className="min-h-11 w-full justify-between" onClick={() => { onOpenChange(false); onNavigate(route) }}>{node.action?.label ?? 'Continue'}<ArrowUpRight className="size-4" /></Button> : null}</div> : null}</SheetContent></Sheet>
 }
 
-export function JourneyPage({ graph, isLoading, error, onRefresh, onNavigate }: JourneyPageProps) {
+export function JourneyPage({ graph, residentAgent, installationPlan, isLoading, error, onRefresh, onNavigate, onApplyInstallationPlan }: JourneyPageProps) {
   const [view, setView] = useState<JourneyView>('journey')
   const [selected, setSelected] = useState<JourneyNode>()
   const [detailOpen, setDetailOpen] = useState(false)
@@ -274,7 +333,7 @@ export function JourneyPage({ graph, isLoading, error, onRefresh, onNavigate }: 
     <div className="space-y-5">
       <header className="flex flex-col justify-between gap-4 border-b border-border/80 pb-5 sm:flex-row sm:items-end"><div><p className="font-mono text-[10px] font-medium uppercase tracking-[0.16em] text-primary">Operational map</p><h1 className="mt-2 text-3xl font-bold tracking-[-0.05em] text-foreground sm:text-4xl">Your node journey</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Follow the path from an initialized Hypervisor to a useful, discoverable AI service. Every stage is computed from live node state.</p></div><div className="flex flex-wrap items-center gap-2"><Button variant="outline" className="min-h-11" onClick={onRefresh}><RefreshCw className={cn('size-4', isLoading && 'animate-spin')} />Refresh</Button><div className="flex min-h-11 rounded-lg border border-border bg-white p-1" role="group" aria-label="Journey view"><button type="button" className={cn('min-h-9 rounded-md px-3 text-xs font-semibold', view === 'journey' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')} onClick={() => setView('journey')}>Journey</button><button type="button" className={cn('min-h-9 rounded-md px-3 text-xs font-semibold', view === 'list' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')} onClick={() => setView('list')}>List</button></div></div></header>
       <JourneyNextMobile graph={graph} onNavigate={onNavigate} />
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]"> <div className="min-w-0">{view === 'list' ? <JourneyList graph={graph} onSelect={selectNode} onNavigate={onNavigate} /> : <><div className="hidden md:block"><JourneyGraphDesktop graph={graph} onSelect={selectNode} onNavigate={onNavigate} /></div><div className="space-y-3 md:hidden">{mobileGroups.map((group) => <JourneyGroup key={group.id} label={group.label} nodes={group.nodes} byId={byId} open={Boolean(openGroups[group.id])} onToggle={() => setOpenGroups((current) => ({ ...current, [group.id]: !current[group.id] }))} onSelect={selectNode} onNavigate={onNavigate} />)}</div></>}</div><JourneyRail graph={graph} onNavigate={onNavigate} /></div>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]"> <div className="min-w-0">{view === 'list' ? <JourneyList graph={graph} onSelect={selectNode} onNavigate={onNavigate} /> : <><div className="hidden md:block"><JourneyGraphDesktop graph={graph} onSelect={selectNode} onNavigate={onNavigate} /></div><div className="space-y-3 md:hidden">{mobileGroups.map((group) => <JourneyGroup key={group.id} label={group.label} nodes={group.nodes} byId={byId} open={Boolean(openGroups[group.id])} onToggle={() => setOpenGroups((current) => ({ ...current, [group.id]: !current[group.id] }))} onSelect={selectNode} onNavigate={onNavigate} />)}</div></>}</div><JourneyRail graph={graph} residentAgent={residentAgent} installationPlan={installationPlan} onNavigate={onNavigate} onApplyInstallationPlan={onApplyInstallationPlan} /></div>
       <JourneyDetailSheet node={selected} open={detailOpen} onOpenChange={setDetailOpen} onNavigate={onNavigate} />
     </div>
   )

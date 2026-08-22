@@ -179,6 +179,14 @@ class ModelInstallSnapshot(BaseModel):
     status: str
     bundle_id: str | None = None
     last_error: str | None = None
+    resident_adapter_requested: bool = False
+    resident_execution_profile: str | None = None
+    resident_resource_request: dict = Field(default_factory=dict)
+    resident_fallback_enabled: bool = True
+    resident_adapter_status: str = "NOT_REQUESTED"
+    resident_adapter_error: str | None = None
+    resident_adapter_id: str | None = None
+    runtime_parameter_policy: dict | None = None
 
 
 class WalletUsageSnapshot(BaseModel):
@@ -378,6 +386,9 @@ class ProxySessionBindingSnapshot(ProxySessionBinding):
 
 
 class HypervisorStateSnapshot(BaseModel):
+    # RFC-0075 Resident Agent profile/status.  Kept as a plain JSON projection
+    # so older nodes can restore without importing an inference adapter.
+    resident_agent: dict = Field(default_factory=dict)
     tasks: list[TaskSnapshot] = Field(default_factory=list)
     runtimes: list[RuntimeSnapshot] = Field(default_factory=list)
     bundle_states: list[BundleStateSnapshot] = Field(default_factory=list)
@@ -390,6 +401,9 @@ class HypervisorStateSnapshot(BaseModel):
     lifecycle_operations: list[dict] = Field(default_factory=list)
     lifecycle_tombstones: list[dict] = Field(default_factory=list)
     lifecycle_states: list[dict] = Field(default_factory=list)
+    # RFC-0075 durable bounded hand-offs to larger reasoning providers.  The
+    # task projection never contains prompts, transcripts, or credentials.
+    escalation_tasks: list[dict] = Field(default_factory=list)
     model_installs: list[ModelInstallSnapshot] = Field(default_factory=list)
     plugin_releases: list[PluginRelease] = Field(default_factory=list)
     installed_plugins: list[InstalledPlugin] = Field(default_factory=list)

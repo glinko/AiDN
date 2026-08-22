@@ -41,6 +41,7 @@ from aidn_hypervisor.endpoint_publications.service import (
     EndpointPublicationReadinessError,
 )
 from aidn_hypervisor.endpoint_publications.signing import sign_consensus_bytes, verify_publication_signature
+from aidn_hypervisor.escalation_service import EscalationTaskError
 from aidn_hypervisor.operator_cometbft import build_operator_cometbft_payload
 from aidn_hypervisor.operator_cometbft_install import build_operator_cometbft_install_payload
 from aidn_hypervisor.operator_readiness import build_operator_readiness_payload
@@ -180,6 +181,222 @@ class HookDispatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     now: str | None = None
+
+
+class ResidentAgentDecisionRequest(BaseModel):
+    """Bounded, read-only request for the local Resident Steward."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    goal: str = Field(min_length=1, max_length=512)
+    event_id: str | None = Field(default=None, min_length=1, max_length=256)
+    event_type: str | None = Field(default=None, min_length=1, max_length=128)
+    correlation_id: str | None = Field(default=None, min_length=1, max_length=256)
+    causation_id: str | None = Field(default=None, min_length=1, max_length=256)
+    automation_depth: int = Field(default=0, ge=0, le=16)
+
+
+class ResidentAgentActionGuardRequest(BaseModel):
+    """Claim-only event-to-action guard for the local Resident Steward."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: str = Field(min_length=1, max_length=128)
+    target_id: str | None = Field(default=None, min_length=1, max_length=256)
+    event_id: str | None = Field(default=None, min_length=1, max_length=256)
+    event_type: str | None = Field(default=None, min_length=1, max_length=128)
+    correlation_id: str | None = Field(default=None, min_length=1, max_length=256)
+    causation_id: str | None = Field(default=None, min_length=1, max_length=256)
+    automation_depth: int = Field(default=0, ge=0, le=16)
+    cooldown_seconds: int | None = Field(default=None, ge=0, le=3600)
+
+
+class ResidentAgentActionExecuteRequest(BaseModel):
+    """Plan or apply one bounded Resident Steward action."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: str = Field(min_length=1, max_length=128)
+    target_id: str = Field(min_length=1, max_length=256)
+    mode: Literal["plan", "apply"] = "plan"
+    plan_hash: str | None = Field(default=None, min_length=1, max_length=256)
+    approval_reference: str | None = Field(default=None, min_length=1, max_length=256)
+    event_id: str | None = Field(default=None, min_length=1, max_length=256)
+    event_type: str | None = Field(default=None, min_length=1, max_length=128)
+    correlation_id: str | None = Field(default=None, min_length=1, max_length=256)
+    causation_id: str | None = Field(default=None, min_length=1, max_length=256)
+    automation_depth: int = Field(default=0, ge=0, le=16)
+    cooldown_seconds: int | None = Field(default=None, ge=0, le=3600)
+
+
+class ResidentAgentActionPolicyRequest(BaseModel):
+    """Operator-controlled allow-list for Steward automation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    auto_actions: list[str] | None = Field(default=None, max_length=32)
+    approval_actions: list[str] | None = Field(default=None, max_length=32)
+    max_actions_per_hour: int | None = Field(default=None, ge=1, le=10_000)
+
+
+class ReasoningProviderRegisterRequest(BaseModel):
+    """Non-secret capability metadata for one Intelligence Provider."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider_id: str = Field(min_length=1, max_length=256)
+    kind: Literal["LOCAL_RESIDENT", "LOCAL_MODEL", "AIDN_ENDPOINT", "EXTERNAL_API"]
+    model_id: str | None = Field(default=None, max_length=256)
+    capabilities: list[str] = Field(default_factory=lambda: ["general"], min_length=1, max_length=32)
+    supported_complexities: list[Literal["SIMPLE", "MEDIUM", "COMPLEX", "RESEARCH"]] = Field(
+        default_factory=lambda: ["SIMPLE", "MEDIUM", "COMPLEX", "RESEARCH"], min_length=1, max_length=4
+    )
+    context_limit: int = Field(default=4096, ge=128, le=10_000_000)
+    allowed_data_classes: list[Literal["PUBLIC", "OPERATOR", "SENSITIVE", "FINANCIAL", "SECURITY", "SECRET"]] = Field(
+        default_factory=lambda: ["PUBLIC", "OPERATOR"], min_length=1, max_length=6
+    )
+    latency_ms: int = Field(default=0, ge=0, le=10_000_000_000)
+    cost_q_atoms: int = Field(default=0, ge=0, le=10_000_000_000)
+    required_cpu: float = Field(default=0.0, ge=0, le=1_000_000)
+    required_ram_mb: int = Field(default=0, ge=0, le=10_000_000_000)
+    required_vram_mb: int = Field(default=0, ge=0, le=10_000_000_000)
+    available: bool = True
+    enabled: bool = True
+    trusted: bool = True
+    priority: int = Field(default=0, ge=-1_000_000, le=1_000_000)
+    max_concurrency: int = Field(default=1, ge=1, le=10_000_000)
+    metadata: dict[str, str | int | float | bool] = Field(default_factory=dict, max_length=16)
+
+
+class ReasoningRouteRequestPayload(BaseModel):
+    """Read-only constraints for deterministic provider routing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    capability: str = Field(default="general", min_length=1, max_length=128)
+    complexity: Literal["SIMPLE", "MEDIUM", "COMPLEX", "RESEARCH"] = "SIMPLE"
+    data_class: Literal["PUBLIC", "OPERATOR", "SENSITIVE", "FINANCIAL", "SECURITY", "SECRET"] = "OPERATOR"
+    minimum_context: int = Field(default=4096, ge=0, le=10_000_000)
+    latency_budget_ms: int | None = Field(default=None, ge=0, le=10_000_000_000)
+    max_cost_q_atoms: int | None = Field(default=None, ge=0, le=10_000_000_000)
+    budget_remaining_q_atoms: int | None = Field(default=None, ge=0, le=10_000_000_000)
+    required_cpu: float = Field(default=0.0, ge=0, le=1_000_000)
+    required_ram_mb: int = Field(default=0, ge=0, le=10_000_000_000)
+    required_vram_mb: int = Field(default=0, ge=0, le=10_000_000_000)
+    local_only: bool = False
+    allow_external: bool = False
+    require_trusted: bool = True
+
+
+class ReasoningInvokeRequest(BaseModel):
+    """Route and execute one bounded reasoning request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str = Field(min_length=1, max_length=131_072)
+    route: ReasoningRouteRequestPayload = Field(default_factory=ReasoningRouteRequestPayload)
+    timeout_seconds: float = Field(default=90.0, ge=0.1, le=3600)
+    stream: bool = False
+    parameters: dict[str, object] = Field(default_factory=dict, max_length=32)
+
+
+class EscalationTaskCreateRequest(BaseModel):
+    """Create a bounded RFC-0075 hand-off; no provider is invoked here."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    goal: str = Field(min_length=1, max_length=512)
+    task_class: str = Field(default="REASONING_ESCALATION", min_length=1, max_length=64)
+    data_class: Literal["PUBLIC", "OPERATOR", "SENSITIVE", "FINANCIAL", "SECURITY"] = "OPERATOR"
+    idempotency_key: str = Field(min_length=1, max_length=256)
+    route: ReasoningRouteRequestPayload | None = None
+    context: dict[str, object] | None = Field(default=None, max_length=48)
+    postconditions: list[dict[str, object]] = Field(default_factory=list, max_length=32)
+    correlation_id: str | None = Field(default=None, min_length=1, max_length=256)
+    causation_id: str | None = Field(default=None, min_length=1, max_length=256)
+    expires_in_seconds: int | None = Field(default=86_400, ge=60, le=604_800)
+
+
+class EscalationTaskPlanRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan: dict[str, object] = Field(min_length=1, max_length=16)
+    idempotency_key: str = Field(min_length=1, max_length=256)
+    requires_operator_approval: bool | None = None
+
+
+class EscalationTaskApprovalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    plan_hash: str = Field(min_length=1, max_length=256)
+    approval_reference: str = Field(min_length=1, max_length=256)
+    approver_id: str = Field(min_length=1, max_length=256)
+
+
+class EscalationTaskVerifyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    observed: dict[str, object] = Field(max_length=48)
+
+
+class EscalationTaskCancelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(default="cancelled", max_length=512)
+
+
+class ResidentInferencePrepareRequest(BaseModel):
+    """Operator-reviewed local model preparation for the Resident Steward."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model_path: str = Field(min_length=1, max_length=2048)
+    provider_type: str = Field(default="llama.cpp", min_length=1, max_length=128)
+    plugin_id: str | None = Field(default=None, min_length=1, max_length=128)
+    profile: Literal["CPU_RESIDENT", "IGPU_RESIDENT", "GPU_RESIDENT", "GPU_BURST"] = "CPU_RESIDENT"
+    cpu: float = Field(default=0.25, ge=0, le=256)
+    ram_mb: int = Field(default=1024, ge=128, le=1_048_576)
+    vram_mb: int = Field(default=0, ge=0, le=1_048_576)
+    request_cpu: float = Field(default=0.05, ge=0, le=256)
+    request_ram_mb: int = Field(default=64, ge=0, le=1_048_576)
+    request_vram_mb: int = Field(default=0, ge=0, le=1_048_576)
+    lease_seconds: int | None = Field(default=None, ge=1, le=86_400)
+    fallback_enabled: bool = True
+    runtime_parameter_policy: dict[str, object] = Field(default_factory=dict, max_length=32)
+    source_url: str | None = Field(default=None, max_length=4096)
+    expected_sha256: str | None = Field(default=None, max_length=80)
+    download: bool = False
+    max_download_bytes: int | None = Field(default=None, ge=1, le=68_719_476_736)
+    readiness_timeout_seconds: float = Field(default=60.0, ge=0, le=600)
+
+
+class ResidentModelPrepareRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_url: str = Field(min_length=1, max_length=4096)
+    target_path: str = Field(min_length=1, max_length=4096)
+    expected_sha256: str | None = Field(default=None, max_length=80)
+    max_download_bytes: int | None = Field(default=None, ge=1, le=68_719_476_736)
+
+
+class ResidentModelVerifyRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model_path: str = Field(min_length=1, max_length=4096)
+    expected_sha256: str | None = Field(default=None, max_length=80)
+
+
+class ResidentInferenceInvokeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str = Field(min_length=1, max_length=131_072)
+    parameters: dict[str, object] = Field(default_factory=dict, max_length=32)
+
+
+class ResidentAgentEnabledRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool
 
 
 class LifecycleRemovalPlanRequest(BaseModel):
@@ -1814,6 +2031,12 @@ def build_api_router(
     async def operator_dashboard_fleet() -> dict:
         return service.operator_dashboard_fleet()
 
+    @router.get("/operators/dashboard/resources")
+    async def operator_dashboard_resources() -> dict:
+        """Return live Resource Broker, Scheduler, lease, and runtime state."""
+
+        return service.operator_dashboard_resources()
+
     @router.get("/operators/services")
     async def operator_services() -> dict:
         return service.canonical_overlay_inventory()
@@ -1832,6 +2055,317 @@ def build_api_router(
         """Return live runtime readiness and Provider Broker job progress."""
 
         return build_runtime_operations_payload(service=service)
+
+    @router.get("/operators/dashboard/steward")
+    async def operator_dashboard_steward() -> dict:
+        """Return the bounded RFC-0075 Resident Node Steward projection."""
+
+        return service.resident_agent_status()
+
+    @router.get("/operators/dashboard/steward/action-policy")
+    async def operator_dashboard_steward_action_policy() -> dict:
+        """Return the reviewed Steward action catalog and local policy."""
+
+        return service.resident_agent_action_policy()
+
+    @router.post("/operators/dashboard/steward/action-policy")
+    async def update_operator_steward_action_policy(
+        payload: ResidentAgentActionPolicyRequest,
+    ) -> dict:
+        """Update Steward automation without changing Bundle/Endpoint state."""
+
+        try:
+            return service.configure_resident_agent_action_policy(
+                auto_actions=payload.auto_actions,
+                approval_actions=payload.approval_actions,
+                max_actions_per_hour=payload.max_actions_per_hour,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @router.post("/operators/dashboard/steward/action-execute")
+    async def execute_operator_steward_action(
+        payload: ResidentAgentActionExecuteRequest,
+    ) -> dict:
+        """Plan/apply one allow-listed action with explicit approval when needed."""
+
+        try:
+            return service.resident_agent_execute_action(
+                payload.action,
+                target_id=payload.target_id,
+                mode=payload.mode,
+                plan_hash=payload.plan_hash,
+                approval_reference=payload.approval_reference,
+                event_id=payload.event_id,
+                event_type=payload.event_type,
+                correlation_id=payload.correlation_id,
+                causation_id=payload.causation_id,
+                automation_depth=payload.automation_depth,
+                cooldown_seconds=payload.cooldown_seconds,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @router.get("/operators/dashboard/steward/inference")
+    async def operator_dashboard_steward_inference() -> dict:
+        """Return lease/runtime state for the optional local Steward model."""
+
+        return service.resident_inference_status()
+
+    @router.post("/operators/dashboard/steward/enabled")
+    async def set_operator_steward_enabled(
+        payload: ResidentAgentEnabledRequest,
+    ) -> dict:
+        try:
+            return service.set_resident_agent_enabled(payload.enabled)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/dashboard/steward/inference/prepare")
+    async def prepare_operator_steward_inference(
+        payload: ResidentInferencePrepareRequest,
+    ) -> dict:
+        try:
+            return service.prepare_resident_inference(
+                **payload.model_dump(mode="json")
+            )
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=f"Unknown provider plugin: {error.args[0]}") from error
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/dashboard/steward/inference/start")
+    async def start_operator_steward_inference() -> dict:
+        try:
+            return service.start_resident_inference()
+        except ValueError as error:
+            code = getattr(error, "code", "INFERENCE_ADAPTER_ERROR")
+            status_code = 409 if code in {"INFERENCE_RESOURCE_WAIT", "INFERENCE_RUNTIME_FAILED"} else 422
+            raise HTTPException(status_code=status_code, detail={"code": code, "message": str(error), "details": getattr(error, "details", {})}) from error
+
+    @router.post("/operators/dashboard/steward/inference/stop")
+    async def stop_operator_steward_inference() -> dict:
+        try:
+            return service.stop_resident_inference()
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/dashboard/steward/inference/model/prepare")
+    async def prepare_operator_steward_model(
+        payload: ResidentModelPrepareRequest,
+    ) -> dict:
+        try:
+            return service.prepare_resident_model(**payload.model_dump(mode="json"))
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail={"code": getattr(error, "code", "INFERENCE_MODEL_PREPARATION_FAILED"), "message": str(error), "details": getattr(error, "details", {})}) from error
+
+    @router.post("/operators/dashboard/steward/inference/model/verify")
+    async def verify_operator_steward_model(
+        payload: ResidentModelVerifyRequest,
+    ) -> dict:
+        try:
+            return service.verify_resident_model(
+                payload.model_path,
+                expected_sha256=payload.expected_sha256,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail={"code": getattr(error, "code", "INFERENCE_MODEL_VERIFICATION_FAILED"), "message": str(error), "details": getattr(error, "details", {})}) from error
+
+    @router.post("/operators/dashboard/steward/inference/invoke")
+    async def invoke_operator_steward_inference(
+        payload: ResidentInferenceInvokeRequest,
+    ) -> dict:
+        try:
+            return service.invoke_resident_inference(
+                payload.prompt,
+                **payload.parameters,
+            )
+        except ValueError as error:
+            code = getattr(error, "code", "INFERENCE_ADAPTER_ERROR")
+            status_code = 409 if code == "INFERENCE_RESOURCE_WAIT" else 422
+            raise HTTPException(status_code=status_code, detail={"code": code, "message": str(error), "details": getattr(error, "details", {})}) from error
+
+    @router.get("/operators/dashboard/installation-plan")
+    async def operator_dashboard_installation_plan() -> dict:
+        """Return the installer handoff without exposing secret material."""
+
+        return service.installation_plan()
+
+    @router.get("/operators/dashboard/steward/context")
+    async def operator_dashboard_steward_context() -> dict:
+        """Return the fresh, bounded context available to local reasoning."""
+
+        return service.resident_agent_context()
+
+    @router.post("/operators/dashboard/steward/decide")
+    async def operator_dashboard_steward_decide(
+        payload: ResidentAgentDecisionRequest,
+    ) -> dict:
+        """Classify a goal and recommend read-only local inspection or escalation."""
+
+        try:
+            return service.resident_agent_decide(
+                payload.goal,
+                event_id=payload.event_id,
+                event_type=payload.event_type,
+                correlation_id=payload.correlation_id,
+                causation_id=payload.causation_id,
+                automation_depth=payload.automation_depth,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @router.post("/operators/dashboard/steward/action-guard")
+    async def operator_dashboard_steward_action_guard(
+        payload: ResidentAgentActionGuardRequest,
+    ) -> dict:
+        """Claim an action slot; execution still passes normal policy checks."""
+
+        try:
+            return service.resident_agent_guard_action(
+                payload.action,
+                target_id=payload.target_id,
+                event_id=payload.event_id,
+                event_type=payload.event_type,
+                correlation_id=payload.correlation_id,
+                causation_id=payload.causation_id,
+                automation_depth=payload.automation_depth,
+                cooldown_seconds=payload.cooldown_seconds,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @router.get("/operators/dashboard/steward/reasoning/providers")
+    async def operator_dashboard_steward_reasoning_providers() -> dict:
+        """Return non-secret Intelligence Provider metadata for routing inspection."""
+
+        return service.reasoning_provider_list()
+
+    @router.post("/operators/dashboard/steward/reasoning/providers")
+    async def register_operator_steward_reasoning_provider(
+        payload: ReasoningProviderRegisterRequest,
+    ) -> dict:
+        """Register provider metadata; this does not install or invoke a provider."""
+
+        try:
+            return service.reasoning_provider_register(payload.model_dump(mode="json"))
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @router.post("/operators/dashboard/steward/reasoning/route")
+    async def route_operator_steward_reasoning(
+        payload: ReasoningRouteRequestPayload,
+    ) -> dict:
+        """Choose an eligible provider without executing a model request."""
+
+        try:
+            return service.reasoning_route(payload.model_dump(mode="json"))
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @router.post("/operators/dashboard/steward/reasoning/invoke")
+    async def invoke_operator_steward_reasoning(
+        payload: ReasoningInvokeRequest,
+    ) -> dict:
+        try:
+            return service.reasoning_invoke(
+                payload.prompt,
+                route=payload.route.model_dump(mode="json"),
+                timeout_seconds=payload.timeout_seconds,
+                stream=payload.stream,
+                parameters=payload.parameters,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail={"code": getattr(error, "code", "REASONING_PROVIDER_FAILED"), "message": str(error), "details": getattr(error, "details", {})}) from error
+
+    @router.get("/operators/dashboard/steward/escalations")
+    async def list_operator_steward_escalations(
+        state: str | None = None,
+        limit: int = 100,
+    ) -> dict:
+        """List durable bounded reasoning hand-offs."""
+
+        try:
+            return {"items": service.escalation_task_list(state=state, limit=limit)}
+        except EscalationTaskError as error:
+            raise HTTPException(status_code=422, detail={"code": error.code, "message": str(error), "details": error.details}) from error
+
+    @router.post("/operators/dashboard/steward/escalations")
+    async def create_operator_steward_escalation(
+        payload: EscalationTaskCreateRequest,
+    ) -> dict:
+        """Persist a bounded escalation task; execution remains a separate policy boundary."""
+
+        try:
+            values = payload.model_dump(mode="json")
+            if values.get("route") is not None:
+                values["route"] = dict(values["route"])
+            return service.escalation_task_create(
+                values,
+                owner_id=str(getattr(service, "operator_id", "dashboard-operator")),
+            )
+        except (EscalationTaskError, ValueError) as error:
+            code = getattr(error, "code", "ESCALATION_INVALID_ARGUMENT")
+            details = getattr(error, "details", {})
+            raise HTTPException(status_code=422, detail={"code": code, "message": str(error), "details": details}) from error
+
+    @router.get("/operators/dashboard/steward/escalations/{task_id}")
+    async def get_operator_steward_escalation(task_id: str) -> dict:
+        try:
+            return service.escalation_task_get(task_id)
+        except EscalationTaskError as error:
+            code = 404 if error.code == "ESCALATION_NOT_FOUND" else 422
+            raise HTTPException(status_code=code, detail={"code": error.code, "message": str(error), "details": error.details}) from error
+
+    @router.post("/operators/dashboard/steward/escalations/{task_id}/plan")
+    async def set_operator_steward_escalation_plan(
+        task_id: str,
+        payload: EscalationTaskPlanRequest,
+    ) -> dict:
+        try:
+            return service.escalation_task_set_plan(
+                task_id,
+                payload.plan,
+                idempotency_key=payload.idempotency_key,
+                requires_operator_approval=payload.requires_operator_approval,
+            )
+        except EscalationTaskError as error:
+            raise HTTPException(status_code=422, detail={"code": error.code, "message": str(error), "details": error.details}) from error
+
+    @router.post("/operators/dashboard/steward/escalations/{task_id}/approve")
+    async def approve_operator_steward_escalation(
+        task_id: str,
+        payload: EscalationTaskApprovalRequest,
+    ) -> dict:
+        try:
+            return service.escalation_task_approve(
+                task_id,
+                plan_hash=payload.plan_hash,
+                approval_reference=payload.approval_reference,
+                approver_id=payload.approver_id,
+            )
+        except EscalationTaskError as error:
+            raise HTTPException(status_code=422, detail={"code": error.code, "message": str(error), "details": error.details}) from error
+
+    @router.post("/operators/dashboard/steward/escalations/{task_id}/verify")
+    async def verify_operator_steward_escalation(
+        task_id: str,
+        payload: EscalationTaskVerifyRequest,
+    ) -> dict:
+        try:
+            return service.escalation_task_verify(task_id, observed=payload.observed)
+        except EscalationTaskError as error:
+            raise HTTPException(status_code=422, detail={"code": error.code, "message": str(error), "details": error.details}) from error
+
+    @router.post("/operators/dashboard/steward/escalations/{task_id}/cancel")
+    async def cancel_operator_steward_escalation(
+        task_id: str,
+        payload: EscalationTaskCancelRequest,
+    ) -> dict:
+        try:
+            return service.escalation_task_cancel(task_id, reason=payload.reason)
+        except EscalationTaskError as error:
+            raise HTTPException(status_code=422, detail={"code": error.code, "message": str(error), "details": error.details}) from error
 
     @router.get("/operators/provider-plugins")
     async def list_provider_plugins() -> dict:

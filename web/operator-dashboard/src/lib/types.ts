@@ -272,6 +272,150 @@ const runtimeOperationsSchema = z.object({
   installation_jobs: z.array(unknownRecord).catch([]),
 }).passthrough()
 
+const resourceBrokerDashboardSchema = z.object({
+  available: z.boolean().catch(false),
+  generated_at: stringValue,
+  reason: z.string().nullable().optional(),
+  hardware: unknownRecord.default({}),
+  summary: unknownRecord.default({}),
+  scheduler: unknownRecord.default({}),
+  leases: z.array(unknownRecord).catch([]),
+  runtimes: z.array(unknownRecord).catch([]),
+  runtime_summary: unknownRecord.default({}),
+  metrics: unknownRecord.default({}),
+}).passthrough()
+
+const residentAgentStatusSchema = z.object({
+  agent_id: stringValue,
+  node_id: stringValue,
+  implementation: stringValue,
+  state: stringValue,
+  health: stringValue,
+  enabled: z.boolean().catch(false),
+  execution: z.object({
+    profile: stringValue,
+    state: stringValue,
+    inference_adapter: stringValue,
+    fallback_profile: stringValue,
+    vram_mb: numberValue,
+    ram_budget_mb: numberValue,
+    resource_lease: stringValue,
+  }).passthrough().default({ profile: '', state: '', inference_adapter: '', fallback_profile: '', vram_mb: 0, ram_budget_mb: 0, resource_lease: '' }),
+  model: z.object({
+    repo: stringValue,
+    quantization: stringValue,
+    license: stringValue,
+    model_card_url: z.string().optional(),
+    license_url: z.string().optional(),
+    path: z.string().nullable().optional(),
+    path_exists: z.boolean().catch(false),
+    llama_cpp_reference: stringValue,
+  }).passthrough().default({ repo: '', quantization: '', license: '', path_exists: false, llama_cpp_reference: '' }),
+  event_ingestion: z.object({
+    subscribed: z.boolean().catch(false),
+    subscription_id: z.string().nullable().optional(),
+    last_event_id: z.string().nullable().optional(),
+    last_event_sequence: numberValue,
+    events_seen: numberValue,
+    attention_events: numberValue,
+    event_types: z.record(z.string(), numberValue).default({}),
+  }).passthrough().default({ subscribed: false, last_event_sequence: 0, events_seen: 0, attention_events: 0, event_types: {} }),
+  restart_recovery: z.object({
+    last_restart_at: z.string().nullable().optional(),
+    restart_count: numberValue,
+    last_heartbeat_at: z.string().nullable().optional(),
+  }).passthrough().default({ restart_count: 0 }),
+  last_action: z.string().nullable().optional(),
+  last_error: z.string().nullable().optional(),
+  authority: z.record(z.string(), z.unknown()).default({}),
+}).passthrough()
+
+const stewardActionSchema = z.object({
+  action: stringValue,
+  label: stringValue,
+  detail: stringValue,
+  target_type: stringValue,
+  class: stringValue,
+  guard_only: z.boolean().catch(false),
+  policy: stringValue,
+}).passthrough()
+
+const stewardActionPolicySchema = z.object({
+  version: numberValue,
+  auto_actions: z.array(z.string()).catch([]),
+  approval_actions: z.array(z.string()).catch([]),
+  max_actions_per_hour: numberValue,
+  catalog: z.array(stewardActionSchema).catch([]),
+}).passthrough()
+
+const residentInferenceSchema = z.object({
+  state: stringValue,
+  profile: stringValue,
+  model_path: z.string().nullable().optional(),
+  provider_type: stringValue,
+  plugin_id: z.string().nullable().optional(),
+  lease_id: z.string().nullable().optional(),
+  last_error: z.string().nullable().optional(),
+  readiness: unknownRecord.default({}),
+  resource_lease: unknownRecord.default({}),
+  execution: unknownRecord.default({}),
+  artifact: unknownRecord.default({}),
+}).passthrough()
+
+const escalationTaskSchema = z.object({
+  task_id: stringValue,
+  idempotency_key: stringValue,
+  goal: stringValue,
+  task_class: stringValue,
+  data_class: stringValue,
+  state: stringValue,
+  created_at: stringValue,
+  updated_at: stringValue,
+  expires_at: z.string().nullable().optional(),
+  selected_provider_id: z.string().nullable().optional(),
+  route_decision: unknownRecord.default({}),
+  context: unknownRecord.default({}),
+  postconditions: z.array(unknownRecord).catch([]),
+  plan: unknownRecord.nullable().optional(),
+  plan_id: z.string().nullable().optional(),
+  plan_hash: z.string().nullable().optional(),
+  approval: unknownRecord.default({}),
+  verification: unknownRecord.nullable().optional(),
+  last_error: unknownRecord.nullable().optional(),
+  correlation_id: z.string().nullable().optional(),
+  causation_id: z.string().nullable().optional(),
+}).passthrough()
+
+const escalationTasksSchema = z.object({
+  items: z.array(escalationTaskSchema).catch([]),
+}).passthrough()
+
+const installationPlanSchema = z.object({
+  available: z.boolean().catch(false),
+  status: stringValue,
+  reason: z.string().nullable().optional(),
+  plan_path: z.string().nullable().optional(),
+  plan_hash: z.string().nullable().optional(),
+  stored_plan_hash: z.string().nullable().optional(),
+  integrity: stringValue,
+  schema_version: numberValue,
+  created_at: z.string().nullable().optional(),
+  updated_at: z.string().nullable().optional(),
+  applied_at: z.string().nullable().optional(),
+  mode: stringValue,
+  ai_assisted: z.boolean().catch(false),
+  provider: stringValue,
+  model: z.object({
+    id: stringValue,
+    source: z.string().nullable().optional(),
+  }).passthrough().default({ id: '' }),
+  endpoint: z.object({ requested_action: stringValue }).passthrough().default({ requested_action: 'skip' }),
+  handoff: stringValue,
+  next_action: stringValue,
+  authority: unknownRecord.default({}),
+  application: unknownRecord.nullable().optional(),
+}).passthrough()
+
 const journalEventSchema = z.object({
   timestamp: stringValue,
   event_type: stringValue,
@@ -351,6 +495,14 @@ export type RemoteEndpointsDashboard = z.infer<typeof remoteEndpointsDashboardSc
 export type CometBftDashboard = z.infer<typeof cometBftDashboardSchema>
 export type CometBftInstall = z.infer<typeof cometBftInstallSchema>
 export type RuntimeOperations = z.infer<typeof runtimeOperationsSchema>
+export type ResourceBrokerDashboard = z.infer<typeof resourceBrokerDashboardSchema>
+export type ResidentAgentStatus = z.infer<typeof residentAgentStatusSchema>
+export type StewardAction = z.infer<typeof stewardActionSchema>
+export type StewardActionPolicy = z.infer<typeof stewardActionPolicySchema>
+export type ResidentInference = z.infer<typeof residentInferenceSchema>
+export type EscalationTask = z.infer<typeof escalationTaskSchema>
+export type EscalationTasks = z.infer<typeof escalationTasksSchema>
+export type InstallationPlan = z.infer<typeof installationPlanSchema>
 export type JournalEvent = z.infer<typeof journalEventSchema>
 export type JourneyGraph = z.infer<typeof journeySchema>
 export type JourneyNode = z.infer<typeof journeyNodeSchema>
@@ -368,6 +520,12 @@ export const dashboardSchemas = {
   cometbft: cometBftDashboardSchema,
   cometbftInstall: cometBftInstallSchema,
   runtimeOperations: runtimeOperationsSchema,
+  resourceBroker: resourceBrokerDashboardSchema,
+  residentAgent: residentAgentStatusSchema,
+  stewardActionPolicy: stewardActionPolicySchema,
+  residentInference: residentInferenceSchema,
+  escalations: escalationTasksSchema,
+  installationPlan: installationPlanSchema,
   events: z.array(journalEventSchema),
   journey: journeySchema,
 }

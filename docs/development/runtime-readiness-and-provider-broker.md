@@ -205,6 +205,28 @@ Agents with `RESOURCES:READ` can use `aidn.resources.forecast` and
 Agents explicitly granted `SCHEDULER:WRITE` may request the same
 policy-respecting pass with the plan/apply tool `aidn.scheduler.reconcile`.
 
+### Advanced Mode Resource Broker workspace
+
+The operator dashboard exposes the same read-side facts at:
+
+```text
+GET /operators/dashboard/resources
+```
+
+The response combines the hardware monitor, Resource Broker summary and
+leases, live Runtime Instance projection, Scheduler candidates, reconciliation
+state, and bounded admission metrics. The workspace is intentionally
+read-only: starting, draining, stopping, pinning, or releasing a Runtime
+continues to use the lifecycle/MCP authority and cannot be triggered by a
+status read.
+
+The `metrics.queue_wait` object is currently a live sample of requests that
+are still queued (`source=current_queued_tasks`, `historical=false`). Its
+`p50_seconds` and `p95_seconds` fields are therefore useful for diagnosing a
+stalled queue, but are not a historical service-level percentile. A durable
+scheduler telemetry store is required before the dashboard may label those
+values as historical P50/P95.
+
 ## Provider installation jobs
 
 The root-owned broker remains the only host mutation boundary. The inventory

@@ -14,6 +14,7 @@ export type DashboardScreen =
   | 'validation'
   | 'network'
   | 'cometbft'
+  | 'resources'
   | 'hooks'
 
 export const dashboardScreens: readonly DashboardScreen[] = [
@@ -30,6 +31,7 @@ export const dashboardScreens: readonly DashboardScreen[] = [
   'validation',
   'network',
   'cometbft',
+  'resources',
   'hooks',
 ]
 

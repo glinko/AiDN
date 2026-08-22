@@ -236,6 +236,24 @@ The Router MUST record why a route was chosen, which providers were rejected,
 and whether a fallback was used. It MUST fail closed when no provider meets the
 privacy, budget, context, or resource requirements.
 
+The reference implementation exposes this first slice through a bounded
+`ReasoningProviderRegistry` and a deterministic `ReasoningRouter`. It evaluates
+capability, task complexity, context limit, data class, trust, external-provider policy, latency,
+per-operation Q cost, delegated budget, and the RFC-0073 Resource Broker before
+returning a route. The decision is read-only: it never calls a model, reserves
+a lease, or starts a provider. Each rejected candidate has a typed reason and
+the result carries a stable decision ID plus `execution.started: false`.
+Provider metadata is non-secret and credential-like fields are rejected. The
+built-in `resident-local` provider is unavailable until the operator prepares
+the Resident Inference Adapter.
+
+The reference implementation also provides a durable `EscalationTaskService`.
+It keeps only a bounded, redacted context projection and a typed route
+decision. It persists task identity, expiry, provider selection, attempt
+count, correlation lineage, plan hash, approval state, and postcondition
+results. It never invokes a model, reserves a Resource Broker lease, or
+executes an MCP action.
+
 ## 8. Escalation Task lifecycle
 
 Escalations use this durable state machine:
@@ -254,6 +272,13 @@ Each task MUST have an idempotency key, owner/control-session reference,
 creation and expiry timestamps, routing decision, attempt count, and a bounded
 failure reason. Provider retries MUST use the same logical task identity and
 MUST NOT duplicate a mutation.
+
+The operator API exposes create/list/get, typed plan submission, approval,
+cancellation, and postcondition verification under
+`/operators/dashboard/steward/escalations`. Reusing an idempotency key with
+different bounded inputs is rejected. Credential-looking context keys are
+redacted and `SECRET` escalation data is rejected. Plans contain typed action
+records and receive a canonical `sha256:` hash.
 
 A provider response MAY contain:
 
@@ -284,6 +309,14 @@ Before applying a provider-generated plan, the Steward MUST:
 The Steward MUST stop rather than partially improvise when a precondition is
 false. A failed or stale plan is a normal control result, not a reason to
 retry blindly.
+
+The initial MCP surface mirrors this non-executing hand-off boundary:
+`aidn.steward.escalations`, `aidn.steward.escalation.get`,
+`aidn.steward.escalate`, `aidn.steward.escalation.plan`,
+`aidn.steward.escalation.verify`, and
+`aidn.steward.escalation.cancel`. Operator approval remains an operator API
+operation; no Agent tool can self-approve an escalation plan. A future
+`execute_plan` tool MUST remain separately plan-bound and policy-gated.
 
 ## 10. Resource Broker integration
 
@@ -325,6 +358,14 @@ Event IDs MUST be deduplicated. Agent-generated actions MUST carry the source
 event ID, correlation ID, causation ID, and automation depth. The Steward MUST
 honor RFC-0072 loop protection, cooldowns, and maximum automated action depth.
 
+The reference implementation exposes a claim-only action guard before any
+action handler is reached. The guard attaches the causal lineage, rejects
+automation depth above the local policy limit, and applies a bounded
+per-action/per-target cooldown. A successful guard result is not authority to
+execute the action; the normal MCP scope, approval, lifecycle, budget, and
+Resource Broker checks remain mandatory. Guard state MAY survive a process
+restart through the Steward snapshot, but expired cooldowns MUST be discarded.
+
 The following events are reserved for the initial implementation profile:
 
     aidn.steward.started
@@ -334,6 +375,7 @@ The following events are reserved for the initial implementation profile:
     aidn.steward.gpu_fallback
     aidn.steward.escalation_created
     aidn.steward.escalation_completed
+    aidn.steward.action_guarded
     aidn.steward.action_blocked
     aidn.reasoning.provider_selected
     aidn.reasoning.provider_failed
@@ -343,6 +385,7 @@ The following events are reserved for the initial implementation profile:
 The reference MCP policy SHOULD separate these scopes:
 
     STEWARD:READ
+    STEWARD:GUARD
     STEWARD:EXECUTE
     REASONING:ESCALATE
     REASONING:USE_LOCAL
@@ -393,10 +436,15 @@ The initial MCP extension SHOULD expose:
     aidn.steward.escalations
     aidn.steward.escalation_get
     aidn.steward.escalate
-    aidn.steward.cancel_escalation
+    aidn.steward.escalation.cancel
     aidn.steward.execute_plan
     aidn.reasoning.providers
     aidn.reasoning.forecast
+
+The reference implementation exposes provider routing under `STEWARD:READ`
+and durable hand-offs under `STEWARD:ESCALATE`. These tools return bounded,
+deterministic, non-executing decisions and plans; execution remains on the
+normal Hypervisor/MCP control path.
 
 `aidn.steward.execute_plan` MUST be plan-bound and MUST use the same
 authorization and approval checks as a direct operator request. It MUST NOT be
@@ -453,10 +501,23 @@ The first implementation SHOULD deliver these vertical slices:
 6. Resource Broker integration for optional `GPU_BURST` with CPU fallback.
 7. MCP status, escalation inspection, provider listing, and plan verification.
 8. Dashboard status and escalation detail surface.
+9. Deterministic Reasoning Router and non-secret Intelligence Provider registry
+   exposed through the operator API and read-only MCP tools.
 
 The MVP MUST NOT enable unrestricted external shell execution, automatic wallet
 signing, automatic secret erasure, automatic Factory Reset, or unreviewed
 external data transfer.
+
+### 17.1 Reference CPU-resident model
+
+The reference implementation SHOULD use the official
+`Qwen/Qwen2.5-0.5B-Instruct-GGUF` repository with the `Q4_K_M` quantization
+tag as its initial small local model profile. The repository declares an
+Apache-2.0 license. This is a baseline for routine status and bounded
+diagnosis, not a claim that a 0.5B model can safely perform complex planning
+or tool use. Weights MUST NOT be downloaded or placed on a GPU implicitly by
+Hypervisor startup; an adapter MUST be explicitly configured and admitted by
+RFC-0073 before it runs.
 
 ## 18. Future phases
 

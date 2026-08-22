@@ -42,7 +42,7 @@ AIDN_MCP_AGENT_IDENTITY = "agent:local"
 AIDN_MCP_OPERATOR_IDENTITY = "operator-example"
 AIDN_MCP_CONTROL_SESSION_ID = "acs-local-default"
 AIDN_MCP_HOST_ROOT = "/var/lib/aidn"
-AIDN_MCP_SCOPES = ["CAPABILITIES:READ", "HOST:READ", "NODE:READ", "NETWORK:READ", "PROVIDER:READ", "MODEL:READ", "BUNDLE:READ", "ENDPOINT:READ", "RESOURCES:READ", "SCHEDULER:READ", "WALLET:READ", "BUDGET:READ", "AUDIT:READ"]
+AIDN_MCP_SCOPES = ["CAPABILITIES:READ", "HOST:READ", "NODE:READ", "NETWORK:READ", "PROVIDER:READ", "RUNTIME:READ", "STEWARD:READ", "MODEL:READ", "BUNDLE:READ", "ENDPOINT:READ", "RESOURCES:READ", "SCHEDULER:READ", "WALLET:READ", "BUDGET:READ", "AUDIT:READ"]
 
 # Host capacity and inference admission
 AIDN_RESOURCE_PROBE_MODE = "auto"
@@ -50,6 +50,22 @@ AIDN_RESOURCE_CAPACITY_PATH = "/var/lib/aidn/resource-capacity.json"
 AIDN_INFERENCE_MAX_REQUEST_BYTES = 4194304
 AIDN_INFERENCE_MAX_MESSAGES = 512
 AIDN_INFERENCE_PUBLIC_BASE_URL = "http://127.0.0.1:8766"
+
+# RFC-0075 Resident Node Steward. Disabled by default and CPU-first.
+AIDN_STEWARD_ENABLED = false
+AIDN_STEWARD_EXECUTION_PROFILE = "CPU_RESIDENT"
+AIDN_STEWARD_MODEL_REPO = "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
+AIDN_STEWARD_MODEL_QUANT = "Q4_K_M"
+# AIDN_STEWARD_MODEL_PATH = "/var/lib/aidn/models/steward/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf"
+AIDN_STEWARD_RAM_BUDGET_MB = 1024
+AIDN_STEWARD_WORKER_ENABLED = false
+AIDN_STEWARD_WORKER_INTERVAL_SECONDS = 15
+# AIDN_STEWARD_MODEL_FILE = "qwen2.5-0.5b-instruct-q4_k_m.gguf"
+# Written by the Ubuntu bootstrap when the operator selects AI-assisted setup.
+# The plan is a secret-free proposal and must be reviewed before mutation.
+# AIDN_INSTALLATION_SETUP_MODE = "manual"
+# AIDN_INSTALLATION_PLAN_PATH = "/var/lib/aidn/installation-plan.json"
+
 # Enable only together with the injected AIDN_SECRET_MANAGER_MASTER_KEY.
 # AIDN_SECRET_MANAGER_PATH = "/var/lib/aidn/registry-replication/secrets.json"
 

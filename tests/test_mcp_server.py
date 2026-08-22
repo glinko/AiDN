@@ -185,6 +185,50 @@ def test_mcp_initialize_and_tools_are_scope_filtered() -> None:
     assert "aidn.bundle.activate" not in names
 
 
+def test_mcp_resident_escalation_is_durable_and_never_executes() -> None:
+    server = _server("STEWARD:READ", "STEWARD:ESCALATE")
+    _initialize(server)
+
+    listed = server.handle_message(
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}}
+    )
+    names = {item["name"] for item in listed["result"]["tools"]}
+    assert {"aidn.steward.escalate", "aidn.steward.escalation.plan", "aidn.steward.escalations"} <= names
+
+    task = _call(
+        server,
+        "aidn.steward.escalate",
+        {
+            "goal": "Research a safer provider migration",
+            "idempotency_key": "mcp-escalation-1",
+            "postconditions": [{"path": "status", "expected": "ready"}],
+        },
+    )["structuredContent"]
+    assert task["state"] == "WAITING_PROVIDER"
+    assert task["plan"] is None
+
+    planned = _call(
+        server,
+        "aidn.steward.escalation.plan",
+        {
+            "task_id": task["task_id"],
+            "request_id": "mcp-plan-1",
+            "idempotency_key": "mcp-plan-idem-1",
+            "plan": {"actions": [{"tool": "aidn.provider.list", "arguments": {}}]},
+        },
+    )["structuredContent"]
+    assert planned["plan_hash"].startswith("sha256:")
+    assert planned["state"] == "WAITING_APPROVAL"
+    assert planned["approval"]["required"] is True
+
+    cancelled = _call(
+        server,
+        "aidn.steward.escalation.cancel",
+        {"task_id": task["task_id"], "reason": "operator changed direction"},
+    )["structuredContent"]
+    assert cancelled["state"] == "CANCELLED"
+
+
 def test_mcp_resource_broker_and_scheduler_read_models_are_scope_visible() -> None:
     server = _server("RESOURCES:READ", "SCHEDULER:READ")
     _initialize(server)
@@ -420,6 +464,148 @@ def test_mcp_runtime_operations_returns_live_readiness_and_job_progress() -> Non
         }
     )
     assert resource["result"]["contents"][0]["mimeType"] == "application/json"
+
+
+def test_mcp_steward_status_exposes_cpu_first_profile_and_resource() -> None:
+    server = _server("STEWARD:READ")
+    _initialize(server)
+
+    listed = server.handle_message(
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}}
+    )
+    names = {item["name"] for item in listed["result"]["tools"]}
+    assert "aidn.steward.status" in names
+
+    result = _call(server, "aidn.steward.status")
+    assert result["isError"] is False
+    payload = result["structuredContent"]
+    assert payload["execution"]["profile"] == "CPU_RESIDENT"
+    assert payload["execution"]["vram_mb"] == 0
+    assert payload["model"]["license"] == "apache-2.0"
+
+    resource = server.handle_message(
+        {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "resources/read",
+            "params": {"uri": "aidn://steward/status"},
+        }
+    )
+    assert resource["result"]["contents"][0]["mimeType"] == "application/json"
+
+
+def test_mcp_steward_context_and_decision_are_read_only(monkeypatch) -> None:
+    monkeypatch.setenv("AIDN_STEWARD_ENABLED", "1")
+    server = _server("STEWARD:READ")
+    _initialize(server)
+
+    listed = server.handle_message(
+        {"jsonrpc": "2.0", "id": 6, "method": "tools/list", "params": {}}
+    )
+    names = {item["name"] for item in listed["result"]["tools"]}
+    assert {"aidn.steward.context", "aidn.steward.decide"} <= names
+
+    context_result = _call(server, "aidn.steward.context")
+    assert context_result["isError"] is False
+    assert context_result["structuredContent"]["schema_version"] == 1
+    assert "full event payloads" in context_result["structuredContent"]["omitted"]
+
+    decision_result = _call(
+        server,
+        "aidn.steward.decide",
+        {"goal": "Why is the provider unhealthy?", "event_type": "aidn.provider.failed"},
+    )
+    assert decision_result["isError"] is False
+    decision = decision_result["structuredContent"]
+    assert decision["mode"] == "LOCAL_READ_ONLY"
+    assert decision["authority"]["can_mutate_state"] is False
+
+    resource = server.handle_message(
+        {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "resources/read",
+            "params": {"uri": "aidn://steward/context"},
+        }
+    )
+    assert resource["result"]["contents"][0]["mimeType"] == "application/json"
+
+
+def test_mcp_steward_action_guard_is_causal_and_claim_only(monkeypatch) -> None:
+    monkeypatch.setenv("AIDN_STEWARD_ENABLED", "1")
+    server = _server("STEWARD:GUARD")
+    _initialize(server)
+
+    listed = server.handle_message(
+        {"jsonrpc": "2.0", "id": 8, "method": "tools/list", "params": {}}
+    )
+    names = {item["name"] for item in listed["result"]["tools"]}
+    assert "aidn.steward.action_guard" in names
+
+    first = _call(
+        server,
+        "aidn.steward.action_guard",
+        {
+            "action": "aidn.provider.restart",
+            "target_id": "provider-1",
+            "event_id": "evt-1",
+            "event_type": "aidn.provider.failed",
+            "correlation_id": "incident-1",
+            "cooldown_seconds": 60,
+        },
+    )
+    assert first["isError"] is False
+    assert first["structuredContent"]["allowed"] is True
+    assert first["structuredContent"]["claim_only"] is True
+    assert first["structuredContent"]["lineage"]["causation_id"] == "evt-1"
+
+    second = _call(
+        server,
+        "aidn.steward.action_guard",
+        {
+            "action": "aidn.provider.restart",
+            "target_id": "provider-1",
+            "event_id": "evt-2",
+        },
+    )
+    assert second["isError"] is False
+    assert second["structuredContent"]["code"] == "ACTION_COOLDOWN_ACTIVE"
+
+
+def test_mcp_steward_reasoning_route_is_read_only_and_budget_bound() -> None:
+    server = _server("STEWARD:READ")
+    server.control.service.reasoning_provider_register(
+        {
+            "provider_id": "aidn-test",
+            "kind": "AIDN_ENDPOINT",
+            "model_id": "model-test",
+            "capabilities": ["general"],
+            "context_limit": 131072,
+            "allowed_data_classes": ["OPERATOR"],
+            "latency_ms": 10,
+            "cost_q_atoms": 12_000,
+            "available": True,
+            "enabled": True,
+            "trusted": True,
+        }
+    )
+    _initialize(server)
+    names = {
+        item["name"]
+        for item in server.handle_message(
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}}
+        )["result"]["tools"]
+    }
+    assert {"aidn.steward.reasoning.providers", "aidn.steward.reasoning.route"} <= names
+    result = _call(
+        server,
+        "aidn.steward.reasoning.route",
+        {"capability": "general", "minimum_context": 128, "allow_external": True},
+    )
+    payload = result["structuredContent"]
+    assert payload["status"] == "NO_ELIGIBLE_PROVIDER"
+    assert payload["rejected"][0]["code"] == "DELEGATED_BUDGET"
+    assert payload["execution"] == {"started": False, "side_effects": False}
 
 
 def test_mcp_runtime_instances_and_warm_controls_are_plan_bound() -> None:

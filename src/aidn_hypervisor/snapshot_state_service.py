@@ -104,7 +104,18 @@ class SnapshotStateService:
             else None
         )
         hook_snapshot = self._host.hook_dispatcher.snapshot()
+        resident_agent_snapshot = self._host.resident_agent.snapshot_state()
+        resident_inference = getattr(self._host, "_resident_inference_adapter", None)
+        if resident_inference is not None and hasattr(resident_inference, "snapshot_state"):
+            # Keep the adapter configuration with the Resident snapshot.  A
+            # restart may restore the reviewed model and policy, but it must
+            # never recreate a live process or a Resource Broker lease.
+            resident_agent_snapshot["inference_adapter"] = resident_inference.snapshot_state()
+        reasoning_snapshot = getattr(self._host, "reasoning_provider_registry_snapshot", None)
+        if callable(reasoning_snapshot):
+            resident_agent_snapshot["reasoning_providers"] = reasoning_snapshot()
         return HypervisorStateSnapshot(
+            resident_agent=resident_agent_snapshot,
             tasks=[
                 TaskSnapshot(
                     task_id=task.task_id,
@@ -173,6 +184,11 @@ class SnapshotStateService:
             lifecycle_states=[
                 dict(item) for item in getattr(self._host, "_lifecycle_states", {}).values()
             ],
+            escalation_tasks=(
+                self._host.escalation_tasks_snapshot()
+                if callable(getattr(self._host, "escalation_tasks_snapshot", None))
+                else []
+            ),
             model_installs=[ModelInstallSnapshot(**job) for job in self._host._model_installs.values()],
             plugin_releases=[
                 release.model_copy(deep=True) for release in self._host.provider_inventory.list_plugin_releases()
@@ -400,6 +416,18 @@ class SnapshotStateService:
         self._host._allocations = {}
         self._host._model_installs = {}
         self._host._operator_requests_policy = dict(snapshot.operator_requests_policy)
+        resident_agent = getattr(self._host, "resident_agent", None)
+        if resident_agent is not None:
+            resident_agent.restore_state(snapshot.resident_agent)
+        resident_inference = getattr(self._host, "_resident_inference_adapter", None)
+        if resident_inference is not None and hasattr(resident_inference, "restore_state"):
+            resident_inference.restore_state(snapshot.resident_agent.get("inference_adapter"))
+        restore_reasoning = getattr(self._host, "restore_reasoning_provider_registry", None)
+        if callable(restore_reasoning):
+            restore_reasoning(snapshot.resident_agent.get("reasoning_providers"))
+        restore_escalations = getattr(self._host, "restore_escalation_tasks", None)
+        if callable(restore_escalations):
+            restore_escalations(getattr(snapshot, "escalation_tasks", []))
         self._host._lifecycle_operations = {
             str(item["operation_id"]): dict(item)
             for item in snapshot.lifecycle_operations
@@ -532,7 +560,23 @@ class SnapshotStateService:
                 "reason": allocation.reason,
             }
         for job in snapshot.model_installs:
-            self._host._model_installs[job.install_id] = job.model_dump(mode="json")
+            restored_job = job.model_dump(mode="json")
+            # Preserve the historical sparse job shape for installs that did
+            # not opt into runtime parameter policy or the resident adapter.
+            if not restored_job.get("resident_adapter_requested", False):
+                for optional_field in (
+                    "resident_adapter_requested",
+                    "resident_execution_profile",
+                    "resident_resource_request",
+                    "resident_fallback_enabled",
+                    "resident_adapter_status",
+                    "resident_adapter_error",
+                ):
+                    restored_job.pop(optional_field, None)
+            for optional_field in ("resident_adapter_id", "runtime_parameter_policy"):
+                if restored_job.get(optional_field) is None:
+                    restored_job.pop(optional_field, None)
+            self._host._model_installs[job.install_id] = restored_job
         installation_executor = getattr(
             self._host.provider_inventory,
             "installation_executor",

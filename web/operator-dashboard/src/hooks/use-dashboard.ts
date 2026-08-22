@@ -73,6 +73,42 @@ export function useDashboardData() {
     staleTime: runtimeOperationsRefetchIntervalMs,
     refetchInterval: runtimeOperationsRefetchIntervalMs,
   })
+  const resourceBroker = useQuery({
+    queryKey: ['operator-dashboard', 'resource-broker'],
+    queryFn: ({ signal }) => dashboardApi.resourceBroker(signal),
+    staleTime: runtimeOperationsRefetchIntervalMs,
+    refetchInterval: runtimeOperationsRefetchIntervalMs,
+  })
+  const residentAgent = useQuery({
+    queryKey: ['operator-dashboard', 'resident-agent'],
+    queryFn: ({ signal }) => dashboardApi.residentAgent(signal),
+    staleTime: staleTimeMs,
+    refetchInterval: refetchIntervalMs,
+  })
+  const escalations = useQuery({
+    queryKey: ['operator-dashboard', 'steward-escalations'],
+    queryFn: ({ signal }) => dashboardApi.escalations(signal),
+    staleTime: staleTimeMs,
+    refetchInterval: refetchIntervalMs,
+  })
+  const stewardActionPolicy = useQuery({
+    queryKey: ['operator-dashboard', 'steward-action-policy'],
+    queryFn: ({ signal }) => dashboardApi.stewardActionPolicy(signal),
+    staleTime: staleTimeMs,
+    refetchInterval: refetchIntervalMs,
+  })
+  const residentInference = useQuery({
+    queryKey: ['operator-dashboard', 'resident-inference'],
+    queryFn: ({ signal }) => dashboardApi.residentInference(signal),
+    staleTime: runtimeOperationsRefetchIntervalMs,
+    refetchInterval: runtimeOperationsRefetchIntervalMs,
+  })
+  const installationPlan = useQuery({
+    queryKey: ['operator-dashboard', 'installation-plan'],
+    queryFn: ({ signal }) => dashboardApi.installationPlan(signal),
+    staleTime: staleTimeMs,
+    refetchInterval: refetchIntervalMs,
+  })
   const installs = useQuery({
     queryKey: ['operator-dashboard', 'installs'],
     queryFn: ({ signal }) => dashboardApi.installs(signal),
@@ -128,5 +164,5 @@ export function useDashboardData() {
     refetchInterval: refetchIntervalMs,
   })
 
-  return { home, journey, readiness, cometbft, cometbftInstall, fleet, bundles, endpoints, wallet, providers, runtimeOperations, installs, sessions, market, remoteEndpoints, events, hooks, hookMetrics, hookDeliveries, hookDeadLetters }
+  return { home, journey, readiness, cometbft, cometbftInstall, fleet, bundles, endpoints, wallet, providers, runtimeOperations, resourceBroker, residentAgent, escalations, stewardActionPolicy, residentInference, installationPlan, installs, sessions, market, remoteEndpoints, events, hooks, hookMetrics, hookDeliveries, hookDeadLetters }
 }

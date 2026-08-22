@@ -57,6 +57,21 @@ from aidn_hypervisor.registry_models import (
 )
 from aidn_hypervisor.registry_service import RegistryService
 from aidn_hypervisor.remote_transport_service import RemoteTransportService
+from aidn_hypervisor.resident_agent_service import ResidentAgentService
+from aidn_hypervisor.resident_inference_adapter import ResidentInferenceAdapter
+from aidn_hypervisor.resident_worker import ResidentWorker
+from aidn_hypervisor.reasoning_router import (
+    ReasoningProvider,
+    ReasoningProviderRegistry,
+    ReasoningRouteRequest,
+    ReasoningRouter,
+)
+from aidn_hypervisor.reasoning_adapters import (
+    ReasoningAdapterError,
+    ReasoningAdapterRegistry,
+    ReasoningInvocation,
+)
+from aidn_hypervisor.escalation_service import EscalationTaskService
 from aidn_hypervisor.runtime_execution_service import RuntimeExecutionService
 from aidn_hypervisor.runtime_protocol import RuntimeProtocolBoundaryService
 from aidn_hypervisor.runtime_protocol.models import RuntimeRequestRecord
@@ -105,6 +120,13 @@ def _canonical_hash(payload: dict) -> str:
         ensure_ascii=True,
     ).encode("utf-8")
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def _parse_iso_timestamp(value: object) -> float:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
 
 
 class AllocationUnavailableError(ValueError):
@@ -342,6 +364,26 @@ class HypervisorService:
             self._event_store,
             on_change=self._persist_state,
         )
+        self._resident_agent_service = ResidentAgentService(
+            node_id=self.node_id,
+            enabled=True,
+            on_change=self._persist_state,
+            context_provider=self._resident_context_payload,
+        )
+        self._resident_agent_service.bind_event_bus(self._event_bus)
+        self._reasoning_provider_registry = ReasoningProviderRegistry()
+        self._reasoning_adapter_registry = ReasoningAdapterRegistry()
+        self._reasoning_router = ReasoningRouter(
+            self._reasoning_provider_registry,
+            resource_admission=(
+                self.resources.admission_report
+                if self.resources is not None and hasattr(self.resources, "admission_report")
+                else None
+            ),
+        )
+        self._escalation_task_service = EscalationTaskService(
+            on_change=self._persist_state,
+        )
         bind_installation_job_callback = getattr(
             self.provider_inventory,
             "set_installation_job_update_callback",
@@ -350,6 +392,27 @@ class HypervisorService:
         if callable(bind_installation_job_callback):
             bind_installation_job_callback(self._persist_state)
         self._runtime_boundary = RuntimeProtocolBoundaryService(self)
+        self._resident_inference_adapter = ResidentInferenceAdapter(
+            node_id=self.node_id,
+            resources=self.resources,
+            runtimes=self.runtimes,
+            plugin_resolver=self._get_plugin,
+            on_change=self._persist_state,
+            on_resource_change=lambda _reason: self.reconcile_scheduler(trigger="resident_inference"),
+        )
+        self._resident_agent_service.bind_inference_adapter(self._resident_inference_adapter)
+        self._reasoning_adapter_registry.register(
+            "resident-local",
+            lambda _provider, invocation: self.invoke_resident_inference(
+                invocation.prompt,
+                timeout_seconds=invocation.timeout_seconds,
+                stream=invocation.stream,
+                **dict(invocation.parameters or {}),
+            ),
+        )
+        # The worker is constructed disabled and is started by the application
+        # lifespan only when the operator explicitly enables the Steward.
+        self._resident_worker = ResidentWorker(self, enabled=False)
         self.lifecycle_manager = LifecycleManager(self)
         self.reset_manager = ResetManager(self.lifecycle_manager)
         # Managed child processes can change state without an API request.
@@ -451,6 +514,349 @@ class HypervisorService:
             after_sequence=after_sequence,
             limit=limit,
         )
+
+    @property
+    def resident_agent(self) -> ResidentAgentService:
+        return self._resident_agent_service
+
+    @property
+    def resident_worker(self) -> ResidentWorker:
+        return self._resident_worker
+
+    def configure_resident_worker(
+        self,
+        *,
+        enabled: bool,
+        interval_seconds: float | None = None,
+    ) -> dict:
+        """Configure the always-on worker without starting model inference."""
+
+        if self._resident_worker.running:
+            self._resident_worker.stop()
+        self._resident_worker.enabled = bool(enabled)
+        if interval_seconds is not None:
+            self._resident_worker.interval_seconds = max(
+                1.0, min(300.0, float(interval_seconds))
+            )
+        return self._resident_worker.status()
+
+    def start_resident_worker(self) -> dict:
+        return self._resident_worker.start()
+
+    def stop_resident_worker(self) -> dict:
+        return self._resident_worker.stop()
+
+    def _resident_context_payload(self) -> dict:
+        """Small, non-secret context projection for the local Steward."""
+
+        try:
+            resources = self.operator_dashboard_resources()
+        except Exception:
+            resources = {}
+        try:
+            providers = self.list_provider_instances()
+        except Exception:
+            providers = []
+        bundles = []
+        for item in self.bundles or []:
+            if isinstance(item, dict):
+                bundle_id = item.get("bundle_id")
+            else:
+                bundle_id = getattr(item, "bundle_id", None)
+            if bundle_id:
+                bundles.append(str(bundle_id))
+        return {
+            "node_id": self.node_id,
+            "base_url": self.base_url,
+            "resources": resources,
+            "providers": providers[:32] if isinstance(providers, list) else [],
+            "bundles": bundles[:64],
+            "queue": self.queue_summary(),
+        }
+
+    def resident_agent_status(self) -> dict:
+        payload = self._resident_agent_service.status()
+        payload["worker"] = self._resident_worker.status()
+        return payload
+
+    def resident_agent_context(self) -> dict:
+        return self._resident_agent_service.context_snapshot()
+
+    def resident_agent_decide(self, goal: str, **kwargs) -> dict:
+        return self._resident_agent_service.decide(goal, **kwargs)
+
+    def set_resident_agent_enabled(self, enabled: bool) -> dict:
+        return self._resident_agent_service.set_enabled(bool(enabled))
+
+    def reasoning_provider_list(self) -> dict:
+        try:
+            inference = self.resident_inference_status()
+            state = str(inference.get("state") or "NOT_CONFIGURED")
+            execution = inference.get("execution") if isinstance(inference, dict) else {}
+            requested = execution.get("requested_resources") if isinstance(execution, dict) else {}
+            self._reasoning_provider_registry.register(
+                ReasoningProvider(
+                    provider_id="resident-local",
+                    kind="LOCAL_RESIDENT",
+                    model_id=str(inference.get("model_path") or "resident-steward"),
+                    capabilities=("general", "diagnostic", "control", "planning"),
+                    context_limit=int(execution.get("context_limit") or 4096) if isinstance(execution, dict) else 4096,
+                    allowed_data_classes=("PUBLIC", "OPERATOR", "SENSITIVE"),
+                    latency_ms=100 if state == "RUNNING" else 500,
+                    cost_q_atoms=0,
+                    required_cpu=float((requested or {}).get("cpu", 0) or 0),
+                    required_ram_mb=int((requested or {}).get("ram_mb", 0) or 0),
+                    required_vram_mb=int((requested or {}).get("vram_mb", 0) or 0),
+                    available=state in {"RUNNING", "READY_TO_START"},
+                    enabled=self._resident_agent_service.enabled,
+                    trusted=True,
+                    priority=100,
+                ),
+                replace=True,
+            )
+        except Exception:
+            pass
+        return {"generated_at": datetime.now(UTC).isoformat(), "registry": self._reasoning_provider_registry.as_payload(), "policy": {"local_first": True, "external_default": False, "execution_started": False}}
+
+    def reasoning_provider_register(self, payload: dict) -> dict:
+        provider = self._reasoning_provider_registry.register(payload)
+        self._persist_state()
+        return {"registered": True, "provider": provider.as_payload()}
+
+    def reasoning_route(self, payload: dict, *, budget_remaining_q_atoms: int | None = None) -> dict:
+        self.reasoning_provider_list()
+        values = dict(payload or {})
+        if budget_remaining_q_atoms is not None and "budget_remaining_q_atoms" not in values:
+            values["budget_remaining_q_atoms"] = budget_remaining_q_atoms
+        return self._reasoning_router.route(ReasoningRouteRequest.from_mapping(values))
+
+    def reasoning_invoke(
+        self,
+        prompt: str,
+        *,
+        route: dict | None = None,
+        timeout_seconds: float = 90.0,
+        stream: bool = False,
+        parameters: dict | None = None,
+    ) -> dict:
+        """Route and invoke one Intelligence Provider as two explicit steps."""
+
+        decision = self.reasoning_route(dict(route or {}))
+        selected = decision.get("selected_provider")
+        if not isinstance(selected, dict):
+            raise ReasoningAdapterError(
+                "no eligible reasoning provider",
+                details={"code": "REASONING_ROUTE_UNAVAILABLE", "decision": decision},
+            )
+        provider = self._reasoning_provider_registry.get(str(selected.get("provider_id") or ""))
+        if provider is None:
+            raise ReasoningAdapterError("selected reasoning provider disappeared", details={"code": "REASONING_PROVIDER_NOT_FOUND"})
+        result = self._reasoning_adapter_registry.invoke(
+            provider,
+            ReasoningInvocation(
+                prompt=prompt,
+                timeout_seconds=timeout_seconds,
+                stream=stream,
+                parameters=parameters,
+            ),
+        )
+        result["routing"] = {"decision_id": decision.get("decision_id"), "provider_id": provider.provider_id}
+        return result
+
+    def resident_inference_status(self) -> dict:
+        return self._resident_inference_adapter.refresh(persist=False)
+
+    def prepare_resident_inference(self, **kwargs) -> dict:
+        payload = self._resident_inference_adapter.prepare(**kwargs)
+        model_path = payload.get("model_path")
+        if model_path:
+            self._resident_agent_service.configure_model(
+                model_path=str(model_path),
+                model_repo=payload.get("provider_type"),
+                persist=False,
+            )
+        self._persist_state()
+        return payload
+
+    def start_resident_inference(self) -> dict:
+        if not self._resident_agent_service.enabled:
+            raise ValueError("Resident Steward is disabled")
+        return self._resident_inference_adapter.start()
+
+    def stop_resident_inference(self) -> dict:
+        return self._resident_inference_adapter.stop()
+
+    def invoke_resident_inference(self, prompt: str, **parameters) -> dict:
+        return self._resident_inference_adapter.infer(prompt, **parameters)
+
+    def prepare_resident_model(self, **kwargs) -> dict:
+        """Download and verify a Steward artifact without starting inference."""
+
+        return self._resident_inference_adapter.prepare_model(**kwargs)
+
+    def verify_resident_model(self, model_path: str, **kwargs) -> dict:
+        return self._resident_inference_adapter.verify_model(model_path, **kwargs)
+
+    def start_resident_inference_from_install(self, install_id: str) -> dict:
+        job = self._model_installs.get(str(install_id))
+        if not job:
+            raise ValueError("model install was not found")
+        return self.prepare_resident_inference(
+            model_path=str(job.get("target_path") or ""),
+            provider_type=str(job.get("provider_type") or "llama.cpp"),
+            profile=str(job.get("resident_execution_profile") or "CPU_RESIDENT"),
+            **(job.get("resident_resource_request") or {}),
+        ) | {"execution": self.start_resident_inference().get("execution", {})}
+
+    def prepare_resident_inference_from_install(self, install_id: str, *, persist: bool = True) -> dict:
+        job = self._model_installs.get(str(install_id))
+        if not job:
+            raise ValueError("model install was not found")
+        payload = self.prepare_resident_inference(
+            model_path=str(job.get("target_path") or ""),
+            provider_type=str(job.get("provider_type") or "llama.cpp"),
+            profile=str(job.get("resident_execution_profile") or "CPU_RESIDENT"),
+            persist=persist,
+            **(job.get("resident_resource_request") or {}),
+        )
+        job["resident_adapter_status"] = "READY_TO_START"
+        job["resident_adapter_error"] = None
+        if persist:
+            self._persist_state()
+        return payload
+
+    def resident_agent_guard_action(self, action: str, **kwargs) -> dict:
+        payload = self._resident_agent_service.guard_action(action, **kwargs)
+        try:
+            self.record_event(
+                event_type="aidn.steward.action_guarded" if payload.get("allowed") else "aidn.steward.action_blocked",
+                message=str(payload.get("reason") or "Resident action guard evaluated"),
+                details={"action_id": payload.get("action_id"), "action": payload.get("action"), "target_id": payload.get("target_id"), "code": payload.get("code"), "claim_only": True},
+                source="resident-agent",
+                severity="NOTICE" if payload.get("allowed") else "WARNING",
+                resource_type="steward_action",
+                resource_id=str(payload.get("action_id") or "steward-action"),
+                correlation_id=(payload.get("lineage") or {}).get("correlation_id"),
+                causation_id=(payload.get("lineage") or {}).get("causation_id"),
+            )
+        except Exception:
+            pass
+        return payload
+
+    def resident_agent_action_policy(self) -> dict:
+        return self._resident_agent_service.action_policy()
+
+    def configure_resident_agent_action_policy(self, *, auto_actions=None, approval_actions=None, max_actions_per_hour=None) -> dict:
+        return self._resident_agent_service.configure_action_policy(
+            auto_actions=auto_actions,
+            approval_actions=approval_actions,
+            max_actions_per_hour=max_actions_per_hour,
+        )
+
+    def _resident_agent_action_plan(self, action: str, target_id: str, **kwargs) -> dict:
+        policy = self.resident_agent_action_policy()
+        item = next((entry for entry in policy.get("catalog", []) if entry.get("action") == str(action)), None)
+        if not item or item.get("guard_only"):
+            raise ValueError("Resident Steward action is not executable")
+        mode = "AUTO" if action in policy.get("auto_actions", []) else "OPERATOR_CONFIRMATION" if action in policy.get("approval_actions", []) else "DISABLED"
+        if mode == "DISABLED":
+            raise ValueError("Resident Steward action is disabled by policy")
+        lineage = self._resident_agent_service._lineage(
+            event_id=kwargs.get("event_id"), event_type=kwargs.get("event_type"),
+            correlation_id=kwargs.get("correlation_id"), causation_id=kwargs.get("causation_id"),
+        )
+        body = {"action": str(action), "target_id": str(target_id), "target_type": item.get("target_type"), "action_class": item.get("class"), "policy_mode": mode, "requires_approval": mode == "OPERATOR_CONFIRMATION", "lineage": lineage, "automation_depth": int(kwargs.get("automation_depth", 0) or 0), "changes": [item.get("label", action)], "authority": "hypervisor_service"}
+        plan_hash = _canonical_hash(body)
+        return {"plan_id": f"steward-plan-{plan_hash.removeprefix('sha256:')[:24]}", "plan_hash": plan_hash, **body}
+
+    def resident_agent_execute_action(self, action: str, *, target_id: str, mode: str = "plan", plan_hash=None, approval_reference=None, **kwargs) -> dict:
+        normalized = str(mode or "plan").lower()
+        if normalized not in {"plan", "apply"}:
+            raise ValueError("Resident Steward actions require mode=plan or mode=apply")
+        target = str(target_id or "").strip()
+        if not target:
+            raise ValueError("target_id is required")
+        plan = self._resident_agent_action_plan(str(action), target, **kwargs)
+        if normalized == "plan":
+            return {"status": "PLAN_CREATED", "plan": plan}
+        if str(plan_hash or "") != plan["plan_hash"]:
+            raise ValueError("Resident Steward action plan changed; refresh before applying")
+        if plan["requires_approval"] and not str(approval_reference or "").strip():
+            return {"status": "APPROVAL_REQUIRED", "code": "STEWARD_APPROVAL_REQUIRED", "plan": plan}
+        guard = self.resident_agent_guard_action(str(action), target_id=target, **kwargs)
+        if not guard.get("allowed"):
+            return {"status": "BLOCKED", "code": guard.get("code"), "plan": plan, "guard": guard}
+        action_id = str(guard.get("action_id"))
+        try:
+            self.record_event(event_type="aidn.steward.action_started", message=f"Resident Steward started {action}", details={"action_id": action_id, "action": action, "target_id": target, "plan_hash": plan["plan_hash"]}, source="resident-agent", resource_type="steward_action", resource_id=action_id)
+            if action == "provider.health_check":
+                result = dict(self.probe_provider_instance(target))
+            elif action == "runtime.drain":
+                result = dict(self.drain_runtime(target))
+            elif action == "runtime.restart":
+                result = dict(self.restart_runtime(target))
+            elif action == "runtime.stop":
+                result = dict(self.force_stop_runtime(target))
+            else:
+                raise ValueError("Resident Steward action has no dispatcher")
+            verification = {"ok": True, "observed": result}
+            if action.startswith("runtime."):
+                try:
+                    verification["observed"] = self.runtime_readiness(target, force=True)
+                except Exception as error:
+                    verification = {"ok": False, "error": str(error)[:512], "observed": result}
+            payload = {"status": "COMPLETED", "action_id": action_id, "plan": plan, "guard": guard, "result": result, "verification": verification}
+            self._resident_agent_service.record_action_result(action_id=action_id, action=str(action), target_id=target, status="COMPLETED", result=payload, persist=False)
+            self.record_event(event_type="aidn.steward.action_completed", message=f"Resident Steward completed {action}", details={"action_id": action_id, "action": action, "target_id": target, "verification": verification}, source="resident-agent", severity="INFO" if verification.get("ok") else "WARNING", resource_type="steward_action", resource_id=action_id, requires_action=not bool(verification.get("ok")))
+            return payload
+        except Exception as error:
+            failure = {"status": "FAILED", "action_id": action_id, "plan": plan, "guard": guard, "code": "STEWARD_ACTION_FAILED", "error": str(error)[:1024]}
+            self._resident_agent_service.record_action_result(action_id=action_id, action=str(action), target_id=target, status="FAILED", error=str(error)[:1024], result=failure, persist=False)
+            self.record_event(event_type="aidn.steward.action_failed", message=f"Resident Steward failed {action}", details={"action_id": action_id, "action": action, "target_id": target, "error": str(error)[:512]}, source="resident-agent", severity="ERROR", resource_type="steward_action", resource_id=action_id, requires_action=True)
+            return failure
+
+    def escalation_task_create(self, payload: dict, *, owner_id=None, control_session_id=None, budget_remaining_q_atoms=None) -> dict:
+        values = dict(payload or {})
+        route = dict(values.get("route") or {})
+        route.setdefault("capability", "general")
+        route.setdefault("complexity", "COMPLEX")
+        route.setdefault("data_class", str(values.get("data_class") or "OPERATOR"))
+        route.setdefault("minimum_context", 4096)
+        decision = self.reasoning_route(route, budget_remaining_q_atoms=budget_remaining_q_atoms)
+        return self._escalation_task_service.create(
+            goal=values.get("goal"), task_class=values.get("task_class", "REASONING_ESCALATION"), data_class=values.get("data_class", "OPERATOR"), route_decision=decision,
+            context=values.get("context") or self.resident_agent_context(), postconditions=values.get("postconditions"), idempotency_key=values.get("idempotency_key"), owner_id=owner_id, control_session_id=control_session_id, correlation_id=values.get("correlation_id"), causation_id=values.get("causation_id"), expires_in_seconds=values.get("expires_in_seconds", 86400),
+        )
+
+    def escalation_task_list(self, *, state=None, limit=100) -> list[dict]:
+        return self._escalation_task_service.list(state=state, limit=limit)
+
+    def escalation_task_get(self, task_id: str) -> dict:
+        return self._escalation_task_service.get(task_id)
+
+    def escalation_task_set_plan(self, task_id: str, plan: dict, *, idempotency_key: str, requires_operator_approval=None) -> dict:
+        return self._escalation_task_service.set_plan(task_id, plan, idempotency_key=idempotency_key, requires_operator_approval=requires_operator_approval)
+
+    def escalation_task_approve(self, task_id: str, *, plan_hash: str, approval_reference: str, approver_id: str) -> dict:
+        return self._escalation_task_service.approve(task_id, plan_hash=plan_hash, approval_reference=approval_reference, approver_id=approver_id)
+
+    def escalation_task_verify(self, task_id: str, *, observed: dict) -> dict:
+        return self._escalation_task_service.verify(task_id, observed=observed)
+
+    def escalation_task_cancel(self, task_id: str, *, reason: str = "cancelled") -> dict:
+        return self._escalation_task_service.cancel(task_id, reason=reason)
+
+    def escalation_tasks_snapshot(self) -> list[dict]:
+        return self._escalation_task_service.snapshot_state()
+
+    def restore_escalation_tasks(self, snapshot) -> None:
+        self._escalation_task_service.restore_state(snapshot)
+
+    def reasoning_provider_registry_snapshot(self) -> dict:
+        return self._reasoning_provider_registry.snapshot_state()
+
+    def restore_reasoning_provider_registry(self, snapshot) -> None:
+        self._reasoning_provider_registry.restore_state(snapshot)
 
     def acknowledge_event_inbox(
         self,
@@ -1630,6 +2036,10 @@ class HypervisorService:
         source_url: str,
         requested_by: str,
         runtime_parameter_policy: dict | None = None,
+        resident_adapter_requested: bool = False,
+        resident_execution_profile: str | None = None,
+        resident_resource_request: dict | None = None,
+        resident_fallback_enabled: bool = True,
     ) -> dict:
         return self._model_install_facade().request_model_install(
             provider_type=provider_type,
@@ -1637,6 +2047,10 @@ class HypervisorService:
             source_url=source_url,
             requested_by=requested_by,
             runtime_parameter_policy=runtime_parameter_policy,
+            resident_adapter_requested=resident_adapter_requested,
+            resident_execution_profile=resident_execution_profile,
+            resident_resource_request=resident_resource_request,
+            resident_fallback_enabled=resident_fallback_enabled,
         )
 
     def list_model_installs(self) -> list[dict]:

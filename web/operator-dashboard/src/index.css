@@ -186,6 +186,19 @@ button {
 .operator-shell [class*="text-white"] { color: var(--foreground) !important; }
 .operator-shell [class*="border-slate-700"] { border-color: var(--border) !important; }
 
+/* Advanced Resource Broker cards use a dense legacy utility vocabulary, but
+   render on the same light field as the public AiDN site. Keep those status
+   labels legible without changing the semantic colors used elsewhere. */
+.resource-broker-workspace [class*="text-slate-100"],
+.resource-broker-workspace [class*="text-slate-200"],
+.resource-broker-workspace [class*="text-slate-300"] { color: var(--card-foreground) !important; }
+.resource-broker-workspace [class*="text-cyan-100"] { color: var(--brand-cyan) !important; }
+.resource-broker-workspace [class*="text-emerald-100"] { color: var(--brand-green) !important; }
+.resource-broker-workspace [class*="text-amber-100"],
+.resource-broker-workspace [class*="text-amber-200"] { color: var(--brand-amber) !important; }
+.resource-broker-workspace [class*="text-rose-100"],
+.resource-broker-workspace [class*="text-rose-200"] { color: var(--brand-red) !important; }
+
 :where(button, a, input, select, textarea):focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;

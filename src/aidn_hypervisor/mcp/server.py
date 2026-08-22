@@ -3169,6 +3169,11 @@ class McpJsonRpcServer:
                 output_stream.flush()
 
 
+from aidn_hypervisor.mcp.steward_tools import install_steward_extensions
+
+install_steward_extensions(McpControlPlane, McpTool, McpResource)
+
+
 def build_mcp_server(
     service,
     *,
