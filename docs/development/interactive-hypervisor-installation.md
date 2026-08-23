@@ -176,6 +176,25 @@ model, Bundle, Endpoint, runtime and readiness IDs, plus an explicit
 For a normal manual install, omit the assisted flags or use
 `--setup-mode manual`.
 
+Provider approval is deliberately a two-step boundary. After review, the
+operator approves the exact Provider installation plan in the Provider catalog.
+Only then may the Dashboard or a Steward session submit:
+
+```json
+{
+  "action": "apply_provider_installation",
+  "plan_hash": "sha256:...",
+  "idempotency_key": "dashboard-provider-..."
+}
+```
+
+The service matches the approval by Provider ID and Provider-plan hash before
+creating a durable broker job. A mismatched, missing, or stale approval is
+rejected; an agent cannot manufacture approval by supplying an MCP token or
+approval reference. The workflow then exposes `wait_provider_installation` and
+recomputes the next step from the observed broker job/provider inventory after
+restart.
+
 ## Resume and handoff semantics
 
 The plan is the source of truth for what the operator requested during the
