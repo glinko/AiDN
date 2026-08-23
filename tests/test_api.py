@@ -439,6 +439,22 @@ def test_submit_task_endpoint_returns_queued_task_and_selected_bundle() -> None:
     assert response.json()["task_id"]
 
 
+def test_installation_workflow_endpoint_returns_bounded_unconfigured_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AIDN_INSTALLATION_PLAN_PATH", raising=False)
+    client = TestClient(build_app(service=_service()))
+
+    response = client.get("/operators/dashboard/installation-workflow")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "available": False,
+        "plan_hash": None,
+        "workflow": None,
+    }
+
+
 def test_submit_task_endpoint_uses_allocation_bundle_when_allocation_id_is_provided() -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),

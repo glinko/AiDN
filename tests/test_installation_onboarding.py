@@ -8,6 +8,7 @@ import pytest
 
 from aidn_hypervisor.installation_onboarding import (
     InstallationOnboardingPlan,
+    build_installation_workflow_projection,
     installation_plan_hash,
     prepare_assisted_installation_review,
     read_installation_plan,
@@ -197,3 +198,47 @@ def test_assisted_plan_preparation_rejects_manual_or_stale_plan(tmp_path: Path) 
 def test_hash_excludes_its_own_field() -> None:
     payload = {"mode": "manual", "plan_hash": "old"}
     assert installation_plan_hash(payload) == installation_plan_hash({"mode": "manual"})
+
+
+def test_workflow_projection_recomputes_next_step_from_observed_state() -> None:
+    plan = InstallationOnboardingPlan(
+        setup_mode="ai_assisted",
+        provider="llama.cpp",
+        model_id="org/model",
+        model_source="hf://org/model/model.gguf",
+        endpoint_action="draft",
+    ).to_dict()
+    plan.update(
+        available=True,
+        integrity="verified",
+        status="PROVIDER_REVIEW_REQUIRED",
+        plan_hash="sha256:test",
+        application={"provider": {"status": "REVIEW_REQUIRED"}},
+    )
+
+    review = build_installation_workflow_projection(plan)
+    assert review["next_action"]["id"] == "approve_provider_installation"
+    assert review["stages"][0]["state"] == "REVIEW_REQUIRED"
+
+    provider_ready = build_installation_workflow_projection(
+        plan,
+        provider_instances=[{"plugin_id": "llama.cpp", "status": "attached"}],
+    )
+    assert provider_ready["next_action"]["id"] == "request_model_install"
+    assert provider_ready["stages"][0]["state"] == "READY"
+
+    model_ready = build_installation_workflow_projection(
+        plan,
+        provider_instances=[{"plugin_id": "llama.cpp", "status": "attached"}],
+        model_installs=[{"model_id": "org/model", "status": "completed"}],
+    )
+    assert model_ready["next_action"]["id"] == "create_bundle"
+    assert model_ready["stages"][1]["state"] == "READY"
+
+
+def test_workflow_projection_marks_tampered_plan_stale() -> None:
+    projection = build_installation_workflow_projection(
+        {"available": True, "status": "STALE", "integrity": "mismatch"}
+    )
+    assert projection["status"] == "STALE"
+    assert projection["next_action"]["id"] == "regenerate_installation_plan"

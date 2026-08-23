@@ -654,6 +654,9 @@ def test_service_prepares_ai_assisted_installation_review_from_configured_plan(
     assert prepared["status"] == "PROVIDER_REVIEW_REQUIRED"
     assert prepared["next_action"] == "approve_provider_installation"
     assert prepared["application"]["provider"]["plugin_id"] == "llama.cpp"
+    workflow = service.installation_plan()["workflow"]
+    assert workflow["next_action"]["id"] == "approve_provider_installation"
+    assert workflow["stages"][0]["state"] == "REVIEW_REQUIRED"
     assert any(
         event.event_type == "installation.plan.review_prepared"
         for event in service.event_journal()

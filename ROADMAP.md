@@ -119,6 +119,11 @@ finality.
   operation, exposes the next action, and projects only secret-free Provider
   plan fields. It deliberately does **not** bypass Provider approval, model
   download, Bundle, Endpoint or publication policy.
+- [x] Add a read-only, restart-safe installation workflow projection. The
+  Dashboard/Steward can now reconcile the persisted plan with observed
+  Provider, model-install, Bundle and Endpoint state and receive one bounded
+  next action (`prepare review`, `approve provider`, `request model`, `create
+  Bundle`, or `create private Endpoint`) without treating intent as fact.
 - [ ] Run the complete Ubuntu CI matrix and package build for this exact commit.
   Local focused tests and Ruff are green; Windows pytest teardown currently
   leaves completed test workers alive, so it is not accepted as release proof.

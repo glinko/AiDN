@@ -37,6 +37,7 @@ from aidn_hypervisor.hypervisor_integration_service import (
     HypervisorIntegrationService,
 )
 from aidn_hypervisor.installation_onboarding import (
+    build_installation_workflow_projection,
     prepare_assisted_installation_review,
     read_installation_plan,
 )
@@ -2116,9 +2117,41 @@ class HypervisorService:
         )
 
     def installation_plan(self) -> dict:
-        """Return the bounded, secret-free terminal installer handoff."""
+        """Return the bounded plan plus a read-only state-machine projection.
 
-        return read_installation_plan()
+        The persisted plan is operator intent; the workflow projection joins it
+        with current provider/model/Bundle/Endpoint read models.  Keeping this
+        aggregation on the service façade gives the dashboard and Resident
+        Steward one source of truth after restarts.
+        """
+
+        plan = read_installation_plan()
+        if not plan.get("available"):
+            return plan
+
+        def _dump(item) -> dict:
+            if isinstance(item, dict):
+                return dict(item)
+            model_dump = getattr(item, "model_dump", None)
+            if callable(model_dump):
+                return dict(model_dump(mode="json"))
+            return {}
+
+        endpoint_service = getattr(self, "endpoint_service", None)
+        endpoint_items = (
+            [_dump(item) for item in endpoint_service.list_endpoints()]
+            if endpoint_service is not None
+            else []
+        )
+        bundle_items = [_dump(item) for item in self.bundle_config()]
+        workflow = build_installation_workflow_projection(
+            plan,
+            provider_instances=self.list_provider_instances(),
+            model_installs=self.list_model_installs(),
+            bundles=bundle_items,
+            endpoints=endpoint_items,
+        )
+        return {**plan, "workflow": workflow}
 
     def apply_installation_plan(
         self,

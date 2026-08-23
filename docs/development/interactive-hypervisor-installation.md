@@ -88,6 +88,20 @@ The Dashboard read endpoint is:
 GET /operators/dashboard/installation-plan
 ```
 
+For a compact polling target, the same service exposes the derived workflow
+only:
+
+```text
+GET /operators/dashboard/installation-workflow
+```
+
+It returns the current `stages`, required-step progress, and one `next_action`.
+The projection is recomputed from observed provider instances, model-install
+jobs, Bundles and Endpoints after every read; it does not mark a step complete
+because the plan merely requested it. A future event-driven Steward can use
+this endpoint after reconnecting, while retaining a recovery poll for missed
+events.
+
 The protected apply operation is:
 
 ```text

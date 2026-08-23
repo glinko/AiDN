@@ -2191,6 +2191,17 @@ def build_api_router(
 
         return service.installation_plan()
 
+    @router.get("/operators/dashboard/installation-workflow")
+    async def operator_dashboard_installation_workflow() -> dict:
+        """Return the current resumable setup stages and next safe action."""
+
+        projection = service.installation_plan()
+        return {
+            "available": bool(projection.get("available")),
+            "plan_hash": projection.get("plan_hash"),
+            "workflow": projection.get("workflow"),
+        }
+
     @router.get("/operators/dashboard/steward/context")
     async def operator_dashboard_steward_context() -> dict:
         """Return the fresh, bounded context available to local reasoning."""

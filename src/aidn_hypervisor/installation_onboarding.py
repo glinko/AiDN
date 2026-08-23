@@ -15,6 +15,7 @@ import json
 import os
 import re
 import tempfile
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -324,6 +325,222 @@ def read_installation_plan(
     return projection
 
 
+def build_installation_workflow_projection(
+    plan: Mapping[str, object],
+    *,
+    provider_instances: Sequence[Mapping[str, object]] = (),
+    model_installs: Sequence[Mapping[str, object]] = (),
+    bundles: Sequence[Mapping[str, object]] = (),
+    endpoints: Sequence[Mapping[str, object]] = (),
+    checked_at: str | None = None,
+) -> dict[str, object]:
+    """Project the resumable installer state from persisted intent and reality.
+
+    The installer plan is deliberately only intent.  This projection joins it
+    with the current provider/model/bundle/endpoint read models so a resident
+    agent or dashboard can resume after a restart without guessing which step
+    actually completed.  It is read-only and never grants an install or
+    publication authority.
+    """
+
+    timestamp = checked_at or datetime.now(UTC).isoformat()
+    if not bool(plan.get("available")):
+        return {
+            "status": "UNAVAILABLE",
+            "checked_at": timestamp,
+            "plan_hash": None,
+            "stages": [],
+            "progress": {"completed": 0, "required": 0, "percent": 0},
+            "next_action": {
+                "id": "install_plan_unavailable",
+                "label": "Run the installer to create a plan",
+                "reason": str(plan.get("reason") or "No installation plan is available."),
+            },
+        }
+
+    plan_status = str(plan.get("status") or "").upper()
+    integrity = str(plan.get("integrity") or "").lower()
+    if integrity in {"mismatch", "legacy_unhashed"} or plan_status == "STALE":
+        return {
+            "status": "STALE",
+            "checked_at": timestamp,
+            "plan_hash": plan.get("plan_hash"),
+            "stages": [],
+            "progress": {"completed": 0, "required": 0, "percent": 0},
+            "next_action": {
+                "id": "regenerate_installation_plan",
+                "label": "Regenerate the installation plan",
+                "reason": str(plan.get("reason") or "The saved plan is no longer trustworthy."),
+            },
+        }
+
+    def _status(value: object) -> str:
+        return str(value or "").strip().upper()
+
+    def _provider_id(item: Mapping[str, object]) -> str:
+        return str(item.get("plugin_id") or item.get("provider_type") or item.get("id") or "")
+
+    provider_id = str(plan.get("provider") or "skip")
+    application = plan.get("application")
+    application = application if isinstance(application, Mapping) else {}
+    application_provider = application.get("provider")
+    application_provider = (
+        application_provider if isinstance(application_provider, Mapping) else {}
+    )
+    matching_providers = [
+        item for item in provider_instances if _provider_id(item) == provider_id
+    ]
+    provider_runtime_state = _status(
+        matching_providers[0].get("status") if matching_providers else None
+    )
+    if provider_id == "skip":
+        provider_state = "SKIPPED"
+    elif matching_providers and provider_runtime_state not in {"FAILED", "DISABLED"}:
+        provider_state = "READY"
+    elif _status(application_provider.get("status")) == "REVIEW_REQUIRED":
+        provider_state = "REVIEW_REQUIRED"
+    elif matching_providers:
+        provider_state = "ERROR"
+    else:
+        provider_state = "NOT_STARTED"
+
+    model = plan.get("model")
+    model = model if isinstance(model, Mapping) else {}
+    model_id = str(model.get("id") or "skip")
+    matching_installs = [
+        item for item in model_installs if str(item.get("model_id") or "") == model_id
+    ]
+    latest_install = matching_installs[-1] if matching_installs else {}
+    install_state = _status(latest_install.get("status"))
+    if model_id == "skip":
+        model_state = "SKIPPED"
+    elif provider_state in {"NOT_STARTED", "REVIEW_REQUIRED", "ERROR"}:
+        model_state = "BLOCKED"
+    elif install_state in {"COMPLETED", "READY", "SUCCEEDED"}:
+        model_state = "READY"
+    elif install_state in {"QUEUED", "RUNNING", "PROCESSING"}:
+        model_state = "IN_PROGRESS"
+    elif install_state in {"FAILED", "ERROR"}:
+        model_state = "ERROR"
+    else:
+        model_state = "NOT_STARTED"
+
+    endpoint_plan = plan.get("endpoint")
+    endpoint_plan = endpoint_plan if isinstance(endpoint_plan, Mapping) else {}
+    endpoint_action = str(endpoint_plan.get("requested_action") or "skip")
+    matching_bundles = [
+        item
+        for item in bundles
+        if (
+            str(item.get("model_id") or "") == model_id
+            or str(item.get("bundle_id") or "")
+            == str(application.get("bundle_id") or "")
+        )
+    ]
+    bundle_item = matching_bundles[-1] if matching_bundles else {}
+    if endpoint_action == "skip":
+        bundle_state = "SKIPPED"
+        endpoint_state = "SKIPPED"
+    elif model_state != "READY":
+        bundle_state = "BLOCKED"
+        endpoint_state = "BLOCKED"
+    elif bundle_item:
+        bundle_state = "READY" if bool(bundle_item.get("enabled", True)) else "WARNING"
+        bundle_id = str(bundle_item.get("bundle_id") or "")
+        matching_endpoints = [
+            item for item in endpoints if str(item.get("bundle_id") or "") == bundle_id
+        ]
+        endpoint_item = matching_endpoints[-1] if matching_endpoints else {}
+        endpoint_runtime_state = _status(endpoint_item.get("status"))
+        endpoint_publication = endpoint_item.get("publication")
+        endpoint_publication = (
+            endpoint_publication if isinstance(endpoint_publication, Mapping) else {}
+        )
+        publication_state = _status(endpoint_publication.get("visibility"))
+        if not endpoint_item:
+            endpoint_state = "NOT_STARTED"
+        elif endpoint_runtime_state in {"ACTIVE"} or publication_state in {"PUBLIC", "SHARED"}:
+            endpoint_state = "READY"
+        elif endpoint_runtime_state in {"DELETED", "SUSPENDED"}:
+            endpoint_state = "WARNING"
+        else:
+            endpoint_state = "IN_PROGRESS"
+    else:
+        bundle_state = "NOT_STARTED"
+        endpoint_state = "BLOCKED"
+
+    stage_specs = (
+        ("provider", "Provider", provider_state, provider_id != "skip"),
+        ("model", "Model", model_state, model_id != "skip"),
+        ("bundle", "Bundle", bundle_state, endpoint_action != "skip"),
+        ("endpoint", "Endpoint", endpoint_state, endpoint_action != "skip"),
+    )
+    stages = [
+        {"id": stage_id, "label": label, "state": state, "required": required}
+        for stage_id, label, state, required in stage_specs
+    ]
+    required_stages = [stage for stage in stages if stage["required"]]
+    completed = sum(1 for stage in required_stages if stage["state"] in {"READY", "SKIPPED"})
+    required = len(required_stages)
+
+    if plan_status in {"READY_FOR_REVIEW", "PLAN_READY"} and not application:
+        action_id = "prepare_assisted_installation_review"
+        action_label = "Prepare the assisted installation review"
+        reason = "The saved choices are ready, but no provider review has been prepared."
+    elif provider_state == "REVIEW_REQUIRED":
+        action_id = "approve_provider_installation"
+        action_label = "Review and approve the provider installation"
+        reason = "Provider permissions and installation effects require explicit operator approval."
+    elif provider_state == "NOT_STARTED" and provider_id != "skip":
+        action_id = "configure_provider"
+        action_label = "Configure the selected provider"
+        reason = "The selected provider is not attached to this node yet."
+    elif model_state == "NOT_STARTED":
+        action_id = "request_model_install"
+        action_label = "Request the selected model"
+        reason = "The provider is ready; model download still requires an explicit request."
+    elif model_state == "IN_PROGRESS":
+        action_id = "wait_model_install"
+        action_label = "Wait for model installation"
+        reason = "The model install is queued or running."
+    elif model_state == "ERROR":
+        action_id = "inspect_model_install"
+        action_label = "Inspect the failed model installation"
+        reason = str(latest_install.get("last_error") or "The model installation failed.")
+    elif bundle_state == "NOT_STARTED":
+        action_id = "create_bundle"
+        action_label = "Create a Bundle from the installed model"
+        reason = "The model is ready; create a reproducible runtime Bundle next."
+    elif endpoint_state in {"NOT_STARTED", "BLOCKED"}:
+        action_id = "create_private_endpoint"
+        action_label = "Create a private Endpoint"
+        reason = "Keep publication separate; first validate a local/private Endpoint."
+    elif endpoint_state == "IN_PROGRESS":
+        action_id = "verify_endpoint_readiness"
+        action_label = "Verify Endpoint readiness"
+        reason = "The Endpoint exists but is not active yet."
+    else:
+        action_id = "continue_in_dashboard"
+        action_label = "Continue in the dashboard"
+        reason = "The assisted installation path has reached its current safe handoff."
+
+    workflow_status = "READY" if required and completed == required else "IN_PROGRESS"
+    if required == 0:
+        workflow_status = "READY_FOR_DASHBOARD"
+    return {
+        "status": workflow_status,
+        "checked_at": timestamp,
+        "plan_hash": plan.get("plan_hash"),
+        "stages": stages,
+        "progress": {
+            "completed": completed,
+            "required": required,
+            "percent": round(completed / required * 100) if required else 100,
+        },
+        "next_action": {"id": action_id, "label": action_label, "reason": reason},
+    }
+
+
 def update_installation_plan(
     path: str | os.PathLike[str] | None,
     *,
@@ -478,6 +695,7 @@ __all__ = [
     "installation_plan_hash",
     "installation_plan_path",
     "read_installation_plan",
+    "build_installation_workflow_projection",
     "prepare_assisted_installation_review",
     "update_installation_plan",
     "write_installation_plan",
