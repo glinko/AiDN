@@ -451,6 +451,12 @@ def build_installation_workflow_projection(
             item for item in endpoints if str(item.get("bundle_id") or "") == bundle_id
         ]
         endpoint_item = matching_endpoints[-1] if matching_endpoints else {}
+        application_endpoint = application.get("endpoint")
+        application_endpoint = (
+            application_endpoint if isinstance(application_endpoint, Mapping) else {}
+        )
+        if not endpoint_item and application_endpoint.get("endpoint_id"):
+            endpoint_item = application_endpoint
         endpoint_runtime_state = _status(endpoint_item.get("status"))
         endpoint_publication = endpoint_item.get("publication")
         endpoint_publication = (

@@ -2176,6 +2176,8 @@ class HypervisorService:
             "prepare_assisted_installation_review",
             "request_model_install",
             "create_bundle",
+            "create_private_endpoint",
+            "start_private_endpoint",
         }:
             raise ValueError(f"unsupported installation plan action: {action}")
         if action in {"prepare_review", "prepare_assisted_installation_review"}:
@@ -2195,8 +2197,20 @@ class HypervisorService:
                 actor=actor,
                 idempotency_key=idempotency_key,
             )
-        else:
+        elif action == "create_bundle":
             result = self._create_bundle_from_installation_plan(
+                plan_hash=plan_hash,
+                actor=actor,
+                idempotency_key=idempotency_key,
+            )
+        elif action == "create_private_endpoint":
+            result = self._create_private_endpoint_from_installation_plan(
+                plan_hash=plan_hash,
+                actor=actor,
+                idempotency_key=idempotency_key,
+            )
+        else:
+            result = self._start_private_endpoint_from_installation_plan(
                 plan_hash=plan_hash,
                 actor=actor,
                 idempotency_key=idempotency_key,
@@ -2208,7 +2222,15 @@ class HypervisorService:
                 else (
                     "installation.plan.model_requested"
                     if action == "request_model_install"
-                    else "installation.plan.bundle_created"
+                    else (
+                        "installation.plan.bundle_created"
+                        if action == "create_bundle"
+                        else (
+                            "installation.plan.endpoint_created"
+                            if action == "create_private_endpoint"
+                            else "installation.plan.endpoint_started"
+                        )
+                    )
                 )
             ),
             message=(
@@ -2217,7 +2239,15 @@ class HypervisorService:
                 else (
                     "AI-assisted installation plan queued a model installation"
                     if action == "request_model_install"
-                    else "AI-assisted installation plan created a local Bundle"
+                    else (
+                        "AI-assisted installation plan created a local Bundle"
+                        if action == "create_bundle"
+                        else (
+                            "AI-assisted installation plan created a private Endpoint"
+                            if action == "create_private_endpoint"
+                            else "AI-assisted installation plan started a private Endpoint"
+                        )
+                    )
                 )
             ),
             details={
@@ -2305,6 +2335,157 @@ class HypervisorService:
             status="MODEL_INSTALL_QUEUED",
             application=application,
             next_action="wait_model_install",
+        )
+        updated["operation_id"] = operation_id
+        updated["workflow"] = self.installation_plan().get("workflow")
+        return updated
+
+    def _create_private_endpoint_from_installation_plan(
+        self,
+        *,
+        plan_hash: str,
+        actor: str,
+        idempotency_key: str | None,
+    ) -> dict:
+        """Create an owner-only Endpoint without publishing it."""
+
+        current = read_installation_plan()
+        if not current.get("available"):
+            raise ValueError(str(current.get("reason") or "installation plan is unavailable"))
+        if current.get("integrity") != "verified":
+            raise ValueError(str(current.get("reason") or "installation plan integrity is not verified"))
+        if str(current.get("plan_hash")) != str(plan_hash):
+            raise ValueError("installation plan changed; refresh before applying")
+        application = current.get("application")
+        application = dict(application) if isinstance(application, dict) else {}
+        existing_endpoint = application.get("endpoint")
+        existing_endpoint = dict(existing_endpoint) if isinstance(existing_endpoint, dict) else {}
+        if existing_endpoint.get("endpoint_id") and (
+            not idempotency_key or existing_endpoint.get("idempotency_key") == idempotency_key
+        ):
+            return {**current, "operation_id": existing_endpoint.get("operation_id"), "workflow": self.installation_plan().get("workflow")}
+
+        bundle_application = application.get("bundle")
+        bundle_application = dict(bundle_application) if isinstance(bundle_application, dict) else {}
+        bundle_id = str(bundle_application.get("bundle_id") or "")
+        if not bundle_id:
+            raise ValueError("create a Bundle before creating a private Endpoint")
+        bundle = next((item for item in self.bundle_config() if item.bundle_id == bundle_id), None)
+        if bundle is None:
+            raise ValueError(f"Bundle is not available: {bundle_id}")
+        endpoint_application_service = getattr(self, "endpoint_application_service", None)
+        if endpoint_application_service is None:
+            raise ValueError("Endpoint application service is not configured")
+        wallet = self.owner_wallet_state()
+        if not wallet.get("configured") or not wallet.get("wallet_id"):
+            raise ValueError("Owner wallet must be configured before creating an Endpoint")
+        model_id = str(bundle.model_id or current.get("model", {}).get("id") or "model")
+        runtime_policy = {
+            key: (
+                value.model_dump(mode="json", by_alias=True)
+                if hasattr(value, "model_dump")
+                else dict(value)
+                if isinstance(value, dict)
+                else value
+            )
+            for key, value in bundle.runtime_parameter_policy.items()
+        }
+        result = endpoint_application_service.create_endpoint(
+            {
+                "owner_wallet": wallet["wallet_id"],
+                "bundle_id": bundle.bundle_id,
+                "bundle_hash": bundle.bundle_hash,
+                "display_name": f"{model_id} (local)",
+                "model_class": bundle.workload_type,
+                "capabilities": [bundle.workload_type],
+                "runtime_parameter_policy": runtime_policy,
+                "publication": {
+                    "visibility": "private",
+                    "discoverable": False,
+                    "validation": "disabled",
+                    "accepts_external_requests": False,
+                },
+            }
+        )
+        endpoint_payload = result.get("payload", {}).get("endpoint", {})
+        endpoint_id = str(endpoint_payload.get("endpoint_id") or "")
+        if not endpoint_id:
+            raise ValueError("Endpoint creation returned no endpoint id")
+        operation_id = f"endpoint-install-{uuid4().hex}"
+        application["endpoint"] = {
+            "endpoint_id": endpoint_id,
+            "bundle_id": bundle.bundle_id,
+            "status": "CREATED",
+            "visibility": "private",
+            "discoverable": False,
+            "operation_id": operation_id,
+            "idempotency_key": idempotency_key,
+            "created_at": datetime.now(UTC).isoformat(),
+            "actor": actor,
+        }
+        updated = update_installation_plan(
+            None,
+            expected_hash=plan_hash,
+            status="PRIVATE_ENDPOINT_CREATED",
+            application=application,
+            next_action="start_private_endpoint",
+        )
+        updated["operation_id"] = operation_id
+        updated["workflow"] = self.installation_plan().get("workflow")
+        return updated
+
+    def _start_private_endpoint_from_installation_plan(
+        self,
+        *,
+        plan_hash: str,
+        actor: str,
+        idempotency_key: str | None,
+    ) -> dict:
+        """Start the selected private Bundle through admission and readiness."""
+
+        current = read_installation_plan()
+        if not current.get("available"):
+            raise ValueError(str(current.get("reason") or "installation plan is unavailable"))
+        if current.get("integrity") != "verified":
+            raise ValueError(str(current.get("reason") or "installation plan integrity is not verified"))
+        if str(current.get("plan_hash")) != str(plan_hash):
+            raise ValueError("installation plan changed; refresh before applying")
+        application = current.get("application")
+        application = dict(application) if isinstance(application, dict) else {}
+        endpoint = application.get("endpoint")
+        endpoint = dict(endpoint) if isinstance(endpoint, dict) else {}
+        bundle = application.get("bundle")
+        bundle = dict(bundle) if isinstance(bundle, dict) else {}
+        bundle_id = str(bundle.get("bundle_id") or "")
+        if not endpoint.get("endpoint_id") or not bundle_id:
+            raise ValueError("create a private Endpoint before starting it")
+        existing_runtime = application.get("runtime")
+        existing_runtime = existing_runtime if isinstance(existing_runtime, dict) else {}
+        if existing_runtime.get("runtime_id") and (
+            not idempotency_key or existing_runtime.get("idempotency_key") == idempotency_key
+        ):
+            return {**current, "operation_id": existing_runtime.get("operation_id"), "workflow": self.installation_plan().get("workflow")}
+        runtime = self.start_bundle(bundle_id, reserve_resources=True)
+        readiness = self.runtime_readiness(runtime.runtime_id, force=True)
+        operation_id = f"endpoint-start-{uuid4().hex}"
+        application["runtime"] = {
+            "runtime_id": runtime.runtime_id,
+            "status": runtime.status,
+            "readiness": readiness.get("readiness"),
+            "operation_id": operation_id,
+            "idempotency_key": idempotency_key,
+            "started_at": datetime.now(UTC).isoformat(),
+            "actor": actor,
+        }
+        readiness_status = str((readiness.get("readiness") or {}).get("status") or "UNKNOWN")
+        status = "PRIVATE_ENDPOINT_READY" if readiness_status == "READY" else "PRIVATE_ENDPOINT_NOT_READY"
+        next_action = "continue_in_dashboard" if readiness_status == "READY" else "inspect_endpoint_readiness"
+        updated = update_installation_plan(
+            None,
+            expected_hash=plan_hash,
+            status=status,
+            application=application,
+            next_action=next_action,
         )
         updated["operation_id"] = operation_id
         updated["workflow"] = self.installation_plan().get("workflow")

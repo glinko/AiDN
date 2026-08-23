@@ -720,13 +720,34 @@ def test_service_queues_selected_model_as_a_second_explicit_setup_step(
     assert bundle["status"] == "BUNDLE_CREATED"
     assert bundle["application"]["bundle"]["bundle_id"].startswith("bundle-steward-")
     assert bundle["workflow"]["next_action"]["id"] == "create_private_endpoint"
-    replay = service.apply_installation_plan(
+    class _EndpointApplication:
+        def create_endpoint(self, payload: dict) -> dict:
+            assert payload["publication"]["visibility"] == "private"
+            assert payload["publication"]["discoverable"] is False
+            return {"payload": {"endpoint": {"endpoint_id": "ep-steward-test"}}}
+
+    monkeypatch.setattr(
+        service,
+        "owner_wallet_state",
+        lambda: {"configured": True, "wallet_id": "wallet-test"},
+    )
+    service.endpoint_application_service = _EndpointApplication()
+    endpoint = service.apply_installation_plan(
         plan_hash=str(bundle["plan_hash"]),
         actor="operator-test",
-        idempotency_key="bundle-1",
-        action="create_bundle",
+        idempotency_key="endpoint-1",
+        action="create_private_endpoint",
     )
-    assert replay["application"]["bundle"]["bundle_id"] == bundle["application"]["bundle"]["bundle_id"]
+    assert endpoint["status"] == "PRIVATE_ENDPOINT_CREATED"
+    assert endpoint["application"]["endpoint"]["visibility"] == "private"
+    assert endpoint["workflow"]["next_action"]["id"] == "start_private_endpoint"
+    replay = service.apply_installation_plan(
+        plan_hash=str(endpoint["plan_hash"]),
+        actor="operator-test",
+        idempotency_key="endpoint-1",
+        action="create_private_endpoint",
+    )
+    assert replay["application"]["endpoint"]["endpoint_id"] == "ep-steward-test"
 
 
 def test_service_managed_provider_runtime_lifecycle_delegates_through_facade() -> None:

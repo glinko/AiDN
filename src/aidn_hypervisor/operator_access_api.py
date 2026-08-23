@@ -179,6 +179,8 @@ class InstallationPlanApplyRequest(BaseModel):
         "prepare_assisted_installation_review",
         "request_model_install",
         "create_bundle",
+        "create_private_endpoint",
+        "start_private_endpoint",
     ] = "prepare_review"
 
 
@@ -320,6 +322,11 @@ def build_operator_access_router(
         if endpoint_service is not None
         else None
     )
+    if hypervisor_service is not None and endpoint_application_service is not None:
+        # Assisted installation uses the same application boundary as the
+        # dashboard's ordinary Endpoint draft flow.  Publication remains a
+        # separate method and is never implied by this reference.
+        hypervisor_service.endpoint_application_service = endpoint_application_service
 
     def _reconcile_remote_endpoint_publication(endpoint_id: str) -> bool:
         """Materialize a finalized publication before a dashboard retry."""

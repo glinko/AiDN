@@ -127,6 +127,12 @@ After the worker reports that install as `completed`, use
 `"action": "create_bundle"` to register a loopback-preferred local Bundle. The
 runtime port allocator still chooses the actual free listener during activation;
 this step does not start a process or create a public Endpoint.
+When the operator is ready, `"action": "create_private_endpoint"` uses the
+same Endpoint application boundary as the Dashboard to create an owner-only
+draft (`private`, not discoverable, validation disabled, external requests
+off). `"action": "start_private_endpoint"` is intentionally separate: it
+passes Bundle activation through Resource Broker admission and records the
+fresh readiness probe. No assisted action calls the public publish path.
 For a normal manual install, omit the assisted flags or use
 `--setup-mode manual`.
 
