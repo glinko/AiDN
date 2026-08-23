@@ -397,6 +397,7 @@ const installationWorkflowSchema = z.object({
   stages: z.array(unknownRecord).catch([]),
   progress: unknownRecord.default({}),
   forecast: unknownRecord.nullable().optional(),
+  completion: unknownRecord.nullable().optional(),
   next_action: z.object({
     id: stringValue,
     label: stringValue,

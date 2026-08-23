@@ -241,6 +241,7 @@ function AssistedSetupCard({ plan, onNavigate, onApply }: { plan: InstallationPl
     start_private_endpoint: 'start_private_endpoint',
   }
   const action = workflowAction[nextAction?.id ?? ''] ?? (reviewable ? 'prepare_review' : undefined)
+  const completion = plan.workflow?.completion
   const destination = nextAction?.id === 'approve_provider_installation' || status === 'waiting_for_provider'
     ? 'providers'
     : nextAction?.id === 'wait_model_install' || nextAction?.id === 'inspect_model_install' || status === 'model_install_queued'
@@ -269,6 +270,7 @@ function AssistedSetupCard({ plan, onNavigate, onApply }: { plan: InstallationPl
         <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Endpoint</dt><dd className="font-mono text-foreground">{plan.endpoint.requested_action}</dd></div>
       </dl>
       {nextAction?.reason || plan.reason ? <p className="mt-3 rounded-xl border border-border bg-white/75 p-3 text-xs leading-5 text-muted-foreground">{nextAction?.reason ?? plan.reason}</p> : null}
+      {completion?.state === 'READY' ? <div className="mt-3 rounded-xl border border-emerald-700/20 bg-emerald-50 p-3 text-xs leading-5 text-emerald-900"><p className="font-semibold">Private Endpoint ready</p><p className="mt-1">{String(completion.summary ?? 'The assisted setup reached a healthy local runtime.')}</p><p className="mt-1 font-mono text-[10px] uppercase tracking-[0.08em] text-emerald-800">Publication: {String(completion.publication ?? 'NOT_PUBLISHED').replaceAll('_', ' ')}</p></div> : null}
       {needsRegeneration ? <p className="mt-3 text-xs leading-5 text-amber-800">Run the installer again to create a fresh, hash-bound plan before continuing.</p> : null}
       {action && plan.plan_hash && plan.integrity === 'verified' ? <Button
         className="mt-4 min-h-11 w-full justify-between"

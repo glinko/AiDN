@@ -154,8 +154,10 @@ requires an `ADMIT` forecast: it passes Bundle activation through the Resource
 Broker again (protecting against races), lets the port allocator choose the
 listener, and records the fresh readiness probe. If capacity changes between
 forecast and start, the plan returns to `PRIVATE_ENDPOINT_RESOURCE_WAIT` with
-the broker explanation instead of starting an unsafe process. No assisted
-action calls the public publish path.
+the broker explanation instead of starting an unsafe process. A healthy start
+also returns a structured `workflow.completion` summary with the provider,
+model, Bundle, Endpoint, runtime and readiness IDs, plus an explicit
+`NOT_PUBLISHED` handoff. No assisted action calls the public publish path.
 For a normal manual install, omit the assisted flags or use
 `--setup-mode manual`.
 

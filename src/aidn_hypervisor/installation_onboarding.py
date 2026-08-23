@@ -580,6 +580,23 @@ def build_installation_workflow_projection(
     workflow_status = "READY" if required and completed == required else "IN_PROGRESS"
     if required == 0:
         workflow_status = "READY_FOR_DASHBOARD"
+    completion = None
+    if endpoint_state == "READY" and application_endpoint.get("endpoint_id"):
+        readiness = application_runtime.get("readiness")
+        readiness = readiness if isinstance(readiness, Mapping) else {}
+        completion = {
+            "state": "READY",
+            "handoff": str(plan.get("handoff") or "dashboard"),
+            "summary": "Private Endpoint is healthy and ready for operator validation/publication review.",
+            "provider_id": provider_id,
+            "model_id": model_id,
+            "bundle_id": application_bundle_id or None,
+            "endpoint_id": str(application_endpoint.get("endpoint_id") or "") or None,
+            "runtime_id": str(application_runtime.get("runtime_id") or "") or None,
+            "readiness": dict(readiness),
+            "publication": "NOT_PUBLISHED",
+            "next_operator_step": "validate_and_publish_when_policy_allows",
+        }
     return {
         "status": workflow_status,
         "checked_at": timestamp,
@@ -591,6 +608,7 @@ def build_installation_workflow_projection(
             "percent": round(completed / required * 100) if required else 100,
         },
         "forecast": dict(application_forecast) if application_forecast else None,
+        "completion": completion,
         "next_action": {"id": action_id, "label": action_label, "reason": reason},
     }
 

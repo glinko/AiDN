@@ -800,6 +800,9 @@ def test_service_queues_selected_model_as_a_second_explicit_setup_step(
     assert started["status"] == "PRIVATE_ENDPOINT_READY"
     assert started["application"]["runtime"]["runtime_id"] == "rt-steward-test"
     assert started["workflow"]["next_action"]["id"] == "continue_in_dashboard"
+    assert started["workflow"]["completion"]["state"] == "READY"
+    assert started["workflow"]["completion"]["publication"] == "NOT_PUBLISHED"
+    assert started["workflow"]["completion"]["runtime_id"] == "rt-steward-test"
     replay = service.apply_installation_plan(
         plan_hash=str(started["plan_hash"]),
         actor="operator-test",
