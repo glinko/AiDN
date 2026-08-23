@@ -124,6 +124,10 @@ finality.
   Provider, model-install, Bundle and Endpoint state and receive one bounded
   next action (`prepare review`, `approve provider`, `request model`, `create
   Bundle`, or `create private Endpoint`) without treating intent as fact.
+- [x] Add the second explicit assisted-setup action: once the selected Provider
+  is observed attached, a plan-hash/idempotency-bound request queues the model
+  install and records its `install_id`; the worker still owns download and
+  verification, so this step cannot silently mutate the host.
 - [ ] Run the complete Ubuntu CI matrix and package build for this exact commit.
   Local focused tests and Ruff are green; Windows pytest teardown currently
   leaves completed test workers alive, so it is not accepted as release proof.
