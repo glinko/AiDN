@@ -7,8 +7,8 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from copy import deepcopy
 from datetime import UTC, datetime
-from threading import RLock
 from pathlib import Path
+from threading import RLock
 from uuid import uuid4
 
 from aidn_hypervisor.accounting.llamacpp import build_llamacpp_usage_profile

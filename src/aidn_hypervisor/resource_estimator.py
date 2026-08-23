@@ -12,7 +12,6 @@ import math
 from pathlib import Path
 from typing import Any
 
-
 _MIB = 1024 * 1024
 _DEFAULT_KV_BYTES_PER_TOKEN_F16 = 262_144
 _KV_BYTES_PER_ELEMENT = {

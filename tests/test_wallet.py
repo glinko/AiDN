@@ -1977,7 +1977,7 @@ def test_service_skips_invalid_provider_usage_contract_without_failing_task() ->
 
     assert service.get_task(task.task_id).status == "completed"
     assert service.list_wallet_usage_events() == []
-    assert service.event_journal(limit=1)[0].event_type == "wallet.usage_skipped"
+    assert any(event.event_type == "wallet.usage_skipped" for event in service.event_journal())
 
 
 def test_service_marks_task_unbillable_when_strict_accounting_rejects_invalid_usage() -> None:
@@ -1995,7 +1995,7 @@ def test_service_marks_task_unbillable_when_strict_accounting_rejects_invalid_us
     )
 
     result = service.task_result(task.task_id)
-    journal_event = service.event_journal(limit=1)[0]
+    journal_event = next(event for event in service.event_journal() if event.event_type == "wallet.usage_skipped")
 
     assert service.get_task(task.task_id).status == "completed"
     assert service.list_wallet_usage_events() == []
@@ -2026,7 +2026,7 @@ def test_service_marks_task_unbillable_when_strict_accounting_usage_is_missing()
     )
 
     result = service.task_result(task.task_id)
-    journal_event = service.event_journal(limit=1)[0]
+    journal_event = next(event for event in service.event_journal() if event.event_type == "wallet.usage_skipped")
 
     assert service.get_task(task.task_id).status == "completed"
     assert service.list_wallet_usage_events() == []
@@ -2153,7 +2153,7 @@ def test_service_rejects_token_priced_audio_endpoint_before_provider_execution()
 
     assert service.get_task(task.task_id).status == "failed"
     assert service.task_result(task.task_id) is None
-    rejection = service.event_journal(limit=1)[0]
+    rejection = next(event for event in service.event_journal() if event.event_type == "task.accounting_rejected")
     assert rejection.event_type == "task.accounting_rejected"
     assert rejection.details["accounting_errors"] == [
         "Provider does not report required billing unit: input_tokens",

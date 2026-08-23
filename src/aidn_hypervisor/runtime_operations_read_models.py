@@ -11,7 +11,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-
 _TERMINAL_JOB_STATUSES = {"SUCCEEDED", "FAILED", "CANCELLED"}
 
 

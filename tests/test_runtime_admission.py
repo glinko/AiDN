@@ -9,9 +9,9 @@ from aidn_hypervisor.domain.models import (
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.process_manager import ProviderProcessManager
+from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.resources import ResourceAdmissionError, ResourceOrchestrator
 from aidn_hypervisor.scheduler import Scheduler
-from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.service import HypervisorService
 
 

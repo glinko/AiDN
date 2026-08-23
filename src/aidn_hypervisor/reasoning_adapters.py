@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import json
 import os
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import Any
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 

@@ -1,9 +1,9 @@
-from collections.abc import Mapping
+import os
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-import os
 from threading import RLock
-from typing import Any, Callable
+from typing import Any
 
 from aidn_hypervisor.domain.models import NodeCapacity
 

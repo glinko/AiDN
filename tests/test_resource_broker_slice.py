@@ -10,7 +10,6 @@ from aidn_hypervisor.process_manager import ProviderProcessManager
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.resource_probe import ResourceProbeReport, read_resource_probe_report, write_resource_probe_report
 from aidn_hypervisor.resources import (
-    ResourceAdmissionError,
     ResourceOrchestrator,
     ResourceReconciliationRequiredError,
     ResourceSafetyPolicy,

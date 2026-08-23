@@ -1077,13 +1077,6 @@ class McpControlPlane:
             },
             "additionalProperties": False,
         }
-        scheduler_limit_schema = {
-            "type": "object",
-            "properties": {
-                "limit": {"type": "integer", "minimum": 1, "maximum": 500},
-            },
-            "additionalProperties": False,
-        }
         hook_filter_schema = {
             "type": "object",
             "properties": {
@@ -3196,7 +3189,7 @@ class McpJsonRpcServer:
                 output_stream.flush()
 
 
-from aidn_hypervisor.mcp.steward_tools import install_steward_extensions
+from aidn_hypervisor.mcp.steward_tools import install_steward_extensions  # noqa: E402
 
 install_steward_extensions(McpControlPlane, McpTool, McpResource)
 

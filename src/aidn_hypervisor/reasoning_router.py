@@ -8,13 +8,13 @@ the router returns an explainable, fail-closed decision.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
 import hashlib
 import json
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from threading import RLock
-from typing import Any, Callable, Iterable, Mapping
-
+from typing import Any
 
 PROVIDER_KINDS = {
     "LOCAL_RESIDENT",
@@ -173,7 +173,7 @@ class ReasoningProvider:
         object.__setattr__(self, "metadata", metadata)
 
     @classmethod
-    def from_mapping(cls, value: Mapping[str, Any]) -> "ReasoningProvider":
+    def from_mapping(cls, value: Mapping[str, Any]) -> ReasoningProvider:
         if not isinstance(value, Mapping):
             raise ValueError("provider must be an object")
         resources = value.get("required_resources", {})
@@ -324,7 +324,7 @@ class ReasoningRouteRequest:
                 raise ValueError(f"{name} must be a boolean")
 
     @classmethod
-    def from_mapping(cls, value: Mapping[str, Any]) -> "ReasoningRouteRequest":
+    def from_mapping(cls, value: Mapping[str, Any]) -> ReasoningRouteRequest:
         if not isinstance(value, Mapping):
             raise ValueError("route request must be an object")
         return cls(

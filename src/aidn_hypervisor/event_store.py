@@ -9,9 +9,10 @@ webhooks and external transports remain separate adapters.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 from threading import RLock
-from typing import Any, Callable, Iterable
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 

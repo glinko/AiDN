@@ -6,6 +6,9 @@ select = ["E", "W", "F", "I", "UP", "B", "C4", "SIM"]
 # Protocol enums intentionally retain ``str, Enum``: changing to ``StrEnum``
 # changes ``str(member)`` for callers that rely on the published wire values.
 # The listed C4/SIM rules are readability-only rewrites; explicit branches and
-# exception handling are preferred in protocol and recovery paths.
-ignore = ["C408", "C416", "SIM102", "SIM103", "SIM105", "SIM108", "UP042"]
+# exception handling are preferred in protocol and recovery paths.  A number
+# of canonical protocol payloads are intentionally stored as one logical
+# record per line; their formatter is the owning schema/generator, so E501 is
+# not a useful release gate for this repository.
+ignore = ["C408", "C416", "E501", "SIM102", "SIM103", "SIM105", "SIM108", "UP042"]
 exclude = ["tests/fixtures", "docs", ".git"]

@@ -4,7 +4,6 @@ from aidn_hypervisor.endpoint_publications.models import (
     configuration_hash_for_publication,
     legacy_configuration_hash_for_publication,
 )
-from aidn_hypervisor.runtime_parameter_policy import marketplace_parameter_policy
 from aidn_hypervisor.operator_onboarding import (
     ONBOARDING_STEPS,
     build_onboarding_payload,
@@ -12,6 +11,7 @@ from aidn_hypervisor.operator_onboarding import (
 from aidn_hypervisor.provider_read_models import (
     build_operator_providers_payload as build_provider_workspace_payload,
 )
+from aidn_hypervisor.runtime_parameter_policy import marketplace_parameter_policy
 from aidn_hypervisor.validation_read_models import (
     build_operator_endpoint_validation_payload,
 )

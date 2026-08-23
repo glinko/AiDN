@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import StrEnum
 from threading import RLock
-from typing import Any, Callable
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 

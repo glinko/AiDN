@@ -1,7 +1,7 @@
-from aidn_hypervisor.event_bus import InternalEventBus
-from aidn_hypervisor.event_store import EventStore
-from aidn_hypervisor.event_store import EventStoreError
 import pytest
+
+from aidn_hypervisor.event_bus import InternalEventBus
+from aidn_hypervisor.event_store import EventStore, EventStoreError
 
 
 def _publish(bus: InternalEventBus, name: str):

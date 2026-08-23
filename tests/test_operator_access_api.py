@@ -577,6 +577,7 @@ def test_paired_dashboard_operations_require_pairing_and_call_bounded_service(tm
             "configuration": {"endpoint": "http://127.0.0.1:11434"},
             "operator_note": "Paired Dashboard one-click runtime installation",
             "upgrade_acknowledged": False,
+            "wait_for_completion": True,
         },
     ) in service.calls
     lifecycle_install = client.post(

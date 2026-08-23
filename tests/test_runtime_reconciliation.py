@@ -1,6 +1,6 @@
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 
 from aidn_hypervisor.domain.models import BundleConfig, NodeCapacity, ResourceProfile
 from aidn_hypervisor.persistence import FileStateStore
@@ -72,7 +72,7 @@ def test_process_exit_persists_without_a_follow_up_read(tmp_path) -> None:
     manager = ProviderProcessManager(enable_subprocesses=True)
     service = _service(tmp_path, runtimes=manager)
 
-    runtime = manager.start_runtime(
+    manager.start_runtime(
         {
             "command": [sys.executable, "-c", "import time; time.sleep(0.25); raise SystemExit(7)"],
             "launch_mode": "managed_process",

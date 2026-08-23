@@ -18,6 +18,7 @@ from aidn_hypervisor.economics.models import (
 from aidn_hypervisor.endpoint_execution_context_service import (
     EndpointExecutionContextService,
 )
+from aidn_hypervisor.escalation_service import EscalationTaskService
 from aidn_hypervisor.event_bus import (
     CanonicalEventEnvelope,
     EventDataClass,
@@ -35,6 +36,10 @@ from aidn_hypervisor.hook_dispatcher import (
 from aidn_hypervisor.hypervisor_integration_service import (
     HypervisorIntegrationService,
 )
+from aidn_hypervisor.installation_onboarding import (
+    prepare_assisted_installation_review,
+    read_installation_plan,
+)
 from aidn_hypervisor.ledger.service import LedgerOperationService
 from aidn_hypervisor.lifecycle_manager import LifecycleManager, ResetManager
 from aidn_hypervisor.model_install_service import ModelInstallService
@@ -51,6 +56,17 @@ from aidn_hypervisor.providers.package_store import PluginPackageStore
 from aidn_hypervisor.providers.service import ProviderInventoryService
 from aidn_hypervisor.providers.store import InMemoryProviderInventoryStore
 from aidn_hypervisor.queue import InMemoryTaskQueue, QueuedTask
+from aidn_hypervisor.reasoning_adapters import (
+    ReasoningAdapterError,
+    ReasoningAdapterRegistry,
+    ReasoningInvocation,
+)
+from aidn_hypervisor.reasoning_router import (
+    ReasoningProvider,
+    ReasoningProviderRegistry,
+    ReasoningRouter,
+    ReasoningRouteRequest,
+)
 from aidn_hypervisor.registry_models import (
     RegistryPricing,
     RegistryRating,
@@ -60,18 +76,6 @@ from aidn_hypervisor.remote_transport_service import RemoteTransportService
 from aidn_hypervisor.resident_agent_service import ResidentAgentService
 from aidn_hypervisor.resident_inference_adapter import ResidentInferenceAdapter
 from aidn_hypervisor.resident_worker import ResidentWorker
-from aidn_hypervisor.reasoning_router import (
-    ReasoningProvider,
-    ReasoningProviderRegistry,
-    ReasoningRouteRequest,
-    ReasoningRouter,
-)
-from aidn_hypervisor.reasoning_adapters import (
-    ReasoningAdapterError,
-    ReasoningAdapterRegistry,
-    ReasoningInvocation,
-)
-from aidn_hypervisor.escalation_service import EscalationTaskService
 from aidn_hypervisor.runtime_execution_service import RuntimeExecutionService
 from aidn_hypervisor.runtime_protocol import RuntimeProtocolBoundaryService
 from aidn_hypervisor.runtime_protocol.models import RuntimeRequestRecord
@@ -2000,6 +2004,20 @@ class HypervisorService:
     def operator_dashboard_fleet(self) -> dict:
         return self._operator_application_facade().operator_dashboard_fleet()
 
+    def operator_dashboard_resources(self) -> dict:
+        """Return the bounded Resource Broker projection used by the dashboard.
+
+        Resource admission remains authoritative in the broker.  This is a
+        read-only view, deliberately kept on the service façade so the API,
+        Resident Steward and Dashboard receive the same current state.
+        """
+
+        from aidn_hypervisor.resource_broker_read_models import (
+            build_resource_broker_dashboard_payload,
+        )
+
+        return build_resource_broker_dashboard_payload(service=self)
+
     def operator_dashboard_endpoints(self) -> dict:
         return self._operator_application_facade().operator_dashboard_endpoints()
 
@@ -2096,6 +2114,48 @@ class HypervisorService:
             plugin_id=plugin_id,
             configuration=configuration,
         )
+
+    def installation_plan(self) -> dict:
+        """Return the bounded, secret-free terminal installer handoff."""
+
+        return read_installation_plan()
+
+    def apply_installation_plan(
+        self,
+        *,
+        plan_hash: str,
+        actor: str = "operator",
+        idempotency_key: str | None = None,
+    ) -> dict:
+        """Prepare the next approved assisted-installation lifecycle step.
+
+        The prepared review is durable in ``installation-plan.json``.  It is
+        deliberately not a generic installer: provider installation still
+        follows its own approval, model download its own queue, and endpoint
+        publication its validation/policy boundary.
+        """
+
+        result = prepare_assisted_installation_review(
+            None,
+            expected_hash=plan_hash,
+            actor=actor,
+            idempotency_key=idempotency_key,
+            provider_plan_builder=lambda plugin_id, configuration: self.build_provider_installation_plan(
+                plugin_id=plugin_id,
+                configuration=configuration,
+            ),
+        )
+        self.record_event(
+            event_type="installation.plan.review_prepared",
+            message="AI-assisted installation plan prepared for provider review",
+            details={
+                "operation_id": result.get("operation_id"),
+                "status": result.get("status"),
+                "next_action": result.get("next_action"),
+            },
+        )
+        self._persist_state()
+        return result
 
     def approve_provider_installation_plan(
         self,

@@ -29,7 +29,6 @@ from aidn_hypervisor.event_bus import (
 )
 from aidn_hypervisor.event_store import EventStore, EventStoreError
 
-
 HookDeliveryMode = Literal["DURABLE_INBOX", "MCP_LIVE"]
 HookDeliveryState = Literal[
     "PENDING",
@@ -74,7 +73,7 @@ class HookEventFilter(BaseModel):
     severity_minimum: EventSeverity | None = None
 
     @model_validator(mode="after")
-    def _validate_filter(self) -> "HookEventFilter":
+    def _validate_filter(self) -> HookEventFilter:
         if not self.event_types and not self.resource_ids and self.severity_minimum is None:
             raise ValueError("Hook event_filter must constrain event type, resource, or severity")
         return self
@@ -96,7 +95,7 @@ class HookDefinition(BaseModel):
     hook_revision: int = Field(default=1, ge=1)
 
     @model_validator(mode="after")
-    def _validate_timestamps(self) -> "HookDefinition":
+    def _validate_timestamps(self) -> HookDefinition:
         _parse(self.created_at)
         if self.expires_at is not None:
             _parse(self.expires_at)

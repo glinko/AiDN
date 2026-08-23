@@ -4,20 +4,20 @@ import pytest
 from fastapi.testclient import TestClient
 
 from aidn_hypervisor.domain.models import NodeCapacity
+from aidn_hypervisor.main import build_app
+from aidn_hypervisor.model_store import FileModelStore
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.process_manager import ProviderProcessManager
-from aidn_hypervisor.resources import ResourceOrchestrator
+from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.resident_inference_adapter import (
     ResidentInferenceAdapter,
     ResidentInferenceError,
     ResidentInferenceResourceWait,
 )
-from aidn_hypervisor.queue import InMemoryTaskQueue
+from aidn_hypervisor.resources import ResourceOrchestrator
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
-from aidn_hypervisor.model_store import FileModelStore
-from aidn_hypervisor.main import build_app
 
 
 def _adapter(tmp_path: Path, *, vram_mb: int = 0, ram_mb: int = 4096):

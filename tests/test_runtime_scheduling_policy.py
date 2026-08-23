@@ -1,7 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile, TaskRequest
-from aidn_hypervisor.domain.models import NodeCapacity
+from aidn_hypervisor.domain.models import BundleConfig, NodeCapacity, ResourceProfile, TaskRequest
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.process_manager import RuntimeHandle

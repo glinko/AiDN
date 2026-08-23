@@ -10,22 +10,36 @@ Endpoint, or mutate the node by itself.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import UTC, datetime
-from pathlib import Path
-import json
 import hashlib
+import json
 import os
 import re
 import tempfile
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from urllib.parse import urlparse
-
+from uuid import uuid4
 
 SETUP_MODES = {"manual", "ai_assisted"}
 PROVIDER_CHOICES = {"skip", "ollama", "llama.cpp", "vllm"}
 ENDPOINT_ACTIONS = {"skip", "draft", "start"}
 HANDOFF_ACTIONS = {"continue", "dashboard"}
 PLAN_MAX_BYTES = 128 * 1024
+
+
+def _set_owner_only_permissions(fd: int) -> None:
+    """Apply POSIX owner-only permissions when the platform supports them.
+
+    The installation target is Ubuntu, where the plan is deliberately written
+    as ``0600``.  Windows does not expose ``os.fchmod`` and enforces access
+    through ACLs instead; skipping the POSIX mode change there keeps plan
+    creation portable without weakening the supported-host guarantee.
+    """
+
+    fchmod = getattr(os, "fchmod", None)
+    if fchmod is not None:
+        fchmod(fd, 0o600)
 MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$")
 
 
@@ -168,7 +182,7 @@ def write_installation_plan(path: str | os.PathLike[str], plan: InstallationOnbo
     payload["plan_hash"] = installation_plan_hash(payload)
     fd, temporary = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
     try:
-        os.fchmod(fd, 0o600)
+        _set_owner_only_permissions(fd)
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             json.dump(payload, stream, indent=2, sort_keys=True)
             stream.write("\n")
@@ -297,6 +311,7 @@ def read_installation_plan(
             "updated_at": payload.get("updated_at"),
             "applied_at": payload.get("applied_at"),
             "application": payload.get("application"),
+            "next_action": payload.get("next_action") or normalized["next_action"],
             "plan_path": str(resolved),
         },
     }
@@ -310,7 +325,7 @@ def read_installation_plan(
 
 
 def update_installation_plan(
-    path: str | os.PathLike[str],
+    path: str | os.PathLike[str] | None,
     *,
     expected_hash: str,
     status: str,
@@ -343,7 +358,7 @@ def update_installation_plan(
     destination = Path(resolved)
     fd, temporary = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
     try:
-        os.fchmod(fd, 0o600)
+        _set_owner_only_permissions(fd)
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             json.dump(raw, stream, indent=2, sort_keys=True)
             stream.write("\n")
@@ -355,6 +370,100 @@ def update_installation_plan(
             pass
         raise
     return read_installation_plan(destination)
+
+
+def prepare_assisted_installation_review(
+    path: str | os.PathLike[str] | None,
+    *,
+    expected_hash: str,
+    actor: str,
+    idempotency_key: str | None = None,
+    provider_plan_builder,
+) -> dict[str, object]:
+    """Advance one assistant-created plan to an explicit provider review.
+
+    This is intentionally *not* a shortcut around the Provider lifecycle:
+    it materializes the reviewed provider installation plan and records the
+    model/Endpoint work still waiting behind it.  The operator must still use
+    the existing plan/approval/apply flow for the provider and the normal
+    model/Bundle/Endpoint lifecycle thereafter.
+    """
+
+    current = read_installation_plan(path)
+    if not current.get("available"):
+        raise ValueError(str(current.get("reason") or "installation plan is unavailable"))
+    if current.get("integrity") != "verified":
+        raise ValueError(str(current.get("reason") or "installation plan integrity is not verified"))
+    if current.get("mode") != "ai_assisted":
+        raise ValueError("only an AI-assisted installation plan can be prepared")
+    if str(current.get("plan_hash")) != str(expected_hash):
+        raise ValueError("installation plan changed; refresh before applying")
+
+    existing = current.get("application")
+    if (
+        idempotency_key
+        and isinstance(existing, dict)
+        and existing.get("idempotency_key") == idempotency_key
+    ):
+        current["operation_id"] = existing.get("operation_id")
+        current["review"] = existing
+        return current
+
+    provider = str(current.get("provider") or "skip")
+    model = current.get("model") if isinstance(current.get("model"), dict) else {}
+    endpoint = current.get("endpoint") if isinstance(current.get("endpoint"), dict) else {}
+    operation_id = f"install-review-{uuid4().hex}"
+    application: dict[str, object] = {
+        "operation_id": operation_id,
+        "actor": str(actor or "operator"),
+        "idempotency_key": idempotency_key,
+        "prepared_at": datetime.now(UTC).isoformat(),
+        "provider": {"status": "SKIPPED"},
+        "model": {
+            "id": model.get("id", "skip"),
+            "source": model.get("source"),
+            "status": "NOT_REQUESTED" if model.get("id", "skip") == "skip" else "PENDING_PROVIDER",
+        },
+        "endpoint": {
+            "requested_action": endpoint.get("requested_action", "skip"),
+            "status": "NOT_REQUESTED" if endpoint.get("requested_action", "skip") == "skip" else "PENDING_MODEL",
+        },
+        "authority": {
+            "provider_install": "provider_plan_approval_required",
+            "model_download": "explicit_model_install_required",
+            "endpoint": "bundle_and_endpoint_lifecycle_required",
+        },
+    }
+
+    if provider == "skip":
+        status = "COMPLETED"
+        next_action = "open_dashboard_provider_setup"
+    else:
+        provider_plan = dict(provider_plan_builder(provider, {}))
+        application["provider"] = {
+            "plugin_id": provider,
+            "configuration": {},
+            "status": "REVIEW_REQUIRED",
+            # Only share the reviewed declarative fields. This plan must never
+            # turn into a vehicle for secret-bearing provider configuration.
+            "installation_plan": {
+                key: provider_plan.get(key)
+                for key in ("plan_id", "plan_version", "summary", "required_permissions", "health_checks")
+            },
+        }
+        status = "PROVIDER_REVIEW_REQUIRED"
+        next_action = "approve_provider_installation"
+
+    updated = update_installation_plan(
+        path,
+        expected_hash=expected_hash,
+        status=status,
+        application=application,
+        next_action=next_action,
+    )
+    updated["operation_id"] = operation_id
+    updated["review"] = application
+    return updated
 
 
 __all__ = [
@@ -369,6 +478,7 @@ __all__ = [
     "installation_plan_hash",
     "installation_plan_path",
     "read_installation_plan",
+    "prepare_assisted_installation_review",
     "update_installation_plan",
     "write_installation_plan",
 ]

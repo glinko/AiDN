@@ -9,11 +9,12 @@ from __future__ import annotations
 import os
 import time
 from collections import deque
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
-from typing import Any, Callable
+from typing import Any
 from uuid import uuid4
 
 DEFAULT_MODEL_REPO = "Qwen/Qwen2.5-0.5B-Instruct-GGUF"

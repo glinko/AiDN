@@ -9,6 +9,7 @@ import pytest
 from aidn_hypervisor.installation_onboarding import (
     InstallationOnboardingPlan,
     installation_plan_hash,
+    prepare_assisted_installation_review,
     read_installation_plan,
     update_installation_plan,
     validate_model_source,
@@ -122,6 +123,75 @@ def test_plan_tampering_is_not_treated_as_legacy(tmp_path: Path) -> None:
     assert projection["integrity"] == "mismatch"
     assert projection["status"] == "STALE"
     assert "changed" in str(projection["reason"])
+
+
+def test_assisted_plan_preparation_persists_a_provider_review(tmp_path: Path) -> None:
+    path = tmp_path / "installation-plan.json"
+    write_installation_plan(
+        path,
+        InstallationOnboardingPlan(
+            setup_mode="ai_assisted",
+            provider="llama.cpp",
+            model_id="org/model",
+            model_source="hf://org/model/model.gguf",
+            endpoint_action="draft",
+            handoff="continue",
+        ),
+    )
+    current = read_installation_plan(path)
+    prepared = prepare_assisted_installation_review(
+        path,
+        expected_hash=str(current["plan_hash"]),
+        actor="operator-test",
+        idempotency_key="setup-1",
+        provider_plan_builder=lambda plugin_id, configuration: {
+            "plan_id": f"plan-{plugin_id}",
+            "plan_version": "1",
+            "summary": "reviewed provider plan",
+            "required_permissions": [{"permission_id": "host.package_manager"}],
+            "health_checks": [],
+            "secret_references": ["not projected"],
+        },
+    )
+
+    assert prepared["status"] == "PROVIDER_REVIEW_REQUIRED"
+    assert prepared["next_action"] == "approve_provider_installation"
+    assert prepared["application"]["provider"]["status"] == "REVIEW_REQUIRED"
+    assert prepared["application"]["model"]["status"] == "PENDING_PROVIDER"
+    assert prepared["application"]["endpoint"]["status"] == "PENDING_MODEL"
+    assert "secret_references" not in prepared["application"]["provider"]["installation_plan"]
+
+    replay = prepare_assisted_installation_review(
+        path,
+        expected_hash=str(prepared["plan_hash"]),
+        actor="operator-test",
+        idempotency_key="setup-1",
+        provider_plan_builder=lambda *_args: pytest.fail("idempotent replay must not rebuild the provider plan"),
+    )
+    assert replay["application"]["operation_id"] == prepared["operation_id"]
+
+
+def test_assisted_plan_preparation_rejects_manual_or_stale_plan(tmp_path: Path) -> None:
+    path = tmp_path / "installation-plan.json"
+    write_installation_plan(path, InstallationOnboardingPlan())
+    current = read_installation_plan(path)
+
+    with pytest.raises(ValueError, match="AI-assisted"):
+        prepare_assisted_installation_review(
+            path,
+            expected_hash=str(current["plan_hash"]),
+            actor="operator-test",
+            provider_plan_builder=lambda *_args: {},
+        )
+
+    write_installation_plan(path, InstallationOnboardingPlan(setup_mode="ai_assisted", provider="ollama"))
+    with pytest.raises(ValueError, match="changed"):
+        prepare_assisted_installation_review(
+            path,
+            expected_hash="sha256:stale",
+            actor="operator-test",
+            provider_plan_builder=lambda *_args: {},
+        )
 
 
 def test_hash_excludes_its_own_field() -> None:

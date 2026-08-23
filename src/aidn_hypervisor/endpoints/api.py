@@ -22,8 +22,8 @@ from aidn_hypervisor.endpoints.mvp_session_application_service import (
     MvpSessionApplicationService,
 )
 from aidn_hypervisor.endpoints.service import EndpointStateError
-from aidn_hypervisor.session_application_service import SessionApplicationService
 from aidn_hypervisor.runtime_parameter_policy import marketplace_parameter_policy
+from aidn_hypervisor.session_application_service import SessionApplicationService
 
 
 class AttachProxyTargetRequest(BaseModel):

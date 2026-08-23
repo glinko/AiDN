@@ -15,7 +15,6 @@ import json
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from threading import RLock
-from typing import Any
 from uuid import uuid4
 
 
@@ -88,7 +87,7 @@ class LifecycleManager:
         states = getattr(self._host, "_lifecycle_states", None)
         if states is None:
             states = {}
-            setattr(self._host, "_lifecycle_states", states)
+            self._host._lifecycle_states = states
         return states
 
     def transition_plan(

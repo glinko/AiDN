@@ -3,11 +3,11 @@ from __future__ import annotations
 from aidn_hypervisor.domain.models import BundleConfig, TaskRequest
 from aidn_hypervisor.process_manager import RuntimeHandle
 from aidn_hypervisor.resources import ResourceAdmissionError
-from aidn_hypervisor.runtime_parameter_policy import apply_runtime_parameter_policy
 from aidn_hypervisor.runtime_instance_manager import (
     set_runtime_lifecycle_state,
     touch_runtime_activity,
 )
+from aidn_hypervisor.runtime_parameter_policy import apply_runtime_parameter_policy
 
 
 class TaskExecutionService:

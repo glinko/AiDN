@@ -5,8 +5,8 @@ from datetime import datetime
 from typing import Any
 
 from aidn_hypervisor.domain.models import BundleConfig, TaskRequest
-from aidn_hypervisor.runtime_instance_manager import evaluate_runtime_eviction
 from aidn_hypervisor.queue import QueuedTask
+from aidn_hypervisor.runtime_instance_manager import evaluate_runtime_eviction
 
 _AGING_PRIORITY_STEP = 10
 _AGING_PRIORITY_INTERVAL_SECONDS = 60
@@ -228,7 +228,6 @@ class AdmissionPlanningService:
                 },
             }
 
-        status = str(candidate.get("status", "UNKNOWN"))
         decision, summary, next_actions = self._decision_summary(candidate)
         factors: list[dict[str, Any]] = [
             {

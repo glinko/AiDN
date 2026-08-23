@@ -9,16 +9,19 @@ provider before the Resource Broker grants an atomic lease.
 from __future__ import annotations
 
 import os
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
 from time import monotonic, sleep
-from typing import Any, Callable
+from typing import Any
 from uuid import uuid4
 
 from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile, TaskRequest
 from aidn_hypervisor.process_manager import RuntimeHandle
+from aidn_hypervisor.resident_model_manager import ResidentModelError, ResidentModelManager
 from aidn_hypervisor.resources import (
     ResourceAdmissionError,
     ResourceReconciliationRequiredError,
@@ -27,7 +30,6 @@ from aidn_hypervisor.runtime_parameter_policy import (
     normalize_runtime_parameter_policy,
     policy_json,
 )
-from aidn_hypervisor.resident_model_manager import ResidentModelError, ResidentModelManager
 
 
 class ResidentInferenceError(ValueError):

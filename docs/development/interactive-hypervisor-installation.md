@@ -50,11 +50,11 @@ private keys, wallet material, or agent token. It records authority boundaries:
 
 When assisted mode is selected, the generated service exports
 `AIDN_INSTALLATION_SETUP_MODE=ai_assisted` and configures the CPU-first Resident
-Steward profile. The current Steward slice is intentionally a control-plane
-boundary (`NOT_STARTED` inference adapter): it can receive bounded context and
-prepare/inspect a plan, but it does not silently download a model or reserve
-VRAM. This keeps installation safe while the inference adapter and Resource
-Broker lease integration are completed.
+Steward profile. The Resident inference adapter and Resource Broker integration
+are implemented, but the installer remains a control-plane boundary: it can
+prepare and inspect the selected workflow, but it does not silently download a
+model, reserve VRAM, or publish an Endpoint. Those changes continue through
+their dedicated approval, admission and validation paths.
 
 ## Non-interactive use
 
@@ -76,11 +76,11 @@ The command stages the plan; it does not publish an Endpoint. On the Overview
 page the Dashboard now shows an **Assisted setup** review card when the plan is
 available. The card exposes the selected provider, model, endpoint intent and
 integrity status. `Review and continue` is a plan-hash-bound operator action:
-it re-reads the file, rejects legacy or tampered plans, and only queues a model
-install when the selected Provider is already installed. Provider installation,
-Bundle creation, Runtime activation, validation and publication remain separate
-policy-gated actions. If the provider is not ready, the card links to Provider
-setup instead of attempting a hidden host mutation.
+it re-reads the file, rejects legacy or tampered plans, and persists an
+idempotent, secret-free **Provider review**. Provider installation, model
+download, Bundle creation, Runtime activation, validation and publication
+remain separate policy-gated actions. The review never attempts a hidden host
+mutation and cannot turn a model URL into a permission grant.
 
 The Dashboard read endpoint is:
 
@@ -100,9 +100,11 @@ POST /operators/dashboard/access/operations/installation-plan/apply
 ```
 
 The operation is intentionally narrow and resumable. A successful response
-records `MODEL_INSTALL_QUEUED`, the broker `install_id`, and the next action in
-the owner-only plan file. For a normal manual install, omit the assisted flags
-or use `--setup-mode manual`.
+records `PROVIDER_REVIEW_REQUIRED` and `approve_provider_installation` in the
+owner-only plan file (or `COMPLETED` when the operator chose `skip`). The
+review projects only the Provider plan ID, summary, required permissions and
+health checks; secrets and arbitrary runtime configuration are excluded. For a
+normal manual install, omit the assisted flags or use `--setup-mode manual`.
 
 ## Resume and handoff semantics
 

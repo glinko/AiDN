@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from threading import RLock
-from typing import Any, Callable
+from typing import Any
 from uuid import uuid4
-
 
 MAX_TASKS = 256
 MAX_GOAL_LENGTH = 512

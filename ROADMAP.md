@@ -1,8 +1,173 @@
 # AiDN Roadmap
 
-Last updated: `2026-08-22`
+Last updated: `2026-08-23`
+
+Last repository audit: `main@08ac516` (`2026-08-22`)
 
 This is the main public roadmap for the repository.
+
+## 2026-08-22 Repository Audit And Public Launch Critical Path
+
+The repository now has considerably more implemented surface than the original
+milestone sequence suggests. To keep implementation status separate from
+release evidence, this roadmap uses the following meanings:
+
+- `[x]` means the code path and focused automated coverage exist on `main`;
+- `[~]` means a useful slice exists, but the documented end-to-end contract is
+  incomplete;
+- `[ ]` means the implementation or required live acceptance evidence is still
+  open;
+- controlled LAN/testnet acceptance does not imply public-production
+  acceptance.
+
+### Audited State
+
+| Surface | Implemented on `main` | Still required for public use |
+| --- | --- | --- |
+| Hypervisor core | Provider runtimes, model/Bundle/Endpoint flows, Resource Broker, scheduler, runtime port allocation, events/Hooks, MCP, Journey, and lifecycle foundations | Production configuration profile, Internet exposure review, backup/restore drill, release packaging, and public smoke evidence |
+| Resident Steward | CPU-first model lifecycle, worker, event cursor, bounded context, Reasoning Router, escalation tasks, action guard/executor, policy UI, MCP, GPU-burst fallback, and tests | A complete assisted-setup executor, real first-boot acceptance, model artifact distribution/checksum policy, recovery UX, and operational latency/resource measurements |
+| Interactive installer | Required questions, `manual`/`ai_assisted` modes, structured owner-only plan, resumable handoff, and plan-bound Dashboard apply | Provider install -> model prepare -> Bundle -> private Endpoint -> health verification as one resumable Steward workflow; Ubuntu 22.04/24.04 fresh/rerun/recovery matrix |
+| Lifecycle | Dependency plans, Bundle/Endpoint transitions, local removal, tombstones, Runtime Reset, operator API, Bundle/Provider actions, and Runtime Reset UI | Complete CLI/MCP lifecycle surface, Validation/Node lifecycle, configuration and identity-preserving reset, decommission, Factory Reset, ArtifactGC, and destructive-host acceptance |
+| Public website | WEB-0001 React application, content, responsive design, demo Network/Explorer/Faucet flows, and a successful production frontend build | The deployed Caddy route still returns `503` for `/api/site/v1/*`; Website Backend, indexer, live Explorer, Faucet facade, release feed, SEO and public deployment acceptance are open |
+| Faucet | External Treasury service, signed Wallet proof, creator policy/releases, SQLite durability, exact-envelope idempotency, verified-finality adapter, admin/MCP boundaries, and focused tests | Internet-facing Website facade, rate limiting/abuse controls, CAPTCHA hook policy, production secrets, funded Treasury activation, monitoring, backup and end-to-end public claim evidence |
+| Consensus/network | Controlled CometBFT/ABCI, strict operation coverage, State Sync, multi-RPC finality and LAN acceptance | G4 public RPC/P2P and bootstrap diversity, G6 independently operated validator evidence, and G7 published release evidence |
+| CI/release | Python lint, hermetic tests, package build and optional live-provider conformance jobs exist | `main@08ac516` is currently red: Ruff fails and the Ubuntu suite reports 17 failures, so packaging is skipped. Restore the existing gate first; then add required Website/Dashboard builds, Faucet tests, installer shell checks, release-gate tooling and deployment manifests |
+
+The focused audit run completed `43` Steward/lifecycle tests and found three
+Windows-only installation-plan failures caused by `os.fchmod`; the same call is
+valid on the supported Ubuntu target but the host-side test suite is not
+portable yet. The external Faucet suite passed `37/37`, and the public Website
+production build passed. These checks are evidence for the table above, not a
+substitute for the full CI and live acceptance matrix.
+
+The current GitHub Actions run for `main@08ac516` is a release blocker:
+[`CI 32606802810`](https://github.com/glinko/AiDN/actions/runs/32606802810)
+reports `4758 passed, 17 failed, 5 skipped, 9 deselected`. The failures include
+stale exact-shape expectations after Resource Broker fit evidence was extended,
+event-order assertions that now observe reconciliation events, and other
+regressions; Ruff also reports formatting/import/line-length debt concentrated
+in the recent Resource Broker and Steward slices. The distribution job was
+therefore skipped.
+
+### Release Target Separation
+
+The next deployable target is **Public Provider Alpha**, not yet a claim of a
+fully decentralized production network. It consists of one hardened,
+Internet-reachable non-validator Provider node, the public Website Backend and
+read-only indexer, and a policy-limited testnet Faucet. Every public surface
+must say `alpha/testnet` and expose provenance/freshness. This target may use a
+verified quorum of the current controlled validators while G4/G6/G7 remain
+open.
+
+The later **Production Network v1** release requires independently operated
+validators, public RPC/P2P and bootstrap diversity, production authority and
+trust-anchor policy, and the final signed evidence bundle. A single public node
+must not be presented as proof of decentralization or public validator
+finality.
+
+### Ordered P0 Critical Path
+
+1. [~] **Restore `main` to green.** Fix the 17 Ubuntu test regressions, run the
+   complete non-integration suite with the configured coverage gate, clear Ruff
+   on `src` and `tests`, and require the distribution build to pass before
+   adding another feature slice. Preserve the added Resource Broker evidence
+   by updating contracts/tests deliberately rather than deleting fields merely
+   to satisfy snapshots.
+2. [ ] **Finish Steward-assisted installation.** Add one durable setup state
+   machine that resumes the exact installation plan, installs only a reviewed
+   Provider through the privileged broker, prepares and verifies the selected
+   model, forecasts resources, creates a Bundle and private Endpoint, starts it
+   only after admission, probes inference health, and returns a structured
+   completion/handoff summary. Public publication remains a separate explicit
+   operator/validation action.
+3. [ ] **Prove the installer on disposable Ubuntu hosts.** Cover 22.04 and
+   24.04, manual and assisted modes, interrupted rerun, existing identity,
+   insufficient disk/RAM/VRAM, failed download, broker restart, uninstall and
+   recovery. Fix host-side test portability so development verification is not
+   OS-dependent.
+4. [ ] **Create the Public Provider Alpha deployment profile.** Pin an
+   immutable release and model checksum, separate secrets from configuration,
+   define DNS/TLS/firewall boundaries, expose only the public inference/session
+   gateway, keep Dashboard/MCP/RPC administrative surfaces private, and add
+   health, metrics, backup, rollback and incident runbooks.
+5. [ ] **Implement the Website Backend and network indexer.** Replace the
+   current Caddy `503` stub with `/api/site/v1/status`, network summary,
+   Endpoint search/detail, release metadata, and explicit source/freshness
+   evidence. The browser must never call arbitrary Hypervisors or hold upstream
+   credentials.
+6. [ ] **Connect the Faucet through the Website facade.** Deploy a funded,
+   activated Treasury with server-only credentials, Wallet/IP/global rate
+   limits, idempotent challenge/claim/reconcile, abuse controls, no-store
+   responses, audit/alerts, low-balance pause and a verified finality drill.
+7. [ ] **Run Public Provider Alpha acceptance.** From an external network,
+   install a fresh node, complete Steward setup, discover the published
+   Endpoint through the Website, execute and account one request, obtain test Q
+   through the Faucet, restart services, restore from backup, and verify that
+   no administrative port or secret is public.
+8. [ ] **Close Production Network v1 gates.** Complete G4, G6 and G7 with
+   independently operated validators and publish the signed evidence bundle.
+
+### Current P0 Worktree Progress — 2026-08-23
+
+- [x] Make the owner-only installation-plan writer portable: Ubuntu keeps the
+  required `0600` mode while Windows test hosts use their native ACL model.
+- [x] Restore the missing `HypervisorService` Resource Broker dashboard façade
+  and update focused contracts for current Resource Broker fit evidence,
+  canonical runtime-parameter policy defaults and event ordering.
+- [x] Make the existing AI-assisted installer handoff executable as a durable,
+  hash-bound **provider review preparation**. It persists an idempotent review
+  operation, exposes the next action, and projects only secret-free Provider
+  plan fields. It deliberately does **not** bypass Provider approval, model
+  download, Bundle, Endpoint or publication policy.
+- [ ] Run the complete Ubuntu CI matrix and package build for this exact commit.
+  Local focused tests and Ruff are green; Windows pytest teardown currently
+  leaves completed test workers alive, so it is not accepted as release proof.
+
+### Public Provider Alpha Exit Criteria
+
+- [ ] One-command installation is pinned to an immutable release and produces
+  a structured, secret-safe completion record.
+- [ ] Assisted mode reaches one healthy private Endpoint without manual JSON
+  edits; every mutation is resumable, policy-bound and visible.
+- [ ] Public DNS/TLS, inference/session ingress, Website API, Explorer and
+  Faucet pass external-device acceptance; Dashboard, MCP administration,
+  CometBFT RPC and Provider control endpoints are not publicly exposed.
+- [ ] Website metrics and Endpoint cards carry observed time, source and
+  degraded/unavailable states; no demo data is rendered as live.
+- [ ] One Faucet request finalizes exactly once and survives a retry/reconcile
+  cycle without duplicate payment.
+- [ ] Backup/restore, process restart, certificate/secret rotation, low-balance
+  pause, monitoring and rollback are exercised and recorded.
+- [ ] CI requires Python, Faucet, Website, Dashboard, installer and packaging
+  gates for the exact release commit.
+
+### P1 After Public Provider Alpha
+
+1. [ ] Complete RFC-0074 Configuration/Identity/Factory Reset,
+   decommissioning, ArtifactGC, and the full lifecycle CLI/MCP surface.
+2. [ ] Complete RFC-0072 authoritative domain event emission, Hook health,
+   coalescing/backpressure and safe Basic Mode automation presets; then replace
+   Journey's primary polling loop with event invalidation while retaining a
+   recovery poll.
+3. [ ] Complete RFC-0073 active drain/preemption, durable scheduler telemetry,
+   Ollama/vLLM/Whisper estimators and measured OOM feedback.
+4. [ ] Add Consumer and Validator Journey graphs and production-grade role
+   switching only after the Provider journey and deletion semantics stabilize.
+5. [ ] Add advanced Steward capabilities only when justified by measurements:
+   true token streaming, benchmark-driven Reasoning Provider selection, signed
+   wake adapters, external SecretStore and multi-node federation are not Public
+   Provider Alpha blockers.
+
+### Audit Follow-Ups
+
+- [ ] Resolve the duplicate `UX-0003` document identifier currently used by
+  both the Operator Readiness Wizard and Node Journey specifications; preserve
+  redirecting links when assigning the next free UX identifier.
+- [ ] Update the interactive-installation document's obsolete statement that
+  the Resident inference adapter is `NOT_STARTED`; the adapter exists, while
+  the end-to-end setup executor remains open.
+- [ ] Add a repository check that validates Roadmap/document links and rejects
+  duplicate specification identifiers.
 
 ## 2026-08-14 Provider Deployment, Marketplace Authoring, And Ubuntu Onboarding
 
@@ -283,7 +448,10 @@ The next website increments are integration work, not a redesign:
 - [x] Ship the visual/content foundation and demo mode with an explicit
   illustrative-data warning.
 - [ ] Connect the Website API boundary to a verified network indexer/read model
-  and expose freshness/provenance for every aggregate metric.
+  and expose freshness/provenance for every aggregate metric. The production
+  Caddy template currently returns an intentional `503 website_api_unavailable`
+  response for `/api/site/v1/*`; the React adapter and demo fixtures are not a
+  Website Backend.
 - [ ] Complete public Endpoint Explorer search/detail cards from published,
   validated advertisements only.
 - [ ] Connect Faucet status/challenge/claim/reconcile routes to the external
@@ -354,8 +522,11 @@ identity, Wallet identity, network history, and secret erasure interact.
   recovery, liveness expiry, and public-key continuity verification.
 - [ ] Implement guarded Factory Reset and separate Wallet/secret secure erase;
   require typed confirmation and non-default MCP capabilities.
-- [ ] Add CLI and MCP plan/apply tools plus Dashboard Maintenance and
-  dependency-aware object actions with exact preserved/deleted summaries.
+- [~] Complete CLI and MCP plan/apply tools plus Dashboard Maintenance and
+  dependency-aware object actions with exact preserved/deleted summaries. The
+  operator API, Bundle/Provider local-removal controls, Bundle lifecycle
+  controls, plan review sheet, and Runtime Reset UI are implemented; the
+  complete CLI/MCP surface and the remaining managed object types are not.
 - [ ] Add destructive-operation acceptance on a disposable Ubuntu node and
   recovery tests for interruption, stale commands, missing network, and
   partial local deletion.
@@ -468,6 +639,16 @@ reviewed Provider, model source, private Endpoint action, and handoff target.
   explicit operator enablement, per-request leases, GPU_BURST admission with
   CPU fallback, collision-safe managed runtime launch, and stop/error cleanup
   are now covered; autonomous execution remains opt-in and policy-gated.
+- [ ] Add the durable Steward setup executor that consumes the reviewed plan
+  and advances Provider installation, model verification, Bundle creation,
+  private Endpoint activation and health verification one idempotent step at a
+  time. The current Dashboard apply path queues a reviewed model job only when
+  the Provider is already installed; it is a handoff, not completed autonomous
+  installation.
+- [ ] Add end-to-end assisted-install acceptance on fresh Ubuntu 22.04/24.04,
+  including interrupted resume, Resource Broker denial, download/broker
+  failure, successful inference probe, structured completion output and clean
+  recovery to the Dashboard.
 
 ## 2026-08-14 ECO-0007 Activation Scope Extension And Maturity Completion
 
@@ -849,15 +1030,18 @@ The distributed registry is a target architecture, not the first milestone.
 
 ## Current Stage
 
-Status: `M1-M7 controlled MVP complete; M8 target architecture; M9-M10 controlled MVP complete`
+Status: `controlled MVP implemented; Public Provider Alpha open; Production Network v1 blocked by G4/G6/G7`
 
-The repository is ahead of the original 2026-08-14 checklist. The current
+The repository is ahead of the original milestone checklist. The current
 `main` branch includes the controlled CometBFT/ABCI network, State Sync and
 registry replication surfaces, the local-agent inference gateway, long-context
 llama.cpp runtime support, stateless MCP Control Sessions, dynamic MCP catalog
-refresh, and MCP Endpoint create/publish tools. The remaining release claim
-is intentionally narrower: public networking (G4), independent operator
-evidence (G6), and final evidence publication (G7) are still open.
+refresh, MCP Endpoint create/publish tools, the Resource Broker/Scheduler,
+RFC-0072 Hooks, lifecycle foundations, the Node Journey, the Resident Steward,
+and the public Website frontend. Implementation completeness and deployment
+completeness are tracked separately in the audit section above. Public
+networking (G4), independent operator evidence (G6), and final evidence
+publication (G7) are still open.
 
 Current implementation slice:
 - [x] Ubuntu operator bootstrap now provisions the pinned CometBFT toolchain,
@@ -990,7 +1174,7 @@ Product alignment summary:
 - the canonical Ledger operation inventory is now documented in `RFC-0059`, so consensus, settlement, reward, external Faucet Treasury funding, validation, and suspension work can land on one state-transition catalog instead of duplicating operation semantics across RFCs;
 - the Capability Runtime service model is now documented in `RFC-0053`, so future runtime packaging, runtime authorization, runtime replacement, and multi-runtime capability work can share one architectural contract before wire-level protocol details;
 - the Hypervisor-to-Runtime boundary is now documented in `RFC-0054`, and its first durable protocol core now enforces approved Binding/route identity, handshake version negotiation, semantic replay protection, Request admission/idempotency, Usage chains and explicit recovery plans/results;
-- the first `MCP-0001` node-control slice is now implemented as a local stdio JSON-RPC server plus an opt-in bearer-token HTTP gateway over the existing Hypervisor service. It exposes scope-filtered read models and Bundle plan/apply mutations with persistent Control Sessions, atomic plans/idempotency, revision checks, hash-linked audit events, a separate operator approval channel, and an operator emergency stop. The production HTTP profile now adds mandatory mTLS, TLS 1.2+, HTTPS enforcement, private-key permission checks, a single-worker launcher, Secret Manager-backed TLS handles, hash-only rotation detection, valid-bundle gating, and graceful certificate reload; QUIC hardening, shell execution, wallet signing, public Endpoint actions, and consensus writes remain deferred. See [the MCP implementation profile](./docs/product/MCP-0001-node-control-server-implementation-profile.md) and [the quickstart](./docs/development/mcp-server-quickstart.md);
+- the first `MCP-0001` node-control slice is now implemented as a local stdio JSON-RPC server plus an opt-in bearer-token HTTP gateway over the existing Hypervisor service. It exposes scope-filtered read models, Bundle plan/apply mutations, Endpoint create/publish, Hook/Event, Resource Broker/Scheduler and Steward surfaces with persistent Control Sessions, refreshable tool catalogs, atomic plans/idempotency, revision checks, hash-linked audit events, a separate operator approval channel, and an operator emergency stop. The production HTTP profile adds mandatory mTLS, TLS 1.2+, HTTPS enforcement, private-key permission checks, a single-worker launcher, Secret Manager-backed TLS handles, hash-only rotation detection, valid-bundle gating, and graceful certificate reload; generic shell execution, Wallet signing, consensus writes, and the complete RFC-0074 lifecycle tool family remain deferred. See [the MCP implementation profile](./docs/product/MCP-0001-node-control-server-implementation-profile.md) and [the quickstart](./docs/development/mcp-server-quickstart.md);
 - the production MCP TLS profile has controlled Ubuntu acceptance on `192.168.88.127`: a real client certificate, encrypted Secret Manager handles, certificate serial rotation, graceful restart, stale transport-session rejection and new-session reconnect all passed. The evidence is [MCP TLS rotation acceptance](./docs/development/mcp-tls-rotation-acceptance-2026-08-04.md); it is technical interoperability evidence only and does not prove organizational independence;
 - registry replication is now documented in `RFC-0061`, so future Full Registry eligibility, anti-entropy, completeness proofs, challenge evidence, and repair synchronization can build on one deterministic storage and retrieval model instead of scattered service-local heuristics;
 - snapshot and fast State Sync are now documented in `RFC-0062`, so future node bootstrap, corruption recovery, trusted checkpoint handling, and portable state restoration can build on one verification-first protocol instead of ad hoc database-copy assumptions;
@@ -2013,6 +2197,13 @@ This work is intentionally outside the functional MVP. It must not alter current
 - Participant eligibility and Sybil resistance: [docs/product/RFC-0058-participant-eligibility-and-sybil-resistance.md](./docs/product/RFC-0058-participant-eligibility-and-sybil-resistance.md)
 - Development contribution accounting and attribution: [docs/product/RFC-0068-development-contribution-accounting-and-attribution-protocol.md](./docs/product/RFC-0068-development-contribution-accounting-and-attribution-protocol.md)
 - Hypervisor dashboard specification: [docs/product/UI-0001-hypervisor-dashboard-specification.md](./docs/product/UI-0001-hypervisor-dashboard-specification.md)
+- Public Website and Web Application: [docs/product/WEB-0001-public-website-and-web-application-specification.md](./docs/product/WEB-0001-public-website-and-web-application-specification.md)
+- Hypervisor Event and Agent Hook protocol: [docs/product/RFC-0072-hypervisor-event-and-agent-hook-protocol.md](./docs/product/RFC-0072-hypervisor-event-and-agent-hook-protocol.md)
+- Resource Broker and Runtime Scheduler: [docs/product/RFC-0073-resource-broker-admission-control-and-runtime-scheduler.md](./docs/product/RFC-0073-resource-broker-admission-control-and-runtime-scheduler.md)
+- Object lifecycle, deletion and reset: [docs/product/RFC-0074-object-lifecycle-deletion-decommissioning-and-node-reset.md](./docs/product/RFC-0074-object-lifecycle-deletion-decommissioning-and-node-reset.md)
+- Deletion and reset implementation profile: [docs/product/IMP-0002-deletion-decommissioning-and-reset-implementation-profile.md](./docs/product/IMP-0002-deletion-decommissioning-and-reset-implementation-profile.md)
+- Node Intelligence Architecture: [docs/product/RFC-0075-node-intelligence-architecture.md](./docs/product/RFC-0075-node-intelligence-architecture.md)
+- Node Journey and Setup Graph: [docs/product/UX-0003-node-journey-setup-graph.md](./docs/product/UX-0003-node-journey-setup-graph.md)
 - M5 validation bond and escrow design: [docs/superpowers/specs/2026-07-02-validation-bond-and-escrow-design.md](./docs/superpowers/specs/2026-07-02-validation-bond-and-escrow-design.md)
 - Current hypervisor execution plan: [docs/superpowers/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md](./docs/superpowers/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md)
 - Network architecture spec: [docs/superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md](./docs/superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md)

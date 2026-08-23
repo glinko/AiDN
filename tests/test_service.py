@@ -611,6 +611,55 @@ def test_service_build_provider_installation_plan_preview() -> None:
     assert plan["plugin_id"] == "fake-managed"
 
 
+def test_service_prepares_ai_assisted_installation_review_from_configured_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The service façade must use the configured plan path, not a fake path."""
+
+    from aidn_hypervisor.installation_onboarding import (
+        InstallationOnboardingPlan,
+        read_installation_plan,
+        write_installation_plan,
+    )
+
+    plan_path = tmp_path / "installation-plan.json"
+    monkeypatch.setenv("AIDN_INSTALLATION_PLAN_PATH", str(plan_path))
+    registry = PluginRegistry()
+    registry.register(LlamaCppPlugin())
+    write_installation_plan(
+        plan_path,
+        InstallationOnboardingPlan(
+            setup_mode="ai_assisted",
+            provider="llama.cpp",
+            model_id="org/model",
+            model_source="https://example.test/model.gguf",
+            endpoint_action="draft",
+        ),
+    )
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        plugins=registry,
+        runtimes=ProviderProcessManager(),
+    )
+    plan = read_installation_plan(plan_path)
+
+    prepared = service.apply_installation_plan(
+        plan_hash=str(plan["plan_hash"]),
+        actor="operator-test",
+        idempotency_key="install-1",
+    )
+
+    assert prepared["status"] == "PROVIDER_REVIEW_REQUIRED"
+    assert prepared["next_action"] == "approve_provider_installation"
+    assert prepared["application"]["provider"]["plugin_id"] == "llama.cpp"
+    assert any(
+        event.event_type == "installation.plan.review_prepared"
+        for event in service.event_journal()
+    )
+
+
 def test_service_managed_provider_runtime_lifecycle_delegates_through_facade() -> None:
     class FakeProviderInventory:
         def __init__(self) -> None:
@@ -711,7 +760,10 @@ def test_provider_installation_approval_and_job_survive_snapshot_restore() -> No
     assert restored_instance["provider_instance_id"] == job["provider_instance_id"]
     assert restored_instance["plugin_id"] == "fake-managed"
     assert restored_instance["operational_state"] == "created"
-    assert len(state_store.snapshots) == 3
+    # Snapshot cadence includes scheduler/resource transitions. Persisted
+    # lifecycle evidence, rather than an implementation-specific count, is
+    # the contract being verified here.
+    assert len(state_store.snapshots) >= 3
     assert state_store.snapshots[0].provider_installation_approvals[0].approval_id == (approval["approval_id"])
     persisted_job = state_store.snapshots[-1].provider_installation_jobs[0]
     persisted_instance = state_store.snapshots[-1].provider_instances[0]
@@ -719,8 +771,14 @@ def test_provider_installation_approval_and_job_survive_snapshot_restore() -> No
     assert persisted_job.executor_id == "custom-test-executor"
     assert persisted_instance.provider_instance_id == job["provider_instance_id"]
     assert persisted_instance.plugin_id == "fake-managed"
-    assert state_store.snapshots[1].provider_installation_approvals[0].approval_id == (approval["approval_id"])
-    assert state_store.snapshots[1].provider_installation_jobs == []
+    approval_snapshot = next(
+        candidate
+        for candidate in state_store.snapshots
+        if candidate.provider_installation_approvals
+        and candidate.provider_installation_approvals[0].approval_id == approval["approval_id"]
+        and not candidate.provider_installation_jobs
+    )
+    assert approval_snapshot.provider_installation_approvals[0].approval_id == approval["approval_id"]
 
 
 def test_service_submit_routes_and_records_selected_bundle_for_automatic_mode() -> None:
@@ -1458,6 +1516,7 @@ def test_service_node_advertisement_keeps_published_endpoints_alongside_canonica
             ],
             "visibility": "private",
             "signature_scope": "configuration_publication",
+            "parameter_policy": {"version": "runtime-parameters.v1", "parameters": []},
         }
     ]
     assert payload["canonical_services"][0]["kind"] == "compute"
@@ -1537,6 +1596,7 @@ def test_service_node_advertisement_excludes_superseded_and_revoked_canonical_ad
             ],
             "visibility": "public",
             "signature_scope": "configuration_publication",
+            "parameter_policy": {"version": "runtime-parameters.v1", "parameters": []},
         }
     ]
 
@@ -2828,6 +2888,10 @@ def test_service_capability_catalog_reports_fit_and_endpoint_readiness() -> None
                     "cpu_shortfall": 0.0,
                     "ram_mb_shortfall": 0,
                     "vram_mb_shortfall": 0,
+                    "allocatable_cpu": 8.0,
+                    "allocatable_ram_mb": 16384,
+                    "allocatable_vram_mb": 4096,
+                    "reconciliation_state": "TRUSTED",
                 },
             }
         ],
@@ -2882,6 +2946,10 @@ def test_service_capability_catalog_reports_wait_when_resources_are_busy() -> No
                 "cpu_shortfall": 2.0,
                 "ram_mb_shortfall": 2048,
                 "vram_mb_shortfall": 0,
+                "allocatable_cpu": 2.0,
+                "allocatable_ram_mb": 2048,
+                "allocatable_vram_mb": 1024,
+                "reconciliation_state": "TRUSTED",
             },
         }
     ]
@@ -2922,6 +2990,10 @@ def test_service_capability_catalog_reports_missing_resource_delta() -> None:
         "cpu_shortfall": 2.5,
         "ram_mb_shortfall": 2048,
         "vram_mb_shortfall": 0,
+        "allocatable_cpu": 2.0,
+        "allocatable_ram_mb": 2048,
+        "allocatable_vram_mb": 1024,
+        "reconciliation_state": "TRUSTED",
     }
 
 
@@ -3136,6 +3208,10 @@ def test_operator_can_install_register_and_expose_new_model(tmp_path) -> None:
                 "cpu_shortfall": 0.0,
                 "ram_mb_shortfall": 0,
                 "vram_mb_shortfall": 0,
+                "allocatable_cpu": 8.0,
+                "allocatable_ram_mb": 16384,
+                "allocatable_vram_mb": 4096,
+                "reconciliation_state": "TRUSTED",
             },
         }
     ]

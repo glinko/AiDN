@@ -1,5 +1,7 @@
 """Permission model."""
 from dataclasses import asdict, dataclass
+
+
 @dataclass(frozen=True)
 class McpAgentPermission:
     scope: str
