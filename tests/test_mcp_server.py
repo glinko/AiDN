@@ -1327,3 +1327,18 @@ def test_mcp_persistence_migrates_new_restrictive_approval_defaults(tmp_path) ->
     assert persisted["sessions"]["acs-test"]["approval_policy"]["provider_attach"] == (
         "OPERATOR_CONFIRMATION"
     )
+
+
+def test_mcp_persistence_migrates_additive_read_scope_but_not_write_scope(tmp_path) -> None:
+    state_path = tmp_path / "mcp-control-state.json"
+    store = McpPersistentStateStore(state_path)
+    _server("NODE:READ", mcp_state_store=store)
+
+    migrated = _server("NODE:READ", "RUNTIME:READ", mcp_state_store=store)
+
+    assert "RUNTIME:READ" in migrated.control.session.scopes
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))
+    assert "RUNTIME:READ" in persisted["sessions"]["acs-test"]["scopes"]
+
+    with pytest.raises(McpPersistenceError):
+        _server("NODE:READ", "RUNTIME:WRITE", mcp_state_store=store)

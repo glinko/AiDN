@@ -106,6 +106,17 @@ def _parse_datetime(value: Any, field_name: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
+def _is_additive_read_scope(scope: str) -> bool:
+    """Return whether a newly introduced scope is safe to migrate automatically.
+
+    Read-only catalog additions do not grant mutation authority, so an older
+    persisted control session can adopt them during a normal process restart.
+    Write scopes remain an explicit re-pair/re-authorization boundary.
+    """
+
+    return scope.count(":") == 1 and scope.endswith(":READ")
+
+
 def _env_bool(name: str, *, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -563,6 +574,22 @@ class McpControlPlane:
                 and set(requested_policy) == persisted_keys | set(additive_policy)
             ):
                 restored.approval_policy.update(additive_policy)
+            else:
+                raise McpPersistenceError(
+                    "MCP_INTERNAL_ERROR",
+                    "Control Session identity or delegation does not match persisted state",
+                )
+        persisted_scopes = set(restored.scopes)
+        requested_scopes = set(requested.scopes)
+        if persisted_scopes != requested_scopes:
+            added_scopes = requested_scopes - persisted_scopes
+            removed_scopes = persisted_scopes - requested_scopes
+            if not removed_scopes and all(
+                _is_additive_read_scope(scope) for scope in added_scopes
+            ):
+                # A release may add a read-only tool family. Persist the
+                # expanded view without silently granting a mutating scope.
+                restored.scopes = frozenset(requested_scopes)
             else:
                 raise McpPersistenceError(
                     "MCP_INTERNAL_ERROR",
