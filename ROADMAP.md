@@ -2,7 +2,7 @@
 
 Last updated: `2026-08-23`
 
-Last repository audit: `main@08ac516` (`2026-08-22`)
+Last repository audit: `main@0df44a4` (`2026-08-23`)
 
 This is the main public roadmap for the repository.
 
@@ -31,7 +31,7 @@ release evidence, this roadmap uses the following meanings:
 | Public website | WEB-0001 React application, content, responsive design, demo Network/Explorer/Faucet flows, and a successful production frontend build | The deployed Caddy route still returns `503` for `/api/site/v1/*`; Website Backend, indexer, live Explorer, Faucet facade, release feed, SEO and public deployment acceptance are open |
 | Faucet | External Treasury service, signed Wallet proof, creator policy/releases, SQLite durability, exact-envelope idempotency, verified-finality adapter, admin/MCP boundaries, and focused tests | Internet-facing Website facade, rate limiting/abuse controls, CAPTCHA hook policy, production secrets, funded Treasury activation, monitoring, backup and end-to-end public claim evidence |
 | Consensus/network | Controlled CometBFT/ABCI, strict operation coverage, State Sync, multi-RPC finality and LAN acceptance | G4 public RPC/P2P and bootstrap diversity, G6 independently operated validator evidence, and G7 published release evidence |
-| CI/release | Python lint, hermetic tests, package build and optional live-provider conformance jobs exist | `main@08ac516` is currently red: Ruff fails and the Ubuntu suite reports 17 failures, so packaging is skipped. Restore the existing gate first; then add required Website/Dashboard builds, Faucet tests, installer shell checks, release-gate tooling and deployment manifests |
+| CI/release | Python lint, hermetic tests, package build and optional live-provider conformance jobs exist; the current Steward slice has focused green coverage | The latest recorded GitHub run for predecessor `main@08ac516` was red with 17 Ubuntu failures, so the current `0df44a4` commit still needs a fresh pushed CI run before release. Then add required Website/Dashboard builds, Faucet tests, installer shell checks, release-gate tooling and deployment manifests |
 
 The focused audit run completed `43` Steward/lifecycle tests and found three
 Windows-only installation-plan failures caused by `os.fchmod`; the same call is
@@ -40,7 +40,8 @@ portable yet. The external Faucet suite passed `37/37`, and the public Website
 production build passed. These checks are evidence for the table above, not a
 substitute for the full CI and live acceptance matrix.
 
-The current GitHub Actions run for `main@08ac516` is a release blocker:
+The latest recorded GitHub Actions run for predecessor `main@08ac516` is a
+release blocker:
 [`CI 32606802810`](https://github.com/glinko/AiDN/actions/runs/32606802810)
 reports `4758 passed, 17 failed, 5 skipped, 9 deselected`. The failures include
 stale exact-shape expectations after Resource Broker fit evidence was extended,
@@ -48,6 +49,12 @@ event-order assertions that now observe reconciliation events, and other
 regressions; Ruff also reports formatting/import/line-length debt concentrated
 in the recent Resource Broker and Steward slices. The distribution job was
 therefore skipped.
+
+Post-change local validation for `main@0df44a4` is narrower but green: the
+installation, Hypervisor service, and MCP suites pass `151` tests, Ruff passes
+for all touched Python files, and the Dashboard typecheck and production build
+complete successfully. This is not a substitute for a fresh Ubuntu CI run;
+the commit has not been pushed from this worktree.
 
 ### Release Target Separation
 
