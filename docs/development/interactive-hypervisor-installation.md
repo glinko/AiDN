@@ -123,6 +123,10 @@ Provider is already attached and approved, the same operation can advance
 explicitly with `"action": "request_model_install"`. That action only queues
 the existing model-install job, records its `install_id`, and returns
 `wait_model_install`; processing/download remains a separate worker operation.
+After the worker reports that install as `completed`, use
+`"action": "create_bundle"` to register a loopback-preferred local Bundle. The
+runtime port allocator still chooses the actual free listener during activation;
+this step does not start a process or create a public Endpoint.
 For a normal manual install, omit the assisted flags or use
 `--setup-mode manual`.
 

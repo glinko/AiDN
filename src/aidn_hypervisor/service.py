@@ -2171,7 +2171,12 @@ class HypervisorService:
         publication its validation/policy boundary.
         """
 
-        if action not in {"prepare_review", "prepare_assisted_installation_review", "request_model_install"}:
+        if action not in {
+            "prepare_review",
+            "prepare_assisted_installation_review",
+            "request_model_install",
+            "create_bundle",
+        }:
             raise ValueError(f"unsupported installation plan action: {action}")
         if action in {"prepare_review", "prepare_assisted_installation_review"}:
             result = prepare_assisted_installation_review(
@@ -2184,8 +2189,14 @@ class HypervisorService:
                     configuration=configuration,
                 ),
             )
-        else:
+        elif action == "request_model_install":
             result = self._request_model_from_installation_plan(
+                plan_hash=plan_hash,
+                actor=actor,
+                idempotency_key=idempotency_key,
+            )
+        else:
+            result = self._create_bundle_from_installation_plan(
                 plan_hash=plan_hash,
                 actor=actor,
                 idempotency_key=idempotency_key,
@@ -2194,12 +2205,20 @@ class HypervisorService:
             event_type=(
                 "installation.plan.review_prepared"
                 if action in {"prepare_review", "prepare_assisted_installation_review"}
-                else "installation.plan.model_requested"
+                else (
+                    "installation.plan.model_requested"
+                    if action == "request_model_install"
+                    else "installation.plan.bundle_created"
+                )
             ),
             message=(
                 "AI-assisted installation plan prepared for provider review"
                 if action in {"prepare_review", "prepare_assisted_installation_review"}
-                else "AI-assisted installation plan queued a model installation"
+                else (
+                    "AI-assisted installation plan queued a model installation"
+                    if action == "request_model_install"
+                    else "AI-assisted installation plan created a local Bundle"
+                )
             ),
             details={
                 "operation_id": result.get("operation_id"),
@@ -2286,6 +2305,72 @@ class HypervisorService:
             status="MODEL_INSTALL_QUEUED",
             application=application,
             next_action="wait_model_install",
+        )
+        updated["operation_id"] = operation_id
+        updated["workflow"] = self.installation_plan().get("workflow")
+        return updated
+
+    def _create_bundle_from_installation_plan(
+        self,
+        *,
+        plan_hash: str,
+        actor: str,
+        idempotency_key: str | None,
+    ) -> dict:
+        """Register a local Bundle after the model-install job is complete."""
+
+        current = read_installation_plan()
+        if not current.get("available"):
+            raise ValueError(str(current.get("reason") or "installation plan is unavailable"))
+        if current.get("integrity") != "verified":
+            raise ValueError(str(current.get("reason") or "installation plan integrity is not verified"))
+        if str(current.get("plan_hash")) != str(plan_hash):
+            raise ValueError("installation plan changed; refresh before applying")
+        if current.get("mode") != "ai_assisted":
+            raise ValueError("only an AI-assisted installation plan can create a Bundle")
+        application = current.get("application")
+        application = dict(application) if isinstance(application, dict) else {}
+        existing_bundle = application.get("bundle")
+        existing_bundle = dict(existing_bundle) if isinstance(existing_bundle, dict) else {}
+        if existing_bundle.get("bundle_id") and (
+            not idempotency_key or existing_bundle.get("idempotency_key") == idempotency_key
+        ):
+            return {**current, "operation_id": existing_bundle.get("operation_id"), "workflow": self.installation_plan().get("workflow")}
+        model_application = application.get("model")
+        model_application = dict(model_application) if isinstance(model_application, dict) else {}
+        install_id = str(model_application.get("install_id") or "")
+        if not install_id:
+            raise ValueError("model install must be requested before creating a Bundle")
+        install = next(
+            (item for item in self.list_model_installs() if str(item.get("install_id")) == install_id),
+            None,
+        )
+        if install is None or str(install.get("status") or "").lower() != "completed":
+            raise ValueError("model install is not completed; process and verify it before creating a Bundle")
+        operation_id = f"bundle-install-{uuid4().hex}"
+        bundle_id = f"bundle-steward-{install_id}"[:128]
+        bundle = self.register_bundle_from_install(
+            install_id=install_id,
+            bundle_id=bundle_id,
+            workload_type="llm_text",
+            endpoint="http://127.0.0.1:8080",
+        )
+        application["bundle"] = {
+            "bundle_id": bundle["bundle_id"],
+            "bundle_hash": bundle.get("bundle_hash"),
+            "endpoint": bundle.get("endpoint"),
+            "status": "READY",
+            "operation_id": operation_id,
+            "idempotency_key": idempotency_key,
+            "created_at": datetime.now(UTC).isoformat(),
+            "actor": actor,
+        }
+        updated = update_installation_plan(
+            None,
+            expected_hash=plan_hash,
+            status="BUNDLE_CREATED",
+            application=application,
+            next_action="create_private_endpoint",
         )
         updated["operation_id"] = operation_id
         updated["workflow"] = self.installation_plan().get("workflow")

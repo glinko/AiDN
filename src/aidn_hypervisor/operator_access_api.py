@@ -178,6 +178,7 @@ class InstallationPlanApplyRequest(BaseModel):
         "prepare_review",
         "prepare_assisted_installation_review",
         "request_model_install",
+        "create_bundle",
     ] = "prepare_review"
 
 

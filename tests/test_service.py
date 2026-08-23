@@ -710,13 +710,23 @@ def test_service_queues_selected_model_as_a_second_explicit_setup_step(
     assert queued["application"]["model"]["status"] == "QUEUED"
     assert queued["application"]["model"]["install_id"]
     assert queued["workflow"]["next_action"]["id"] == "wait_model_install"
-    replay = service.apply_installation_plan(
+    service.mark_model_install_completed(queued["application"]["model"]["install_id"])
+    bundle = service.apply_installation_plan(
         plan_hash=str(queued["plan_hash"]),
         actor="operator-test",
-        idempotency_key="model-1",
-        action="request_model_install",
+        idempotency_key="bundle-1",
+        action="create_bundle",
     )
-    assert replay["application"]["model"]["install_id"] == queued["application"]["model"]["install_id"]
+    assert bundle["status"] == "BUNDLE_CREATED"
+    assert bundle["application"]["bundle"]["bundle_id"].startswith("bundle-steward-")
+    assert bundle["workflow"]["next_action"]["id"] == "create_private_endpoint"
+    replay = service.apply_installation_plan(
+        plan_hash=str(bundle["plan_hash"]),
+        actor="operator-test",
+        idempotency_key="bundle-1",
+        action="create_bundle",
+    )
+    assert replay["application"]["bundle"]["bundle_id"] == bundle["application"]["bundle"]["bundle_id"]
 
 
 def test_service_managed_provider_runtime_lifecycle_delegates_through_facade() -> None:

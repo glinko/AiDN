@@ -128,6 +128,10 @@ finality.
   is observed attached, a plan-hash/idempotency-bound request queues the model
   install and records its `install_id`; the worker still owns download and
   verification, so this step cannot silently mutate the host.
+- [x] Add the next explicit action after a completed model job: register a
+  loopback-preferred local Bundle through the existing provider inventory
+  service, retaining the normal runtime port allocator and keeping Endpoint
+  creation/publication separate.
 - [ ] Run the complete Ubuntu CI matrix and package build for this exact commit.
   Local focused tests and Ruff are green; Windows pytest teardown currently
   leaves completed test workers alive, so it is not accepted as release proof.
