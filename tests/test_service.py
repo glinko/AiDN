@@ -663,6 +663,62 @@ def test_service_prepares_ai_assisted_installation_review_from_configured_plan(
     )
 
 
+def test_service_queues_selected_model_as_a_second_explicit_setup_step(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aidn_hypervisor.installation_onboarding import (
+        InstallationOnboardingPlan,
+        read_installation_plan,
+        write_installation_plan,
+    )
+
+    plan_path = tmp_path / "installation-plan.json"
+    monkeypatch.setenv("AIDN_INSTALLATION_PLAN_PATH", str(plan_path))
+    registry = PluginRegistry()
+    registry.register(LlamaCppPlugin())
+    write_installation_plan(
+        plan_path,
+        InstallationOnboardingPlan(
+            setup_mode="ai_assisted",
+            provider="llama.cpp",
+            model_id="org/model",
+            model_source="https://example.test/model.gguf",
+            endpoint_action="draft",
+        ),
+    )
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        plugins=registry,
+        runtimes=ProviderProcessManager(),
+    )
+    monkeypatch.setattr(
+        service,
+        "list_provider_instances",
+        lambda: [{"plugin_id": "llama.cpp", "status": "attached"}],
+    )
+    current = read_installation_plan(plan_path)
+    queued = service.apply_installation_plan(
+        plan_hash=str(current["plan_hash"]),
+        actor="operator-test",
+        idempotency_key="model-1",
+        action="request_model_install",
+    )
+
+    assert queued["status"] == "MODEL_INSTALL_QUEUED"
+    assert queued["application"]["model"]["status"] == "QUEUED"
+    assert queued["application"]["model"]["install_id"]
+    assert queued["workflow"]["next_action"]["id"] == "wait_model_install"
+    replay = service.apply_installation_plan(
+        plan_hash=str(queued["plan_hash"]),
+        actor="operator-test",
+        idempotency_key="model-1",
+        action="request_model_install",
+    )
+    assert replay["application"]["model"]["install_id"] == queued["application"]["model"]["install_id"]
+
+
 def test_service_managed_provider_runtime_lifecycle_delegates_through_facade() -> None:
     class FakeProviderInventory:
         def __init__(self) -> None:

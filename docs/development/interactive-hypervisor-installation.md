@@ -109,7 +109,8 @@ POST /operators/dashboard/access/operations/installation-plan/apply
 {
   "plan_hash": "sha256:...",
   "actor": "operator-dashboard",
-  "idempotency_key": "dashboard-..."
+  "idempotency_key": "dashboard-...",
+  "action": "prepare_review"
 }
 ```
 
@@ -117,8 +118,13 @@ The operation is intentionally narrow and resumable. A successful response
 records `PROVIDER_REVIEW_REQUIRED` and `approve_provider_installation` in the
 owner-only plan file (or `COMPLETED` when the operator chose `skip`). The
 review projects only the Provider plan ID, summary, required permissions and
-health checks; secrets and arbitrary runtime configuration are excluded. For a
-normal manual install, omit the assisted flags or use `--setup-mode manual`.
+health checks; secrets and arbitrary runtime configuration are excluded. When a
+Provider is already attached and approved, the same operation can advance
+explicitly with `"action": "request_model_install"`. That action only queues
+the existing model-install job, records its `install_id`, and returns
+`wait_model_install`; processing/download remains a separate worker operation.
+For a normal manual install, omit the assisted flags or use
+`--setup-mode manual`.
 
 ## Resume and handoff semantics
 

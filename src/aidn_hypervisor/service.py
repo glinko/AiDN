@@ -4,6 +4,7 @@ import time
 from copy import deepcopy
 from datetime import UTC, datetime
 from threading import RLock
+from uuid import uuid4
 
 from aidn_hypervisor.admission_planning_service import AdmissionPlanningService
 from aidn_hypervisor.allocation_catalog_service import AllocationCatalogService
@@ -40,6 +41,7 @@ from aidn_hypervisor.installation_onboarding import (
     build_installation_workflow_projection,
     prepare_assisted_installation_review,
     read_installation_plan,
+    update_installation_plan,
 )
 from aidn_hypervisor.ledger.service import LedgerOperationService
 from aidn_hypervisor.lifecycle_manager import LifecycleManager, ResetManager
@@ -2159,6 +2161,7 @@ class HypervisorService:
         plan_hash: str,
         actor: str = "operator",
         idempotency_key: str | None = None,
+        action: str = "prepare_review",
     ) -> dict:
         """Prepare the next approved assisted-installation lifecycle step.
 
@@ -2168,19 +2171,36 @@ class HypervisorService:
         publication its validation/policy boundary.
         """
 
-        result = prepare_assisted_installation_review(
-            None,
-            expected_hash=plan_hash,
-            actor=actor,
-            idempotency_key=idempotency_key,
-            provider_plan_builder=lambda plugin_id, configuration: self.build_provider_installation_plan(
-                plugin_id=plugin_id,
-                configuration=configuration,
-            ),
-        )
+        if action not in {"prepare_review", "prepare_assisted_installation_review", "request_model_install"}:
+            raise ValueError(f"unsupported installation plan action: {action}")
+        if action in {"prepare_review", "prepare_assisted_installation_review"}:
+            result = prepare_assisted_installation_review(
+                None,
+                expected_hash=plan_hash,
+                actor=actor,
+                idempotency_key=idempotency_key,
+                provider_plan_builder=lambda plugin_id, configuration: self.build_provider_installation_plan(
+                    plugin_id=plugin_id,
+                    configuration=configuration,
+                ),
+            )
+        else:
+            result = self._request_model_from_installation_plan(
+                plan_hash=plan_hash,
+                actor=actor,
+                idempotency_key=idempotency_key,
+            )
         self.record_event(
-            event_type="installation.plan.review_prepared",
-            message="AI-assisted installation plan prepared for provider review",
+            event_type=(
+                "installation.plan.review_prepared"
+                if action in {"prepare_review", "prepare_assisted_installation_review"}
+                else "installation.plan.model_requested"
+            ),
+            message=(
+                "AI-assisted installation plan prepared for provider review"
+                if action in {"prepare_review", "prepare_assisted_installation_review"}
+                else "AI-assisted installation plan queued a model installation"
+            ),
             details={
                 "operation_id": result.get("operation_id"),
                 "status": result.get("status"),
@@ -2189,6 +2209,87 @@ class HypervisorService:
         )
         self._persist_state()
         return result
+
+    def _request_model_from_installation_plan(
+        self,
+        *,
+        plan_hash: str,
+        actor: str,
+        idempotency_key: str | None,
+    ) -> dict:
+        """Queue the selected model after provider readiness is observed.
+
+        This is the second explicit step of assisted setup.  It never processes
+        the queue inline: the normal model-install worker remains responsible
+        for downloads, progress, retries and artifact validation.
+        """
+
+        current = read_installation_plan()
+        if not current.get("available"):
+            raise ValueError(str(current.get("reason") or "installation plan is unavailable"))
+        if current.get("integrity") != "verified":
+            raise ValueError(str(current.get("reason") or "installation plan integrity is not verified"))
+        if str(current.get("plan_hash")) != str(plan_hash):
+            raise ValueError("installation plan changed; refresh before applying")
+        if current.get("mode") != "ai_assisted":
+            raise ValueError("only an AI-assisted installation plan can request a model")
+
+        model = current.get("model") if isinstance(current.get("model"), dict) else {}
+        provider_type = str(current.get("provider") or "skip")
+        model_id = str(model.get("id") or "skip")
+        if provider_type == "skip" or model_id == "skip":
+            raise ValueError("the assisted plan does not select a provider and model")
+        provider_ready = any(
+            str(item.get("plugin_id") or item.get("provider_type") or "") == provider_type
+            and str(item.get("status") or "").upper() not in {"FAILED", "DISABLED"}
+            for item in self.list_provider_instances()
+        )
+        if not provider_ready:
+            raise ValueError("selected provider is not attached; approve and apply provider installation first")
+
+        application = current.get("application")
+        application = dict(application) if isinstance(application, dict) else {}
+        existing_model = application.get("model")
+        existing_model = dict(existing_model) if isinstance(existing_model, dict) else {}
+        if (
+            idempotency_key
+            and existing_model.get("idempotency_key") == idempotency_key
+            and existing_model.get("install_id")
+        ):
+            return {**current, "operation_id": existing_model.get("operation_id"), "workflow": self.installation_plan().get("workflow")}
+
+        source_url = str(model.get("source") or "")
+        if not source_url:
+            if provider_type in {"vllm", "ollama"}:
+                source_url = model_id
+            else:
+                raise ValueError("the selected model has no concrete source URL")
+        operation_id = f"model-install-{uuid4().hex}"
+        install = self.request_model_install(
+            provider_type=provider_type,
+            model_id=model_id,
+            source_url=source_url,
+            requested_by=actor,
+        )
+        application["model"] = {
+            "id": model_id,
+            "source": source_url,
+            "install_id": install["install_id"],
+            "operation_id": operation_id,
+            "idempotency_key": idempotency_key,
+            "status": "QUEUED",
+            "requested_at": datetime.now(UTC).isoformat(),
+        }
+        updated = update_installation_plan(
+            None,
+            expected_hash=plan_hash,
+            status="MODEL_INSTALL_QUEUED",
+            application=application,
+            next_action="wait_model_install",
+        )
+        updated["operation_id"] = operation_id
+        updated["workflow"] = self.installation_plan().get("workflow")
+        return updated
 
     def approve_provider_installation_plan(
         self,

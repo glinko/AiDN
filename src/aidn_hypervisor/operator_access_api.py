@@ -174,6 +174,11 @@ class InstallationPlanApplyRequest(BaseModel):
     plan_hash: str = Field(min_length=1, max_length=256)
     actor: str = Field(default="operator-dashboard", min_length=1, max_length=128)
     idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+    action: Literal[
+        "prepare_review",
+        "prepare_assisted_installation_review",
+        "request_model_install",
+    ] = "prepare_review"
 
 
 class BundleRevisionOperationRequest(BaseModel):
@@ -1570,6 +1575,7 @@ def build_operator_access_router(
                 plan_hash=payload.plan_hash,
                 actor=payload.actor,
                 idempotency_key=payload.idempotency_key,
+                action=payload.action,
             )
         except ValueError as error:
             return operation_error(error)
