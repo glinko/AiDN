@@ -494,6 +494,52 @@ def test_mcp_steward_status_exposes_cpu_first_profile_and_resource() -> None:
     assert resource["result"]["contents"][0]["mimeType"] == "application/json"
 
 
+def test_mcp_steward_installation_workflow_is_bounded_and_read_only(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AIDN_INSTALLATION_PLAN_PATH", "")
+    server = _server("STEWARD:READ")
+    server.control.service.installation_plan = lambda: {
+        "available": True,
+        "integrity": "verified",
+        "status": "MODEL_INSTALL_QUEUED",
+        "mode": "ai_assisted",
+        "ai_assisted": True,
+        "plan_hash": "sha256:plan",
+        "provider": "llama.cpp",
+        "model": {"id": "org/model", "source": "hf://org/model/model.gguf"},
+        "application": {"private_key": "must-not-leak"},
+        "workflow": {
+            "next_action": {"id": "process_model_install"},
+            "completion": None,
+        },
+    }
+    _initialize(server)
+
+    listed = server.handle_message(
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}}
+    )
+    names = {item["name"] for item in listed["result"]["tools"]}
+    assert "aidn.steward.installation_workflow" in names
+
+    result = _call(server, "aidn.steward.installation_workflow")
+    assert result["isError"] is False
+    payload = result["structuredContent"]
+    assert payload["workflow"]["next_action"]["id"] == "process_model_install"
+    assert payload["authority"]["publication"] == "validation_and_operator_policy_required"
+    assert "private_key" not in json.dumps(payload)
+
+    resource = server.handle_message(
+        {
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "resources/read",
+            "params": {"uri": "aidn://steward/installation"},
+        }
+    )
+    assert resource["result"]["contents"][0]["mimeType"] == "application/json"
+
+
 def test_mcp_steward_context_and_decision_are_read_only(monkeypatch) -> None:
     monkeypatch.setenv("AIDN_STEWARD_ENABLED", "1")
     server = _server("STEWARD:READ")

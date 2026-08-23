@@ -148,6 +148,10 @@ finality.
   runtime start. It carries the observed Provider, model, Bundle, Endpoint,
   runtime/readiness identifiers and an explicit `NOT_PUBLISHED` next boundary
   for validation/publication review.
+- [x] Expose that same restart-safe workflow to the Resident Steward through
+  the read-only `aidn.steward.installation_workflow` MCP tool and
+  `aidn://steward/installation` resource; observation remains separate from
+  mutation authority.
 - [ ] Run the complete Ubuntu CI matrix and package build for this exact commit.
   Local focused tests and Ruff are green; Windows pytest teardown currently
   leaves completed test workers alive, so it is not accepted as release proof.

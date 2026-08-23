@@ -39,6 +39,33 @@ def _steward_context(self) -> dict[str, Any]:
     return payload
 
 
+def _steward_installation_workflow(self) -> dict[str, Any]:
+    """Return the bounded, restart-safe assisted installer projection."""
+
+    fn = getattr(self.service, "installation_plan", None)
+    if not callable(fn):
+        return {"available": False, "reason": "installation_workflow_unavailable"}
+    plan = dict(fn() or {})
+    model = plan.get("model")
+    model = model if isinstance(model, dict) else {}
+    return {
+        "available": bool(plan.get("available")),
+        "integrity": plan.get("integrity"),
+        "status": plan.get("status"),
+        "mode": plan.get("mode"),
+        "ai_assisted": bool(plan.get("ai_assisted")),
+        "plan_hash": plan.get("plan_hash"),
+        "provider": plan.get("provider"),
+        "model": {"id": model.get("id"), "source": model.get("source")},
+        "workflow": plan.get("workflow"),
+        "authority": {
+            "provider_installation": "operator_approval_required",
+            "model_processing": "explicit_plan_action",
+            "publication": "validation_and_operator_policy_required",
+        },
+    }
+
+
 def _steward_decide(self, arguments: dict[str, Any]) -> dict[str, Any]:
     goal = _string(arguments, "goal", required=True)
     fn = getattr(self.service, "resident_agent_decide", None)
@@ -226,6 +253,7 @@ def install_steward_extensions(control_cls: type, tool_cls: type, resource_cls: 
     methods = {
         "_steward_status": _steward_status,
         "_steward_context": _steward_context,
+        "_steward_installation_workflow": _steward_installation_workflow,
         "_steward_decide": _steward_decide,
         "_steward_action_guard": _steward_action_guard,
         "_steward_action_policy": _steward_action_policy,
@@ -262,6 +290,7 @@ def install_steward_extensions(control_cls: type, tool_cls: type, resource_cls: 
         tools.update({
             "aidn.steward.status": tool_cls("aidn.steward.status", "Return Resident Steward status.", read, ("STEWARD:READ",), "READ_ONLY", lambda _a: self._steward_status()),
             "aidn.steward.context": tool_cls("aidn.steward.context", "Return bounded redacted Steward context.", read, ("STEWARD:READ",), "READ_ONLY", lambda _a: self._steward_context()),
+            "aidn.steward.installation_workflow": tool_cls("aidn.steward.installation_workflow", "Return the bounded assisted-installation workflow and next action.", read, ("STEWARD:READ",), "READ_ONLY", lambda _a: self._steward_installation_workflow()),
             "aidn.steward.decide": tool_cls("aidn.steward.decide", "Return a read-only Steward recommendation.", decide, ("STEWARD:READ",), "READ_ONLY", lambda a: self._steward_decide(a)),
             "aidn.steward.action_guard": tool_cls("aidn.steward.action_guard", "Guard a bounded action without executing it.", guard, ("STEWARD:GUARD",), "READ_ONLY", lambda a: self._steward_action_guard(a)),
             "aidn.steward.action_policy": tool_cls("aidn.steward.action_policy", "Return Steward action policy.", read, ("STEWARD:EXECUTE",), "READ_ONLY", lambda _a: self._steward_action_policy()),
@@ -282,6 +311,7 @@ def install_steward_extensions(control_cls: type, tool_cls: type, resource_cls: 
         resources.update({
             "aidn://steward/status": resource_cls("aidn://steward/status", "Steward status", "Resident Steward status.", "STEWARD:READ", lambda _u: self._steward_status()),
             "aidn://steward/context": resource_cls("aidn://steward/context", "Steward context", "Bounded Steward context.", "STEWARD:READ", lambda _u: self._steward_context()),
+            "aidn://steward/installation": resource_cls("aidn://steward/installation", "Steward installation workflow", "Assisted installation workflow.", "STEWARD:READ", lambda _u: self._steward_installation_workflow()),
             "aidn://steward/reasoning/providers": resource_cls("aidn://steward/reasoning/providers", "Reasoning providers", "Available reasoning providers.", "STEWARD:READ", lambda _u: self._steward_reasoning_providers()),
             "aidn://steward/escalations": resource_cls("aidn://steward/escalations", "Steward escalations", "Durable escalation tasks.", "STEWARD:READ", lambda _u: self._steward_escalations({})),
         })

@@ -88,6 +88,13 @@ The Dashboard read endpoint is:
 GET /operators/dashboard/installation-plan
 ```
 
+The Resident Steward receives the same bounded projection through the
+read-only MCP tool `aidn.steward.installation_workflow` or resource
+`aidn://steward/installation`. It exposes the plan hash, observed stages,
+`next_action`, completion summary and authority boundaries, but never exposes
+private keys or turns a workflow observation into permission to mutate the
+host.
+
 For a compact polling target, the same service exposes the derived workflow
 only:
 
