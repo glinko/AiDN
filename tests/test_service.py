@@ -812,6 +812,101 @@ def test_service_queues_selected_model_as_a_second_explicit_setup_step(
     assert replay["application"]["endpoint"]["endpoint_id"] == "ep-steward-test"
 
 
+def test_service_applies_only_the_exact_operator_approved_provider_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from aidn_hypervisor.installation_onboarding import (
+        InstallationOnboardingPlan,
+        read_installation_plan,
+        write_installation_plan,
+    )
+
+    plan_path = tmp_path / "installation-plan.json"
+    monkeypatch.setenv("AIDN_INSTALLATION_PLAN_PATH", str(plan_path))
+    registry = PluginRegistry()
+    registry.register(LlamaCppPlugin())
+    write_installation_plan(
+        plan_path,
+        InstallationOnboardingPlan(
+            setup_mode="ai_assisted",
+            provider="llama.cpp",
+            model_id="skip",
+            endpoint_action="skip",
+        ),
+    )
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        plugins=registry,
+        runtimes=ProviderProcessManager(),
+    )
+    current = read_installation_plan(plan_path)
+    prepared = service.apply_installation_plan(
+        plan_hash=str(current["plan_hash"]),
+        actor="operator-test",
+        idempotency_key="review-1",
+    )
+    provider_plan_hash = prepared["application"]["provider"]["installation_plan"]["plan_hash"]
+    monkeypatch.setattr(
+        service,
+        "list_provider_installation_approvals",
+        lambda: [{
+            "approval_id": "pia-approved",
+            "plugin_id": "llama.cpp",
+            "plan_hash": provider_plan_hash,
+            "status": "APPROVED",
+        }],
+    )
+    monkeypatch.setattr(
+        service,
+        "apply_provider_installation_approval",
+        lambda approval_id, wait_for_completion=False: {
+            "job_id": "pij-steward",
+            "plugin_id": "llama.cpp",
+            "approval_id": approval_id,
+            "status": "QUEUED",
+        },
+    )
+    monkeypatch.setattr(
+        service,
+        "list_provider_installation_approvals",
+        lambda: [{
+            "approval_id": "pia-wrong",
+            "plugin_id": "llama.cpp",
+            "plan_hash": "sha256:different",
+            "status": "APPROVED",
+        }],
+    )
+    with pytest.raises(ValueError, match="operator approval is required"):
+        service.apply_installation_plan(
+            plan_hash=str(prepared["plan_hash"]),
+            actor="operator-test",
+            idempotency_key="provider-wrong",
+            action="apply_provider_installation",
+        )
+    monkeypatch.setattr(
+        service,
+        "list_provider_installation_approvals",
+        lambda: [{
+            "approval_id": "pia-approved",
+            "plugin_id": "llama.cpp",
+            "plan_hash": provider_plan_hash,
+            "status": "APPROVED",
+        }],
+    )
+    applied = service.apply_installation_plan(
+        plan_hash=str(prepared["plan_hash"]),
+        actor="operator-test",
+        idempotency_key="provider-1",
+        action="apply_provider_installation",
+    )
+    assert applied["status"] == "PROVIDER_INSTALL_QUEUED"
+    assert applied["job"]["approval_id"] == "pia-approved"
+    assert applied["application"]["provider"]["job_id"] == "pij-steward"
+    assert applied["workflow"]["next_action"]["id"] == "wait_provider_installation"
+
+
 def test_service_managed_provider_runtime_lifecycle_delegates_through_facade() -> None:
     class FakeProviderInventory:
         def __init__(self) -> None:

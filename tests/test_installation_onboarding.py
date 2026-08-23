@@ -160,6 +160,7 @@ def test_assisted_plan_preparation_persists_a_provider_review(tmp_path: Path) ->
     assert prepared["application"]["provider"]["status"] == "REVIEW_REQUIRED"
     assert prepared["application"]["model"]["status"] == "PENDING_PROVIDER"
     assert prepared["application"]["endpoint"]["status"] == "PENDING_MODEL"
+    assert prepared["application"]["provider"]["installation_plan"]["plan_hash"].startswith("sha256:")
     assert "secret_references" not in prepared["application"]["provider"]["installation_plan"]
 
     replay = prepare_assisted_installation_review(
@@ -219,6 +220,17 @@ def test_workflow_projection_recomputes_next_step_from_observed_state() -> None:
     review = build_installation_workflow_projection(plan)
     assert review["next_action"]["id"] == "approve_provider_installation"
     assert review["stages"][0]["state"] == "REVIEW_REQUIRED"
+
+    provider_plan_hash = "sha256:provider-plan"
+    plan["application"]["provider"]["installation_plan"] = {"plan_hash": provider_plan_hash}
+    approved = build_installation_workflow_projection(
+        plan,
+        provider_installation_approvals=[
+            {"plugin_id": "llama.cpp", "plan_hash": provider_plan_hash, "status": "APPROVED"}
+        ],
+    )
+    assert approved["next_action"]["id"] == "apply_provider_installation"
+    assert approved["stages"][0]["state"] == "IN_PROGRESS"
 
     provider_ready = build_installation_workflow_projection(
         plan,

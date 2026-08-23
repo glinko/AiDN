@@ -177,6 +177,7 @@ class InstallationPlanApplyRequest(BaseModel):
     action: Literal[
         "prepare_review",
         "prepare_assisted_installation_review",
+        "apply_provider_installation",
         "request_model_install",
         "process_model_install",
         "create_bundle",

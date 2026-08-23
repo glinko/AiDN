@@ -329,6 +329,8 @@ def build_installation_workflow_projection(
     plan: Mapping[str, object],
     *,
     provider_instances: Sequence[Mapping[str, object]] = (),
+    provider_installation_jobs: Sequence[Mapping[str, object]] = (),
+    provider_installation_approvals: Sequence[Mapping[str, object]] = (),
     model_installs: Sequence[Mapping[str, object]] = (),
     bundles: Sequence[Mapping[str, object]] = (),
     endpoints: Sequence[Mapping[str, object]] = (),
@@ -393,11 +395,52 @@ def build_installation_workflow_projection(
     provider_runtime_state = _status(
         matching_providers[0].get("status") if matching_providers else None
     )
+    provider_application_status = _status(application_provider.get("status"))
+    provider_job_error = str(application_provider.get("last_error") or "")
+    provider_job_id = str(application_provider.get("job_id") or "")
+    reviewed_provider_plan = application_provider.get("installation_plan")
+    reviewed_provider_plan = (
+        reviewed_provider_plan if isinstance(reviewed_provider_plan, Mapping) else {}
+    )
+    reviewed_provider_plan_hash = str(reviewed_provider_plan.get("plan_hash") or "")
+    approved_provider = next(
+        (
+            item
+            for item in reversed(list(provider_installation_approvals))
+            if str(item.get("plugin_id") or "") == provider_id
+            and reviewed_provider_plan_hash
+            and str(item.get("plan_hash") or "") == reviewed_provider_plan_hash
+            and _status(item.get("status")) == "APPROVED"
+        ),
+        {},
+    )
+    provider_approval_ready = bool(approved_provider) and not provider_job_id
+    provider_job = next(
+        (
+            item
+            for item in reversed(list(provider_installation_jobs))
+            if provider_job_id and str(item.get("job_id") or "") == provider_job_id
+        ),
+        {},
+    )
+    if provider_job:
+        provider_application_status = _status(provider_job.get("status"))
+        provider_job_error = str(
+            provider_job.get("error_message")
+            or provider_job.get("error_code")
+            or provider_job_error
+        )
     if provider_id == "skip":
         provider_state = "SKIPPED"
     elif matching_providers and provider_runtime_state not in {"FAILED", "DISABLED"}:
         provider_state = "READY"
-    elif _status(application_provider.get("status")) == "REVIEW_REQUIRED":
+    elif provider_application_status in {"QUEUED", "RUNNING", "PROCESSING"}:
+        provider_state = "IN_PROGRESS"
+    elif provider_application_status in {"FAILED", "ERROR", "CANCELLED"}:
+        provider_state = "ERROR"
+    elif provider_approval_ready:
+        provider_state = "IN_PROGRESS"
+    elif provider_application_status == "REVIEW_REQUIRED":
         provider_state = "REVIEW_REQUIRED"
     elif matching_providers:
         provider_state = "ERROR"
@@ -525,6 +568,19 @@ def build_installation_workflow_projection(
         action_id = "approve_provider_installation"
         action_label = "Review and approve the provider installation"
         reason = "Provider permissions and installation effects require explicit operator approval."
+    elif provider_state == "IN_PROGRESS":
+        if provider_approval_ready:
+            action_id = "apply_provider_installation"
+            action_label = "Install the approved provider runtime"
+            reason = "An exact reviewed provider approval is ready; submit it to the privileged broker."
+        else:
+            action_id = "wait_provider_installation"
+            action_label = "Wait for provider installation"
+            reason = "The reviewed provider runtime is being installed through the privileged broker."
+    elif provider_state == "ERROR":
+        action_id = "inspect_provider_installation"
+        action_label = "Inspect the failed provider installation"
+        reason = provider_job_error or "The provider installation failed; inspect the broker job before retrying."
     elif provider_state == "NOT_STARTED" and provider_id != "skip":
         action_id = "configure_provider"
         action_label = "Configure the selected provider"
@@ -607,6 +663,15 @@ def build_installation_workflow_projection(
             "required": required,
             "percent": round(completed / required * 100) if required else 100,
         },
+        "provider_installation": (
+            {
+                "job_id": provider_job.get("job_id") or provider_job_id or None,
+                "status": provider_application_status or None,
+                "last_error": provider_job_error or None,
+            }
+            if provider_job_id or provider_job
+            else None
+        ),
         "forecast": dict(application_forecast) if application_forecast else None,
         "completion": completion,
         "next_action": {"id": action_id, "label": action_label, "reason": reason},
@@ -729,7 +794,7 @@ def prepare_assisted_installation_review(
         next_action = "open_dashboard_provider_setup"
     else:
         provider_plan = dict(provider_plan_builder(provider, {}))
-        application["provider"] = {
+        provider_application: dict[str, object] = {
             "plugin_id": provider,
             "configuration": {},
             "status": "REVIEW_REQUIRED",
@@ -740,6 +805,10 @@ def prepare_assisted_installation_review(
                 for key in ("plan_id", "plan_version", "summary", "required_permissions", "health_checks")
             },
         }
+        provider_application_plan = provider_application["installation_plan"]
+        if isinstance(provider_application_plan, dict):
+            provider_application_plan["plan_hash"] = installation_plan_hash(provider_plan)
+        application["provider"] = provider_application
         status = "PROVIDER_REVIEW_REQUIRED"
         next_action = "approve_provider_installation"
 

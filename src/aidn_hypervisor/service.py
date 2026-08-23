@@ -2156,9 +2156,21 @@ class HypervisorService:
             else []
         )
         bundle_items = [_dump(item) for item in self.bundle_config()]
+        try:
+            provider_installation_jobs = self.list_provider_installation_jobs()
+        except AttributeError:
+            # Minimal test/fallback inventories may expose provider instances
+            # without the optional durable installation-job read model.
+            provider_installation_jobs = []
+        try:
+            provider_installation_approvals = self.list_provider_installation_approvals()
+        except AttributeError:
+            provider_installation_approvals = []
         workflow = build_installation_workflow_projection(
             plan,
             provider_instances=self.list_provider_instances(),
+            provider_installation_jobs=provider_installation_jobs,
+            provider_installation_approvals=provider_installation_approvals,
             model_installs=self.list_model_installs(),
             bundles=bundle_items,
             endpoints=endpoint_items,
@@ -2184,6 +2196,7 @@ class HypervisorService:
         if action not in {
             "prepare_review",
             "prepare_assisted_installation_review",
+            "apply_provider_installation",
             "request_model_install",
             "process_model_install",
             "create_bundle",
@@ -2205,6 +2218,12 @@ class HypervisorService:
             )
         elif action == "request_model_install":
             result = self._request_model_from_installation_plan(
+                plan_hash=plan_hash,
+                actor=actor,
+                idempotency_key=idempotency_key,
+            )
+        elif action == "apply_provider_installation":
+            result = self._apply_provider_from_installation_plan(
                 plan_hash=plan_hash,
                 actor=actor,
                 idempotency_key=idempotency_key,
@@ -2239,57 +2258,31 @@ class HypervisorService:
                 actor=actor,
                 idempotency_key=idempotency_key,
             )
+        event_type_by_action = {
+            "prepare_review": "installation.plan.review_prepared",
+            "prepare_assisted_installation_review": "installation.plan.review_prepared",
+            "apply_provider_installation": "installation.plan.provider_installation_applied",
+            "request_model_install": "installation.plan.model_requested",
+            "process_model_install": "installation.plan.model_processed",
+            "create_bundle": "installation.plan.bundle_created",
+            "create_private_endpoint": "installation.plan.endpoint_created",
+            "forecast_private_endpoint": "installation.plan.endpoint_forecasted",
+            "start_private_endpoint": "installation.plan.endpoint_started",
+        }
+        message_by_action = {
+            "prepare_review": "AI-assisted installation plan prepared for provider review",
+            "prepare_assisted_installation_review": "AI-assisted installation plan prepared for provider review",
+            "apply_provider_installation": "AI-assisted installation plan applied the reviewed provider installation",
+            "request_model_install": "AI-assisted installation plan queued a model installation",
+            "process_model_install": "AI-assisted installation plan processed and verified the selected model",
+            "create_bundle": "AI-assisted installation plan created a local Bundle",
+            "create_private_endpoint": "AI-assisted installation plan created a private Endpoint",
+            "forecast_private_endpoint": "AI-assisted installation plan checked private Endpoint resource admission",
+            "start_private_endpoint": "AI-assisted installation plan started a private Endpoint",
+        }
         self.record_event(
-            event_type=(
-                "installation.plan.review_prepared"
-                if action in {"prepare_review", "prepare_assisted_installation_review"}
-                else (
-                    "installation.plan.model_requested"
-                    if action == "request_model_install"
-                    else (
-                        "installation.plan.model_processed"
-                        if action == "process_model_install"
-                        else (
-                            "installation.plan.bundle_created"
-                            if action == "create_bundle"
-                            else (
-                            "installation.plan.endpoint_created"
-                            if action == "create_private_endpoint"
-                                else (
-                                    "installation.plan.endpoint_forecasted"
-                                    if action == "forecast_private_endpoint"
-                                    else "installation.plan.endpoint_started"
-                                )
-                            )
-                        )
-                    )
-                )
-            ),
-            message=(
-                "AI-assisted installation plan prepared for provider review"
-                if action in {"prepare_review", "prepare_assisted_installation_review"}
-                else (
-                    "AI-assisted installation plan queued a model installation"
-                    if action == "request_model_install"
-                    else (
-                        "AI-assisted installation plan processed and verified the selected model"
-                        if action == "process_model_install"
-                        else (
-                            "AI-assisted installation plan created a local Bundle"
-                            if action == "create_bundle"
-                            else (
-                                "AI-assisted installation plan created a private Endpoint"
-                                if action == "create_private_endpoint"
-                                else (
-                                    "AI-assisted installation plan checked private Endpoint resource admission"
-                                    if action == "forecast_private_endpoint"
-                                    else "AI-assisted installation plan started a private Endpoint"
-                                )
-                            )
-                        )
-                    )
-                )
-            ),
+            event_type=event_type_by_action[action],
+            message=message_by_action[action],
             details={
                 "operation_id": result.get("operation_id"),
                 "status": result.get("status"),
@@ -2298,6 +2291,126 @@ class HypervisorService:
         )
         self._persist_state()
         return result
+
+    def _apply_provider_from_installation_plan(
+        self,
+        *,
+        plan_hash: str,
+        actor: str,
+        idempotency_key: str | None,
+    ) -> dict:
+        """Apply only an operator-approved provider installation for this plan.
+
+        The terminal wizard never stores provider secrets or configuration in
+        the assisted plan.  Instead, the operator approves the reviewed
+        provider plan through the normal Provider UI; this step finds that
+        exact approval by its bound provider-plan hash and submits the durable
+        broker job.  An agent can resume/observe the job, but cannot invent an
+        approval or bypass the existing package, permission and sandbox checks.
+        """
+
+        current = read_installation_plan()
+        if not current.get("available"):
+            raise ValueError(str(current.get("reason") or "installation plan is unavailable"))
+        if current.get("integrity") != "verified":
+            raise ValueError(str(current.get("reason") or "installation plan integrity is not verified"))
+        if str(current.get("plan_hash")) != str(plan_hash):
+            raise ValueError("installation plan changed; refresh before applying")
+        if current.get("mode") != "ai_assisted":
+            raise ValueError("only an AI-assisted installation plan can apply a provider")
+
+        application = current.get("application")
+        application = dict(application) if isinstance(application, dict) else {}
+        provider_application = application.get("provider")
+        provider_application = (
+            dict(provider_application) if isinstance(provider_application, dict) else {}
+        )
+        provider_id = str(current.get("provider") or "skip")
+        if provider_id == "skip":
+            raise ValueError("the assisted plan does not select a provider")
+
+        existing_job_id = str(provider_application.get("job_id") or "")
+        existing_status = str(provider_application.get("status") or "").upper()
+        if idempotency_key and provider_application.get("idempotency_key") == idempotency_key and existing_job_id:
+            return {
+                **current,
+                "operation_id": provider_application.get("operation_id"),
+                "job": self.get_provider_installation_job(existing_job_id),
+                "workflow": self.installation_plan().get("workflow"),
+            }
+        if existing_job_id and existing_status in {"QUEUED", "RUNNING", "PROCESSING"}:
+            return {
+                **current,
+                "operation_id": provider_application.get("operation_id"),
+                "job": self.get_provider_installation_job(existing_job_id),
+                "workflow": self.installation_plan().get("workflow"),
+            }
+
+        reviewed_plan = provider_application.get("installation_plan")
+        reviewed_plan = reviewed_plan if isinstance(reviewed_plan, dict) else {}
+        provider_plan_hash = str(reviewed_plan.get("plan_hash") or "")
+        if not provider_plan_hash:
+            raise ValueError("provider review is missing a plan hash; prepare the assisted review again")
+
+        approvals = self.list_provider_installation_approvals()
+        approval = next(
+            (
+                item
+                for item in reversed(approvals)
+                if str(item.get("plugin_id") or "") == provider_id
+                and str(item.get("plan_hash") or "") == provider_plan_hash
+                and str(item.get("status") or "").upper() == "APPROVED"
+            ),
+            None,
+        )
+        if approval is None:
+            raise ValueError(
+                "operator approval is required for the reviewed provider plan before installation"
+            )
+
+        approval_id = str(approval.get("approval_id") or "")
+        if not approval_id:
+            raise ValueError("provider approval is missing its approval id")
+        operation_id = str(provider_application.get("operation_id") or f"provider-install-{uuid4().hex}")
+        job = self.apply_provider_installation_approval(
+            approval_id,
+            wait_for_completion=False,
+        )
+        job = dict(job or {})
+        job_id = str(job.get("job_id") or "")
+        if not job_id:
+            raise ValueError("provider installation did not return a durable job id")
+        provider_application.update(
+            {
+                "plugin_id": provider_id,
+                "approval_id": approval_id,
+                "job_id": job_id,
+                "plan_hash": provider_plan_hash,
+                "status": str(job.get("status") or "QUEUED").upper(),
+                "operation_id": operation_id,
+                "idempotency_key": idempotency_key,
+                "submitted_at": datetime.now(UTC).isoformat(),
+                "actor": actor,
+                "last_error": job.get("error_message"),
+            }
+        )
+        application["provider"] = provider_application
+        status = "PROVIDER_INSTALL_QUEUED"
+        next_action = "wait_provider_installation"
+        if str(job.get("status") or "").upper() in {"FAILED", "ERROR", "CANCELLED"}:
+            status = "PROVIDER_INSTALL_FAILED"
+            next_action = "inspect_provider_installation"
+        updated = update_installation_plan(
+            None,
+            expected_hash=plan_hash,
+            status=status,
+            application=application,
+            next_action=next_action,
+        )
+        updated["operation_id"] = operation_id
+        updated["job"] = job
+        updated["workflow"] = self.installation_plan().get("workflow")
+        return updated
 
     def _request_model_from_installation_plan(
         self,

@@ -233,6 +233,7 @@ function AssistedSetupCard({ plan, onNavigate, onApply }: { plan: InstallationPl
   const nextAction = plan.workflow?.next_action
   const workflowAction: Record<string, AssistedInstallationAction | undefined> = {
     prepare_assisted_installation_review: 'prepare_review',
+    apply_provider_installation: 'apply_provider_installation',
     request_model_install: 'request_model_install',
     process_model_install: 'process_model_install',
     create_bundle: 'create_bundle',
@@ -242,13 +243,15 @@ function AssistedSetupCard({ plan, onNavigate, onApply }: { plan: InstallationPl
   }
   const action = workflowAction[nextAction?.id ?? ''] ?? (reviewable ? 'prepare_review' : undefined)
   const completion = plan.workflow?.completion
-  const destination = nextAction?.id === 'approve_provider_installation' || status === 'waiting_for_provider'
+  const destination = nextAction?.id === 'approve_provider_installation' || nextAction?.id === 'inspect_provider_installation' || status === 'waiting_for_provider'
     ? 'providers'
     : nextAction?.id === 'wait_model_install' || nextAction?.id === 'inspect_model_install' || status === 'model_install_queued'
       ? 'models'
       : null
   const statusLabel = status === 'ready_for_review' || status === 'legacy_review_required'
     ? 'Review required'
+    : status === 'provider_install_queued'
+      ? 'Provider queued'
     : status === 'model_install_queued'
       ? 'Model queued'
       : status === 'waiting_for_provider'
@@ -297,7 +300,7 @@ function JourneyRail({ graph, residentAgent, installationPlan, onNavigate, onApp
           <div><p className="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-primary">RFC-0075</p><h2 className="mt-1 text-sm font-bold text-foreground">Resident Steward</h2></div>
           <span className={cn('rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.1em]', residentAgent?.enabled ? 'border-emerald-700/25 bg-emerald-50 text-emerald-800' : 'border-slate-300 bg-slate-50 text-slate-600')}>{residentAgent?.enabled ? residentAgent.state : 'Disabled'}</span>
         </div>
-        <p className="mt-2 text-xs leading-5 text-muted-foreground">CPU-first local control agent. It observes the event stream but cannot execute tools or reserve VRAM in this slice.</p>
+        <p className="mt-2 text-xs leading-5 text-muted-foreground">CPU-first local control agent. It can advance the reviewed private setup through policy-bound MCP actions; resource admission remains authoritative.</p>
         <dl className="mt-3 space-y-2 text-xs"><div className="flex justify-between gap-3"><dt className="text-muted-foreground">Profile</dt><dd className="font-mono font-medium text-foreground">{residentAgent?.execution.profile ?? 'CPU_RESIDENT'}</dd></div><div className="flex justify-between gap-3"><dt className="text-muted-foreground">Model</dt><dd className="max-w-[11rem] truncate font-mono text-foreground">{residentAgent?.model.llama_cpp_reference ?? 'Qwen2.5-0.5B:Q4_K_M'}</dd></div><div className="flex justify-between gap-3"><dt className="text-muted-foreground">Events seen</dt><dd className="font-mono text-foreground">{residentAgent?.event_ingestion.events_seen ?? 0}</dd></div></dl>
         <p className="mt-3 text-[11px] leading-4 text-muted-foreground">{residentAgent?.health === 'NOT_RUNNING' ? 'Inference adapter is not started; no model weights are downloaded automatically.' : residentAgent?.last_error ?? 'Status is reported by the Hypervisor.'}</p>
       </section>

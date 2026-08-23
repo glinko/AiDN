@@ -521,6 +521,7 @@ export type EscalationTasks = z.infer<typeof escalationTasksSchema>
 export type InstallationPlan = z.infer<typeof installationPlanSchema>
 export type AssistedInstallationAction =
   | 'prepare_review'
+  | 'apply_provider_installation'
   | 'request_model_install'
   | 'process_model_install'
   | 'create_bundle'

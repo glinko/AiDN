@@ -25,8 +25,8 @@ release evidence, this roadmap uses the following meanings:
 | Surface | Implemented on `main` | Still required for public use |
 | --- | --- | --- |
 | Hypervisor core | Provider runtimes, model/Bundle/Endpoint flows, Resource Broker, scheduler, runtime port allocation, events/Hooks, MCP, Journey, and lifecycle foundations | Production configuration profile, Internet exposure review, backup/restore drill, release packaging, and public smoke evidence |
-| Resident Steward | CPU-first model lifecycle, worker, event cursor, bounded context, Reasoning Router, escalation tasks, action guard/executor, policy UI, MCP, GPU-burst fallback, and tests | A complete assisted-setup executor, real first-boot acceptance, model artifact distribution/checksum policy, recovery UX, and operational latency/resource measurements |
-| Interactive installer | Required questions, `manual`/`ai_assisted` modes, structured owner-only plan, resumable handoff, and plan-bound Dashboard apply | Provider install -> model prepare -> Bundle -> private Endpoint -> health verification as one resumable Steward workflow; Ubuntu 22.04/24.04 fresh/rerun/recovery matrix |
+| Resident Steward | CPU-first model lifecycle, worker, event cursor, bounded context, Reasoning Router, escalation tasks, action guard/executor, policy UI, MCP, GPU-burst fallback, and a plan-bound assisted-installation executor | Real first-boot acceptance, model artifact distribution/checksum policy, recovery UX, and operational latency/resource measurements |
+| Interactive installer | Required questions, `manual`/`ai_assisted` modes, structured owner-only plan, resumable handoff, and Provider -> model -> Bundle -> private Endpoint -> broker admission/readiness workflow | Ubuntu 22.04/24.04 fresh/rerun/recovery matrix and release evidence; public publication remains a separate operator/validation boundary |
 | Lifecycle | Dependency plans, Bundle/Endpoint transitions, local removal, tombstones, Runtime Reset, operator API, Bundle/Provider actions, and Runtime Reset UI | Complete CLI/MCP lifecycle surface, Validation/Node lifecycle, configuration and identity-preserving reset, decommission, Factory Reset, ArtifactGC, and destructive-host acceptance |
 | Public website | WEB-0001 React application, content, responsive design, demo Network/Explorer/Faucet flows, and a successful production frontend build | The deployed Caddy route still returns `503` for `/api/site/v1/*`; Website Backend, indexer, live Explorer, Faucet facade, release feed, SEO and public deployment acceptance are open |
 | Faucet | External Treasury service, signed Wallet proof, creator policy/releases, SQLite durability, exact-envelope idempotency, verified-finality adapter, admin/MCP boundaries, and focused tests | Internet-facing Website facade, rate limiting/abuse controls, CAPTCHA hook policy, production secrets, funded Treasury activation, monitoring, backup and end-to-end public claim evidence |
@@ -73,13 +73,14 @@ finality.
    adding another feature slice. Preserve the added Resource Broker evidence
    by updating contracts/tests deliberately rather than deleting fields merely
    to satisfy snapshots.
-2. [ ] **Finish Steward-assisted installation.** Add one durable setup state
-   machine that resumes the exact installation plan, installs only a reviewed
-   Provider through the privileged broker, prepares and verifies the selected
-   model, forecasts resources, creates a Bundle and private Endpoint, starts it
-   only after admission, probes inference health, and returns a structured
-   completion/handoff summary. Public publication remains a separate explicit
-   operator/validation action.
+2. [x] **Finish the Steward-assisted installation code path.** One durable setup
+   state machine now resumes the exact installation plan, installs only an
+   operator-approved Provider through the privileged broker, prepares and
+   verifies the selected model, forecasts resources, creates a Bundle and
+   private Endpoint, starts it only after admission, probes inference health,
+   and returns a structured completion/handoff summary. Dashboard and
+   `aidn.steward.installation_apply` use the same plan-bound service boundary;
+   public publication remains a separate explicit operator/validation action.
 3. [ ] **Prove the installer on disposable Ubuntu hosts.** Cover 22.04 and
    24.04, manual and assisted modes, interrupted rerun, existing identity,
    insufficient disk/RAM/VRAM, failed download, broker restart, uninstall and
@@ -152,6 +153,11 @@ finality.
   the read-only `aidn.steward.installation_workflow` MCP tool and
   `aidn://steward/installation` resource; observation remains separate from
   mutation authority.
+- [x] Add the scoped `aidn.steward.installation_apply` MCP tool. It creates a
+  normal MCP plan, accepts only the current workflow action, requires the
+  persisted installation-plan hash, and can submit only an exact operator-
+  approved Provider plan to the existing privileged broker. It cannot create
+  approval, bypass admission, or publish an Endpoint.
 - [ ] Run the complete Ubuntu CI matrix and package build for this exact commit.
   Local focused tests and Ruff are green; Windows pytest teardown currently
   leaves completed test workers alive, so it is not accepted as release proof.
@@ -196,9 +202,8 @@ finality.
 - [ ] Resolve the duplicate `UX-0003` document identifier currently used by
   both the Operator Readiness Wizard and Node Journey specifications; preserve
   redirecting links when assigning the next free UX identifier.
-- [ ] Update the interactive-installation document's obsolete statement that
-  the Resident inference adapter is `NOT_STARTED`; the adapter exists, while
-  the end-to-end setup executor remains open.
+- [x] Update the interactive-installation document to describe the implemented
+  plan-bound Steward executor; fresh-host acceptance remains a separate gate.
 - [ ] Add a repository check that validates Roadmap/document links and rejects
   duplicate specification identifiers.
 

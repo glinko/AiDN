@@ -46,15 +46,17 @@ private keys, wallet material, or agent token. It records authority boundaries:
 - Endpoint publication still requires validation and existing Hypervisor
   policy.
 - The Resident Steward cannot execute arbitrary shell commands or mutate state
-  merely because assisted mode was selected.
+  merely because assisted mode was selected; its installation tool can only
+  advance the allowlisted, plan-bound private workflow below.
 
 When assisted mode is selected, the generated service exports
 `AIDN_INSTALLATION_SETUP_MODE=ai_assisted` and configures the CPU-first Resident
 Steward profile. The Resident inference adapter and Resource Broker integration
-are implemented, but the installer remains a control-plane boundary: it can
-prepare and inspect the selected workflow, but it does not silently download a
-model, reserve VRAM, or publish an Endpoint. Those changes continue through
-their dedicated approval, admission and validation paths.
+are implemented. The installer remains a control-plane boundary: the Steward
+may advance only the reviewed private workflow through the same policy-bound
+service actions as the Dashboard. It does not silently download a model,
+reserve VRAM, or publish an Endpoint; those changes continue through their
+dedicated approval, admission and validation paths.
 
 ## Non-interactive use
 
@@ -77,9 +79,11 @@ page the Dashboard now shows an **Assisted setup** review card when the plan is
 available. The card exposes the selected provider, model, endpoint intent and
 integrity status. `Review and continue` is a plan-hash-bound operator action:
 it re-reads the file, rejects legacy or tampered plans, and persists an
-idempotent, secret-free **Provider review**. Provider installation, model
-download, Bundle creation, Runtime activation, validation and publication
-remain separate policy-gated actions. The review never attempts a hidden host
+idempotent, secret-free **Provider review**. Once the operator approves that
+exact Provider plan in the normal Provider workflow, the card can submit the
+approval to the privileged broker. Provider installation, model download,
+Bundle creation, Runtime activation, validation and publication remain
+separate policy-gated actions. The review never attempts a hidden host
 mutation and cannot turn a model URL into a permission grant.
 
 The Dashboard read endpoint is:
@@ -93,7 +97,11 @@ read-only MCP tool `aidn.steward.installation_workflow` or resource
 `aidn://steward/installation`. It exposes the plan hash, observed stages,
 `next_action`, completion summary and authority boundaries, but never exposes
 private keys or turns a workflow observation into permission to mutate the
-host.
+host. A separately scoped `STEWARD:EXECUTE` session may call
+`aidn.steward.installation_apply` after creating an MCP plan. The tool accepts
+only the current next action and forwards the persisted installation-plan hash
+to the Hypervisor; it cannot create an operator approval, install an unreviewed
+Provider, or publish an Endpoint.
 
 For a compact polling target, the same service exposes the derived workflow
 only:

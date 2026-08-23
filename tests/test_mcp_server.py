@@ -540,6 +540,66 @@ def test_mcp_steward_installation_workflow_is_bounded_and_read_only(
     assert resource["result"]["contents"][0]["mimeType"] == "application/json"
 
 
+def test_mcp_steward_installation_apply_is_plan_bound_and_policy_gated(
+    monkeypatch,
+) -> None:
+    server = _server("STEWARD:EXECUTE")
+    server.control.service.installation_plan = lambda: {
+        "available": True,
+        "integrity": "verified",
+        "status": "MODEL_INSTALL_QUEUED",
+        "mode": "ai_assisted",
+        "ai_assisted": True,
+        "plan_hash": "sha256:installation-plan",
+        "provider": "llama.cpp",
+        "model": {"id": "org/model", "source": "hf://org/model/model.gguf"},
+        "workflow": {
+            "status": "IN_PROGRESS",
+            "next_action": {"id": "process_model_install", "label": "Process", "reason": "queued"},
+        },
+    }
+    _initialize(server)
+
+    planned = _call(
+        server,
+        "aidn.steward.installation_apply",
+        {
+            "installation_plan_hash": "sha256:installation-plan",
+            "action": "process_model_install",
+            "mode": "plan",
+            "request_id": "steward-plan-1",
+            "idempotency_key": "steward-install-1",
+        },
+    )
+    assert planned["isError"] is False
+    plan = planned["structuredContent"]
+    assert plan["installation_plan_hash"] == "sha256:installation-plan"
+    assert plan["action"] == "process_model_install"
+    assert plan["requires_approval"] is False
+
+    called: list[dict] = []
+    server.control.service.apply_installation_plan = lambda **payload: (
+        called.append(payload) or {"status": "MODEL_INSTALL_COMPLETED"}
+    )
+    applied = _call(
+        server,
+        "aidn.steward.installation_apply",
+        {
+            "installation_plan_hash": "sha256:installation-plan",
+            "action": "process_model_install",
+            "mode": "apply",
+            # The MCP plan is request-bound; applying it must carry the same
+            # request id that was used to create the plan.
+            "request_id": "steward-plan-1",
+            "idempotency_key": "steward-install-2",
+            "plan_hash": plan["plan_hash"],
+        },
+    )
+    assert applied["isError"] is False
+    assert called[0]["plan_hash"] == "sha256:installation-plan"
+    assert called[0]["action"] == "process_model_install"
+
+
 def test_mcp_steward_context_and_decision_are_read_only(monkeypatch) -> None:
     monkeypatch.setenv("AIDN_STEWARD_ENABLED", "1")
     server = _server("STEWARD:READ")
