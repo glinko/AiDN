@@ -87,13 +87,30 @@ class ModelInstallService:
     def list_model_installs(self) -> list[dict]:
         return [dict(job) for job in self._host._model_installs.values()]
 
-    def process_model_installs(self, *, limit: int | None = None) -> list[dict]:
+    def process_model_installs(
+        self,
+        *,
+        limit: int | None = None,
+        install_id: str | None = None,
+    ) -> list[dict]:
         if self._host.model_store is None:
             raise ValueError("Model store is not configured")
         processed: list[dict] = []
-        queued_jobs = [
-            job for job in self._host._model_installs.values() if job["status"] == "queued"
-        ]
+        if install_id is not None:
+            normalized_install_id = str(install_id).strip()
+            job = self._host._model_installs.get(normalized_install_id)
+            if job is None:
+                raise KeyError(f"Unknown model install job: {normalized_install_id}")
+            # A targeted retry is intentionally idempotent.  A queued job is
+            # materialized below; a running/terminal job is only observed by
+            # the caller so a repeated Steward action cannot duplicate work.
+            queued_jobs = [job] if job.get("status") == "queued" else []
+        else:
+            queued_jobs = [
+                job
+                for job in self._host._model_installs.values()
+                if job["status"] == "queued"
+            ]
         if limit is not None:
             queued_jobs = queued_jobs[:limit]
 

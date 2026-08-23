@@ -521,6 +521,7 @@ export type InstallationPlan = z.infer<typeof installationPlanSchema>
 export type AssistedInstallationAction =
   | 'prepare_review'
   | 'request_model_install'
+  | 'process_model_install'
   | 'create_bundle'
   | 'create_private_endpoint'
   | 'forecast_private_endpoint'

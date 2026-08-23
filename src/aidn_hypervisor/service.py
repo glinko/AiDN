@@ -2079,8 +2079,16 @@ class HypervisorService:
     def list_model_installs(self) -> list[dict]:
         return self._model_install_facade().list_model_installs()
 
-    def process_model_installs(self, *, limit: int | None = None) -> list[dict]:
-        return self._model_install_facade().process_model_installs(limit=limit)
+    def process_model_installs(
+        self,
+        *,
+        limit: int | None = None,
+        install_id: str | None = None,
+    ) -> list[dict]:
+        return self._model_install_facade().process_model_installs(
+            limit=limit,
+            install_id=install_id,
+        )
 
     def attach_provider_instance(
         self,
@@ -2177,6 +2185,7 @@ class HypervisorService:
             "prepare_review",
             "prepare_assisted_installation_review",
             "request_model_install",
+            "process_model_install",
             "create_bundle",
             "create_private_endpoint",
             "forecast_private_endpoint",
@@ -2196,6 +2205,12 @@ class HypervisorService:
             )
         elif action == "request_model_install":
             result = self._request_model_from_installation_plan(
+                plan_hash=plan_hash,
+                actor=actor,
+                idempotency_key=idempotency_key,
+            )
+        elif action == "process_model_install":
+            result = self._process_model_from_installation_plan(
                 plan_hash=plan_hash,
                 actor=actor,
                 idempotency_key=idempotency_key,
@@ -2232,15 +2247,19 @@ class HypervisorService:
                     "installation.plan.model_requested"
                     if action == "request_model_install"
                     else (
-                        "installation.plan.bundle_created"
-                        if action == "create_bundle"
+                        "installation.plan.model_processed"
+                        if action == "process_model_install"
                         else (
+                            "installation.plan.bundle_created"
+                            if action == "create_bundle"
+                            else (
                             "installation.plan.endpoint_created"
                             if action == "create_private_endpoint"
-                            else (
-                                "installation.plan.endpoint_forecasted"
-                                if action == "forecast_private_endpoint"
-                                else "installation.plan.endpoint_started"
+                                else (
+                                    "installation.plan.endpoint_forecasted"
+                                    if action == "forecast_private_endpoint"
+                                    else "installation.plan.endpoint_started"
+                                )
                             )
                         )
                     )
@@ -2253,15 +2272,19 @@ class HypervisorService:
                     "AI-assisted installation plan queued a model installation"
                     if action == "request_model_install"
                     else (
-                        "AI-assisted installation plan created a local Bundle"
-                        if action == "create_bundle"
+                        "AI-assisted installation plan processed and verified the selected model"
+                        if action == "process_model_install"
                         else (
-                            "AI-assisted installation plan created a private Endpoint"
-                            if action == "create_private_endpoint"
+                            "AI-assisted installation plan created a local Bundle"
+                            if action == "create_bundle"
                             else (
-                                "AI-assisted installation plan checked private Endpoint resource admission"
-                                if action == "forecast_private_endpoint"
-                                else "AI-assisted installation plan started a private Endpoint"
+                                "AI-assisted installation plan created a private Endpoint"
+                                if action == "create_private_endpoint"
+                                else (
+                                    "AI-assisted installation plan checked private Endpoint resource admission"
+                                    if action == "forecast_private_endpoint"
+                                    else "AI-assisted installation plan started a private Endpoint"
+                                )
                             )
                         )
                     )
@@ -2352,6 +2375,113 @@ class HypervisorService:
             status="MODEL_INSTALL_QUEUED",
             application=application,
             next_action="wait_model_install",
+        )
+        updated["operation_id"] = operation_id
+        updated["workflow"] = self.installation_plan().get("workflow")
+        return updated
+
+    def _process_model_from_installation_plan(
+        self,
+        *,
+        plan_hash: str,
+        actor: str,
+        idempotency_key: str | None,
+    ) -> dict:
+        """Materialize only the model selected by the assisted plan.
+
+        The ordinary model worker remains the owner of download, checksum and
+        provider-specific preparation.  This wrapper supplies the missing
+        plan-bound control-plane step: a Steward or operator can explicitly
+        start that worker for the selected install, without accidentally
+        processing an unrelated queued model on the node.
+        """
+
+        current = read_installation_plan()
+        if not current.get("available"):
+            raise ValueError(str(current.get("reason") or "installation plan is unavailable"))
+        if current.get("integrity") != "verified":
+            raise ValueError(str(current.get("reason") or "installation plan integrity is not verified"))
+        if str(current.get("plan_hash")) != str(plan_hash):
+            raise ValueError("installation plan changed; refresh before applying")
+        if current.get("mode") != "ai_assisted":
+            raise ValueError("only an AI-assisted installation plan can process a model")
+
+        application = current.get("application")
+        application = dict(application) if isinstance(application, dict) else {}
+        model_application = application.get("model")
+        model_application = (
+            dict(model_application) if isinstance(model_application, dict) else {}
+        )
+        install_id = str(model_application.get("install_id") or "")
+        if not install_id:
+            raise ValueError("request the selected model before processing it")
+
+        install = next(
+            (
+                item
+                for item in self.list_model_installs()
+                if str(item.get("install_id") or "") == install_id
+            ),
+            None,
+        )
+        if install is None:
+            raise ValueError(f"selected model install is unavailable: {install_id}")
+
+        existing_key = model_application.get("processing_idempotency_key")
+        if (
+            idempotency_key
+            and existing_key == idempotency_key
+            and str(install.get("status") or "").lower() in {"completed", "failed"}
+        ):
+            return {
+                **current,
+                "operation_id": model_application.get("processing_operation_id"),
+                "workflow": self.installation_plan().get("workflow"),
+            }
+
+        operation_id = str(
+            model_application.get("processing_operation_id")
+            or f"model-process-{uuid4().hex}"
+        )
+        status_before = str(install.get("status") or "").lower()
+        if status_before == "queued":
+            self.process_model_installs(install_id=install_id, limit=1)
+            install = next(
+                item
+                for item in self.list_model_installs()
+                if str(item.get("install_id") or "") == install_id
+            )
+
+        status = str(install.get("status") or "").lower()
+        model_application.update(
+            {
+                "status": status.upper() or "UNKNOWN",
+                "processing_operation_id": operation_id,
+                "processing_idempotency_key": idempotency_key,
+                "processed_at": datetime.now(UTC).isoformat(),
+                "last_error": install.get("last_error"),
+                "actor": actor,
+            }
+        )
+        application["model"] = model_application
+        if status in {"completed", "registered"}:
+            plan_status = "MODEL_INSTALL_COMPLETED"
+            next_action = "create_bundle"
+        elif status == "failed":
+            plan_status = "MODEL_INSTALL_FAILED"
+            next_action = "inspect_model_install"
+        elif status == "running":
+            plan_status = "MODEL_INSTALL_RUNNING"
+            next_action = "wait_model_install"
+        else:
+            plan_status = "MODEL_INSTALL_QUEUED"
+            next_action = "process_model_install"
+        updated = update_installation_plan(
+            None,
+            expected_hash=plan_hash,
+            status=plan_status,
+            application=application,
+            next_action=next_action,
         )
         updated["operation_id"] = operation_id
         updated["workflow"] = self.installation_plan().get("workflow")

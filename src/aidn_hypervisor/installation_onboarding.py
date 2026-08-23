@@ -416,7 +416,7 @@ def build_installation_workflow_projection(
         model_state = "SKIPPED"
     elif provider_state in {"NOT_STARTED", "REVIEW_REQUIRED", "ERROR"}:
         model_state = "BLOCKED"
-    elif install_state in {"COMPLETED", "READY", "SUCCEEDED"}:
+    elif install_state in {"COMPLETED", "REGISTERED", "READY", "SUCCEEDED"}:
         model_state = "READY"
     elif install_state in {"QUEUED", "RUNNING", "PROCESSING"}:
         model_state = "IN_PROGRESS"
@@ -440,13 +440,18 @@ def build_installation_workflow_projection(
     application_runtime = (
         application_runtime if isinstance(application_runtime, Mapping) else {}
     )
+    application_bundle = application.get("bundle")
+    application_bundle = (
+        application_bundle if isinstance(application_bundle, Mapping) else {}
+    )
+    application_bundle_id = str(application_bundle.get("bundle_id") or "")
     matching_bundles = [
         item
         for item in bundles
         if (
             str(item.get("model_id") or "") == model_id
             or str(item.get("bundle_id") or "")
-            == str(application.get("bundle_id") or "")
+            == application_bundle_id
         )
     ]
     bundle_item = matching_bundles[-1] if matching_bundles else {}
@@ -529,9 +534,14 @@ def build_installation_workflow_projection(
         action_label = "Request the selected model"
         reason = "The provider is ready; model download still requires an explicit request."
     elif model_state == "IN_PROGRESS":
-        action_id = "wait_model_install"
-        action_label = "Wait for model installation"
-        reason = "The model install is queued or running."
+        if install_state == "QUEUED":
+            action_id = "process_model_install"
+            action_label = "Download and verify the selected model"
+            reason = "The model is queued; start the explicit materialization step to download and verify it."
+        else:
+            action_id = "wait_model_install"
+            action_label = "Wait for model installation"
+            reason = "The model install is currently running."
     elif model_state == "ERROR":
         action_id = "inspect_model_install"
         action_label = "Inspect the failed model installation"

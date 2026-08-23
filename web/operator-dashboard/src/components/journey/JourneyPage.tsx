@@ -234,6 +234,7 @@ function AssistedSetupCard({ plan, onNavigate, onApply }: { plan: InstallationPl
   const workflowAction: Record<string, AssistedInstallationAction | undefined> = {
     prepare_assisted_installation_review: 'prepare_review',
     request_model_install: 'request_model_install',
+    process_model_install: 'process_model_install',
     create_bundle: 'create_bundle',
     create_private_endpoint: 'create_private_endpoint',
     forecast_private_endpoint: 'forecast_private_endpoint',
@@ -242,7 +243,7 @@ function AssistedSetupCard({ plan, onNavigate, onApply }: { plan: InstallationPl
   const action = workflowAction[nextAction?.id ?? ''] ?? (reviewable ? 'prepare_review' : undefined)
   const destination = nextAction?.id === 'approve_provider_installation' || status === 'waiting_for_provider'
     ? 'providers'
-    : nextAction?.id === 'wait_model_install' || status === 'model_install_queued'
+    : nextAction?.id === 'wait_model_install' || nextAction?.id === 'inspect_model_install' || status === 'model_install_queued'
       ? 'models'
       : null
   const statusLabel = status === 'ready_for_review' || status === 'legacy_review_required'

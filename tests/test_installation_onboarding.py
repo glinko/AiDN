@@ -227,6 +227,14 @@ def test_workflow_projection_recomputes_next_step_from_observed_state() -> None:
     assert provider_ready["next_action"]["id"] == "request_model_install"
     assert provider_ready["stages"][0]["state"] == "READY"
 
+    model_queued = build_installation_workflow_projection(
+        plan,
+        provider_instances=[{"plugin_id": "llama.cpp", "status": "attached"}],
+        model_installs=[{"model_id": "org/model", "status": "queued"}],
+    )
+    assert model_queued["next_action"]["id"] == "process_model_install"
+    assert model_queued["stages"][1]["state"] == "IN_PROGRESS"
+
     model_ready = build_installation_workflow_projection(
         plan,
         provider_instances=[{"plugin_id": "llama.cpp", "status": "attached"}],

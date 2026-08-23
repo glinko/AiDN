@@ -128,6 +128,11 @@ finality.
   is observed attached, a plan-hash/idempotency-bound request queues the model
   install and records its `install_id`; the worker still owns download and
   verification, so this step cannot silently mutate the host.
+- [x] Add the explicit, plan-bound model materialization action. The Dashboard
+  or Steward can invoke the existing worker for only the selected `install_id`,
+  observe `queued/running/completed/failed`, and resume without consuming an
+  unrelated queued model. Bundle creation now treats a registered install as
+  verified evidence instead of regressing to the model step.
 - [x] Add the next explicit action after a completed model job: register a
   loopback-preferred local Bundle through the existing provider inventory
   service, retaining the normal runtime port allocator and keeping Endpoint

@@ -690,8 +690,12 @@ def test_service_queues_selected_model_as_a_second_explicit_setup_step(
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
         scheduler=Scheduler(),
+        resources=ResourceOrchestrator(
+            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})
+        ),
         plugins=registry,
         runtimes=ProviderProcessManager(),
+        model_store=FileModelStore(tmp_path / "models"),
     )
     monkeypatch.setattr(
         service,
@@ -709,10 +713,27 @@ def test_service_queues_selected_model_as_a_second_explicit_setup_step(
     assert queued["status"] == "MODEL_INSTALL_QUEUED"
     assert queued["application"]["model"]["status"] == "QUEUED"
     assert queued["application"]["model"]["install_id"]
-    assert queued["workflow"]["next_action"]["id"] == "wait_model_install"
-    service.mark_model_install_completed(queued["application"]["model"]["install_id"])
-    bundle = service.apply_installation_plan(
+    assert queued["workflow"]["next_action"]["id"] == "process_model_install"
+
+    def process_selected_model(*, install_id: str, limit: int | None = None) -> list[dict]:
+        assert limit == 1
+        job = service._model_installs[install_id]
+        job["status"] = "completed"
+        job["last_error"] = None
+        return [dict(job)]
+
+    monkeypatch.setattr(service, "process_model_installs", process_selected_model)
+    processed = service.apply_installation_plan(
         plan_hash=str(queued["plan_hash"]),
+        actor="operator-test",
+        idempotency_key="model-process-1",
+        action="process_model_install",
+    )
+    assert processed["status"] == "MODEL_INSTALL_COMPLETED"
+    assert processed["application"]["model"]["status"] == "COMPLETED"
+    assert processed["workflow"]["next_action"]["id"] == "create_bundle"
+    bundle = service.apply_installation_plan(
+        plan_hash=str(processed["plan_hash"]),
         actor="operator-test",
         idempotency_key="bundle-1",
         action="create_bundle",
@@ -3186,6 +3207,46 @@ def test_service_process_model_installs_materializes_artifact_and_marks_job_comp
         "model.install.started",
         "model.install.completed",
     ]
+
+
+def test_service_targeted_model_processing_does_not_consume_other_queue_entries(
+    tmp_path,
+) -> None:
+    source_a = tmp_path / "model-a.gguf"
+    source_b = tmp_path / "model-b.gguf"
+    source_a.write_text("a", encoding="utf-8")
+    source_b.write_text("b", encoding="utf-8")
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(
+            NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})
+        ),
+        bundles=[],
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+        model_store=FileModelStore(tmp_path / "models"),
+    )
+
+    first = service.request_model_install(
+        provider_type="fake-managed",
+        model_id="model-a.gguf",
+        source_url=source_a.as_uri(),
+        requested_by="operator-a",
+    )
+    second = service.request_model_install(
+        provider_type="fake-managed",
+        model_id="model-b.gguf",
+        source_url=source_b.as_uri(),
+        requested_by="operator-a",
+    )
+
+    processed = service.process_model_installs(install_id=second["install_id"])
+
+    assert [job["install_id"] for job in processed] == [second["install_id"]]
+    statuses = {job["install_id"]: job["status"] for job in service.list_model_installs()}
+    assert statuses[first["install_id"]] == "queued"
+    assert statuses[second["install_id"]] == "completed"
 
 
 def test_service_process_model_installs_marks_job_failed_on_missing_artifact(
