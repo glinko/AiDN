@@ -180,6 +180,7 @@ class InstallationPlanApplyRequest(BaseModel):
         "request_model_install",
         "create_bundle",
         "create_private_endpoint",
+        "forecast_private_endpoint",
         "start_private_endpoint",
     ] = "prepare_review"
 

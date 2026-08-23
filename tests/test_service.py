@@ -740,9 +740,47 @@ def test_service_queues_selected_model_as_a_second_explicit_setup_step(
     )
     assert endpoint["status"] == "PRIVATE_ENDPOINT_CREATED"
     assert endpoint["application"]["endpoint"]["visibility"] == "private"
-    assert endpoint["workflow"]["next_action"]["id"] == "start_private_endpoint"
-    replay = service.apply_installation_plan(
+    assert endpoint["workflow"]["next_action"]["id"] == "forecast_private_endpoint"
+    forecast = service.apply_installation_plan(
         plan_hash=str(endpoint["plan_hash"]),
+        actor="operator-test",
+        idempotency_key="forecast-1",
+        action="forecast_private_endpoint",
+    )
+    assert forecast["status"] == "PRIVATE_ENDPOINT_ADMISSION_READY"
+    assert forecast["application"]["forecast"]["decision"] == "ADMIT"
+    assert forecast["workflow"]["next_action"]["id"] == "start_private_endpoint"
+    runtime = RuntimeHandle(
+        runtime_id="rt-steward-test",
+        command=["fake-runtime"],
+        status="running",
+        bundle_id=forecast["application"]["bundle"]["bundle_id"],
+        readiness_status="READY",
+    )
+    monkeypatch.setattr(
+        service,
+        "start_bundle",
+        lambda bundle_id, reserve_resources=True: runtime,
+    )
+    monkeypatch.setattr(
+        service,
+        "runtime_readiness",
+        lambda runtime_id, force=True: {
+            "runtime_id": runtime_id,
+            "readiness": {"status": "READY", "code": "HEALTHY"},
+        },
+    )
+    started = service.apply_installation_plan(
+        plan_hash=str(forecast["plan_hash"]),
+        actor="operator-test",
+        idempotency_key="start-1",
+        action="start_private_endpoint",
+    )
+    assert started["status"] == "PRIVATE_ENDPOINT_READY"
+    assert started["application"]["runtime"]["runtime_id"] == "rt-steward-test"
+    assert started["workflow"]["next_action"]["id"] == "continue_in_dashboard"
+    replay = service.apply_installation_plan(
+        plan_hash=str(started["plan_hash"]),
         actor="operator-test",
         idempotency_key="endpoint-1",
         action="create_private_endpoint",

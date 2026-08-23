@@ -130,9 +130,18 @@ this step does not start a process or create a public Endpoint.
 When the operator is ready, `"action": "create_private_endpoint"` uses the
 same Endpoint application boundary as the Dashboard to create an owner-only
 draft (`private`, not discoverable, validation disabled, external requests
-off). `"action": "start_private_endpoint"` is intentionally separate: it
-passes Bundle activation through Resource Broker admission and records the
-fresh readiness probe. No assisted action calls the public publish path.
+off). The next explicit action is
+`"action": "forecast_private_endpoint"`. It is read-only: the selected
+Provider estimator and Resource Broker report required/free capacity,
+shortfall, leases, and an `ADMIT` or `RESOURCE_WAIT` decision without
+reserving anything. A resource wait is a normal retryable state, not a runtime
+failure. `"action": "start_private_endpoint"` is intentionally separate and
+requires an `ADMIT` forecast: it passes Bundle activation through the Resource
+Broker again (protecting against races), lets the port allocator choose the
+listener, and records the fresh readiness probe. If capacity changes between
+forecast and start, the plan returns to `PRIVATE_ENDPOINT_RESOURCE_WAIT` with
+the broker explanation instead of starting an unsafe process. No assisted
+action calls the public publish path.
 For a normal manual install, omit the assisted flags or use
 `--setup-mode manual`.
 

@@ -132,11 +132,13 @@ finality.
   loopback-preferred local Bundle through the existing provider inventory
   service, retaining the normal runtime port allocator and keeping Endpoint
   creation/publication separate.
-- [x] Add private Endpoint creation and a separate activation step to the
-  assisted workflow. The Endpoint application boundary enforces owner-only,
-  non-discoverable defaults; activation delegates to Resource Broker admission,
-  runtime port allocation and readiness probing. Public publication remains
-  outside the workflow.
+- [x] Add private Endpoint creation, an explicit read-only Resource Broker
+  forecast, and a separate activation step to the assisted workflow. The
+  Endpoint application boundary enforces owner-only, non-discoverable defaults;
+  forecast records required/free capacity and retryable `RESOURCE_WAIT` rather
+  than starting an unsafe process; activation rechecks authoritative admission,
+  uses runtime port allocation, and records readiness probing. Public
+  publication remains outside the workflow.
 - [ ] Run the complete Ubuntu CI matrix and package build for this exact commit.
   Local focused tests and Ruff are green; Windows pytest teardown currently
   leaves completed test workers alive, so it is not accepted as release proof.

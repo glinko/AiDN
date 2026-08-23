@@ -29,7 +29,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
-import type { InstallationPlan, JourneyGraph, JourneyNode, ResidentAgentStatus } from '@/lib/types'
+import type { AssistedInstallationAction, InstallationPlan, JourneyGraph, JourneyNode, ResidentAgentStatus } from '@/lib/types'
 import { dashboardScreens, type DashboardScreen } from '@/stores/operator-dashboard'
 import { cn } from '@/lib/utils'
 
@@ -41,7 +41,7 @@ type JourneyPageProps = {
   error: Error | null
   onRefresh: () => void
   onNavigate: (screen: DashboardScreen) => void
-  onApplyInstallationPlan: (planHash: string) => Promise<void>
+  onApplyInstallationPlan: (planHash: string, action?: AssistedInstallationAction) => Promise<void>
 }
 
 type JourneyView = 'journey' | 'list'
@@ -222,7 +222,7 @@ function JourneyList({ graph, onSelect, onNavigate }: { graph: JourneyGraph; onS
   return <div className="space-y-2" aria-label="Node journey list">{graph.nodes.map((node) => <div key={node.id} className="flex items-center gap-3 rounded-xl border border-border bg-white/75 p-3"><span className={cn('grid size-9 shrink-0 place-items-center rounded-lg border', nodeAccent[node.state])}><NodeStateIcon state={node.state} /></span><button type="button" className="min-h-11 min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={() => onSelect(node)}><span className="block truncate text-sm font-semibold text-foreground">{node.title}</span><span className="block truncate text-xs text-muted-foreground">{node.reason}</span></button><JourneyStatus state={node.state} />{routeFor(node) ? <Button variant="ghost" size="icon" className="size-11 shrink-0 text-primary" aria-label={node.action?.label ?? `Open ${node.title}`} onClick={() => { const route = routeFor(node); if (route) onNavigate(route) }}><ChevronRight className="size-4" /></Button> : null}</div>)}</div>
 }
 
-function AssistedSetupCard({ plan, onNavigate, onApply }: { plan: InstallationPlan | undefined; onNavigate: (screen: DashboardScreen) => void; onApply: (planHash: string) => Promise<void> }) {
+function AssistedSetupCard({ plan, onNavigate, onApply }: { plan: InstallationPlan | undefined; onNavigate: (screen: DashboardScreen) => void; onApply: (planHash: string, action?: AssistedInstallationAction) => Promise<void> }) {
   const [applying, setApplying] = useState(false)
   if (!plan?.available || !plan.ai_assisted || plan.status === 'MANUAL') return null
   const status = plan.status.toLowerCase()
@@ -230,7 +230,21 @@ function AssistedSetupCard({ plan, onNavigate, onApply }: { plan: InstallationPl
   const provider = plan.provider && plan.provider !== 'skip' ? plan.provider : 'No provider selected'
   const reviewable = Boolean(plan.plan_hash) && status === 'ready_for_review' && plan.integrity === 'verified'
   const needsRegeneration = ['legacy_review_required', 'stale'].includes(status) || plan.integrity !== 'verified'
-  const destination = status === 'waiting_for_provider' ? 'providers' : status === 'model_install_queued' ? 'models' : null
+  const nextAction = plan.workflow?.next_action
+  const workflowAction: Record<string, AssistedInstallationAction | undefined> = {
+    prepare_assisted_installation_review: 'prepare_review',
+    request_model_install: 'request_model_install',
+    create_bundle: 'create_bundle',
+    create_private_endpoint: 'create_private_endpoint',
+    forecast_private_endpoint: 'forecast_private_endpoint',
+    start_private_endpoint: 'start_private_endpoint',
+  }
+  const action = workflowAction[nextAction?.id ?? ''] ?? (reviewable ? 'prepare_review' : undefined)
+  const destination = nextAction?.id === 'approve_provider_installation' || status === 'waiting_for_provider'
+    ? 'providers'
+    : nextAction?.id === 'wait_model_install' || status === 'model_install_queued'
+      ? 'models'
+      : null
   const statusLabel = status === 'ready_for_review' || status === 'legacy_review_required'
     ? 'Review required'
     : status === 'model_install_queued'
@@ -253,22 +267,22 @@ function AssistedSetupCard({ plan, onNavigate, onApply }: { plan: InstallationPl
         <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Model</dt><dd className="max-w-[12rem] truncate font-mono text-foreground" title={modelId}>{modelId}</dd></div>
         <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Endpoint</dt><dd className="font-mono text-foreground">{plan.endpoint.requested_action}</dd></div>
       </dl>
-      {plan.reason ? <p className="mt-3 rounded-xl border border-border bg-white/75 p-3 text-xs leading-5 text-muted-foreground">{plan.reason}</p> : null}
+      {nextAction?.reason || plan.reason ? <p className="mt-3 rounded-xl border border-border bg-white/75 p-3 text-xs leading-5 text-muted-foreground">{nextAction?.reason ?? plan.reason}</p> : null}
       {needsRegeneration ? <p className="mt-3 text-xs leading-5 text-amber-800">Run the installer again to create a fresh, hash-bound plan before continuing.</p> : null}
-      {reviewable ? <Button
+      {action && plan.plan_hash && plan.integrity === 'verified' ? <Button
         className="mt-4 min-h-11 w-full justify-between"
         disabled={applying}
         onClick={() => {
           if (!plan.plan_hash) return
           setApplying(true)
-          void onApply(plan.plan_hash).finally(() => setApplying(false))
+          void onApply(plan.plan_hash, action).finally(() => setApplying(false))
         }}
-      >{applying ? 'Applying…' : 'Review and continue'}<ArrowUpRight className="size-4" /></Button> : destination ? <Button variant="outline" className="mt-4 min-h-11 w-full justify-between" onClick={() => onNavigate(destination)}>{status === 'waiting_for_provider' ? 'Open providers' : 'Open models'}<ArrowUpRight className="size-4" /></Button> : null}
+      >{applying ? 'Applying…' : action === 'prepare_review' ? 'Review and continue' : nextAction?.label ?? 'Continue setup'}<ArrowUpRight className="size-4" /></Button> : destination ? <Button variant="outline" className="mt-4 min-h-11 w-full justify-between" onClick={() => onNavigate(destination)}>{destination === 'providers' ? 'Open providers' : 'Open models'}<ArrowUpRight className="size-4" /></Button> : null}
     </section>
   )
 }
 
-function JourneyRail({ graph, residentAgent, installationPlan, onNavigate, onApplyInstallationPlan }: { graph: JourneyGraph; residentAgent: ResidentAgentStatus | undefined; installationPlan: InstallationPlan | undefined; onNavigate: (screen: DashboardScreen) => void; onApplyInstallationPlan: (planHash: string) => Promise<void> }) {
+function JourneyRail({ graph, residentAgent, installationPlan, onNavigate, onApplyInstallationPlan }: { graph: JourneyGraph; residentAgent: ResidentAgentStatus | undefined; installationPlan: InstallationPlan | undefined; onNavigate: (screen: DashboardScreen) => void; onApplyInstallationPlan: (planHash: string, action?: AssistedInstallationAction) => Promise<void> }) {
   const next = graph.recommended_action
   const route = next.screen && dashboardScreens.includes(next.screen as DashboardScreen) ? next.screen as DashboardScreen : null
   const nodeId = graph.hypervisor.node_id || 'local-node'

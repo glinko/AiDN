@@ -79,7 +79,9 @@ from aidn_hypervisor.remote_transport_service import RemoteTransportService
 from aidn_hypervisor.resident_agent_service import ResidentAgentService
 from aidn_hypervisor.resident_inference_adapter import ResidentInferenceAdapter
 from aidn_hypervisor.resident_worker import ResidentWorker
+from aidn_hypervisor.resources import ResourceAdmissionError
 from aidn_hypervisor.runtime_execution_service import RuntimeExecutionService
+from aidn_hypervisor.runtime_port_allocator import RuntimePortAllocationError
 from aidn_hypervisor.runtime_protocol import RuntimeProtocolBoundaryService
 from aidn_hypervisor.runtime_protocol.models import RuntimeRequestRecord
 from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
@@ -2177,6 +2179,7 @@ class HypervisorService:
             "request_model_install",
             "create_bundle",
             "create_private_endpoint",
+            "forecast_private_endpoint",
             "start_private_endpoint",
         }:
             raise ValueError(f"unsupported installation plan action: {action}")
@@ -2209,6 +2212,12 @@ class HypervisorService:
                 actor=actor,
                 idempotency_key=idempotency_key,
             )
+        elif action == "forecast_private_endpoint":
+            result = self._forecast_private_endpoint_from_installation_plan(
+                plan_hash=plan_hash,
+                actor=actor,
+                idempotency_key=idempotency_key,
+            )
         else:
             result = self._start_private_endpoint_from_installation_plan(
                 plan_hash=plan_hash,
@@ -2228,7 +2237,11 @@ class HypervisorService:
                         else (
                             "installation.plan.endpoint_created"
                             if action == "create_private_endpoint"
-                            else "installation.plan.endpoint_started"
+                            else (
+                                "installation.plan.endpoint_forecasted"
+                                if action == "forecast_private_endpoint"
+                                else "installation.plan.endpoint_started"
+                            )
                         )
                     )
                 )
@@ -2245,7 +2258,11 @@ class HypervisorService:
                         else (
                             "AI-assisted installation plan created a private Endpoint"
                             if action == "create_private_endpoint"
-                            else "AI-assisted installation plan started a private Endpoint"
+                            else (
+                                "AI-assisted installation plan checked private Endpoint resource admission"
+                                if action == "forecast_private_endpoint"
+                                else "AI-assisted installation plan started a private Endpoint"
+                            )
                         )
                     )
                 )
@@ -2428,7 +2445,108 @@ class HypervisorService:
             expected_hash=plan_hash,
             status="PRIVATE_ENDPOINT_CREATED",
             application=application,
-            next_action="start_private_endpoint",
+            next_action="forecast_private_endpoint",
+        )
+        updated["operation_id"] = operation_id
+        updated["workflow"] = self.installation_plan().get("workflow")
+        return updated
+
+    def _forecast_private_endpoint_from_installation_plan(
+        self,
+        *,
+        plan_hash: str,
+        actor: str,
+        idempotency_key: str | None,
+    ) -> dict:
+        """Forecast Bundle activation without reserving or starting resources.
+
+        The forecast is deliberately a separate assisted-installation step.
+        It gives the operator/Steward a bounded explanation before the
+        mutating activation call, while ``start_bundle`` remains the final
+        authoritative admission check for races and changed hardware state.
+        """
+
+        current = read_installation_plan()
+        if not current.get("available"):
+            raise ValueError(str(current.get("reason") or "installation plan is unavailable"))
+        if current.get("integrity") != "verified":
+            raise ValueError(str(current.get("reason") or "installation plan integrity is not verified"))
+        if str(current.get("plan_hash")) != str(plan_hash):
+            raise ValueError("installation plan changed; refresh before applying")
+        application = current.get("application")
+        application = dict(application) if isinstance(application, dict) else {}
+        endpoint = application.get("endpoint")
+        endpoint = endpoint if isinstance(endpoint, dict) else {}
+        bundle = application.get("bundle")
+        bundle = bundle if isinstance(bundle, dict) else {}
+        bundle_id = str(bundle.get("bundle_id") or "")
+        if not endpoint.get("endpoint_id") or not bundle_id:
+            raise ValueError("create a private Endpoint before forecasting its resources")
+
+        previous = application.get("forecast")
+        previous = previous if isinstance(previous, dict) else {}
+        if idempotency_key and previous.get("idempotency_key") == idempotency_key:
+            return {**current, "operation_id": previous.get("operation_id"), "workflow": self.installation_plan().get("workflow")}
+
+        resources = getattr(self, "resources", None)
+        forecast: dict[str, object]
+        operation_id = f"endpoint-forecast-{uuid4().hex}"
+        if resources is None or not callable(getattr(resources, "forecast", None)):
+            forecast = {
+                "decision": "UNKNOWN",
+                "retryable": True,
+                "reason": "resource_broker_unavailable",
+            }
+        else:
+            bundle_config = self._get_bundle(bundle_id)
+            plugin = self._get_plugin(bundle_config.plugin_id)
+            estimate = plugin.estimate_resources(
+                TaskRequest(
+                    task_type="runtime_activation",
+                    payload={},
+                    constraints={"bundle_id": bundle_id},
+                ),
+                bundle_config,
+                None,
+            )
+            startup = estimate.get("startup_transient", {})
+            startup = startup if isinstance(startup, dict) else {}
+            resident = estimate.get("runtime_resident", {})
+            resident = resident if isinstance(resident, dict) else {}
+            required = {
+                "cpu": float(startup.get("cpu", 0.0) or 0.0) + float(resident.get("cpu", 0.0) or 0.0),
+                "ram_mb": int(startup.get("ram_mb", 0) or 0) + int(resident.get("ram_mb", 0) or 0),
+                "vram_mb": int(startup.get("vram_mb", 0) or 0) + int(resident.get("vram_mb", 0) or 0),
+            }
+            forecast = dict(resources.forecast(**required))
+            forecast["bundle_id"] = bundle_id
+            forecast["estimate"] = {
+                "startup_transient": dict(startup),
+                "runtime_resident": dict(resident),
+            }
+        forecast.update(
+            {
+                "bundle_id": bundle_id,
+                "operation_id": operation_id,
+                "idempotency_key": idempotency_key,
+                "actor": actor,
+                "checked_at": datetime.now(UTC).isoformat(),
+            }
+        )
+        application["forecast"] = forecast
+        decision = str(forecast.get("decision") or "UNKNOWN").upper()
+        if decision == "ADMIT":
+            status = "PRIVATE_ENDPOINT_ADMISSION_READY"
+            next_action = "start_private_endpoint"
+        else:
+            status = "PRIVATE_ENDPOINT_RESOURCE_WAIT" if decision == "RESOURCE_WAIT" else "PRIVATE_ENDPOINT_ADMISSION_UNKNOWN"
+            next_action = "forecast_private_endpoint"
+        updated = update_installation_plan(
+            None,
+            expected_hash=plan_hash,
+            status=status,
+            application=application,
+            next_action=next_action,
         )
         updated["operation_id"] = operation_id
         updated["workflow"] = self.installation_plan().get("workflow")
@@ -2459,13 +2577,41 @@ class HypervisorService:
         bundle_id = str(bundle.get("bundle_id") or "")
         if not endpoint.get("endpoint_id") or not bundle_id:
             raise ValueError("create a private Endpoint before starting it")
+        forecast = application.get("forecast")
+        forecast = forecast if isinstance(forecast, dict) else {}
+        if str(forecast.get("decision") or "").upper() != "ADMIT":
+            raise ValueError("forecast private Endpoint resources before starting it")
         existing_runtime = application.get("runtime")
         existing_runtime = existing_runtime if isinstance(existing_runtime, dict) else {}
         if existing_runtime.get("runtime_id") and (
             not idempotency_key or existing_runtime.get("idempotency_key") == idempotency_key
         ):
             return {**current, "operation_id": existing_runtime.get("operation_id"), "workflow": self.installation_plan().get("workflow")}
-        runtime = self.start_bundle(bundle_id, reserve_resources=True)
+        try:
+            runtime = self.start_bundle(bundle_id, reserve_resources=True)
+        except (ResourceAdmissionError, RuntimePortAllocationError) as error:
+            details = dict(getattr(error, "details", {}) or {})
+            application["forecast"] = {
+                **forecast,
+                **details,
+                "decision": "RESOURCE_WAIT",
+                "retryable": True,
+                "reason": (
+                    "resource_state_changed_before_activation"
+                    if isinstance(error, ResourceAdmissionError)
+                    else "runtime_port_unavailable"
+                ),
+                "checked_at": datetime.now(UTC).isoformat(),
+            }
+            updated = update_installation_plan(
+                None,
+                expected_hash=plan_hash,
+                status="PRIVATE_ENDPOINT_RESOURCE_WAIT",
+                application=application,
+                next_action="forecast_private_endpoint",
+            )
+            updated["workflow"] = self.installation_plan().get("workflow")
+            return updated
         readiness = self.runtime_readiness(runtime.runtime_id, force=True)
         operation_id = f"endpoint-start-{uuid4().hex}"
         application["runtime"] = {

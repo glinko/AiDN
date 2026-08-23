@@ -390,6 +390,20 @@ const escalationTasksSchema = z.object({
   items: z.array(escalationTaskSchema).catch([]),
 }).passthrough()
 
+const installationWorkflowSchema = z.object({
+  status: stringValue,
+  checked_at: stringValue,
+  plan_hash: z.string().nullable().optional(),
+  stages: z.array(unknownRecord).catch([]),
+  progress: unknownRecord.default({}),
+  forecast: unknownRecord.nullable().optional(),
+  next_action: z.object({
+    id: stringValue,
+    label: stringValue,
+    reason: stringValue,
+  }).passthrough(),
+}).passthrough()
+
 const installationPlanSchema = z.object({
   available: z.boolean().catch(false),
   status: stringValue,
@@ -414,6 +428,7 @@ const installationPlanSchema = z.object({
   next_action: stringValue,
   authority: unknownRecord.default({}),
   application: unknownRecord.nullable().optional(),
+  workflow: installationWorkflowSchema.nullable().optional(),
 }).passthrough()
 
 const journalEventSchema = z.object({
@@ -503,6 +518,13 @@ export type ResidentInference = z.infer<typeof residentInferenceSchema>
 export type EscalationTask = z.infer<typeof escalationTaskSchema>
 export type EscalationTasks = z.infer<typeof escalationTasksSchema>
 export type InstallationPlan = z.infer<typeof installationPlanSchema>
+export type AssistedInstallationAction =
+  | 'prepare_review'
+  | 'request_model_install'
+  | 'create_bundle'
+  | 'create_private_endpoint'
+  | 'forecast_private_endpoint'
+  | 'start_private_endpoint'
 export type JournalEvent = z.infer<typeof journalEventSchema>
 export type JourneyGraph = z.infer<typeof journeySchema>
 export type JourneyNode = z.infer<typeof journeyNodeSchema>

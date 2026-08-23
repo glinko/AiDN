@@ -76,7 +76,7 @@ import {
 import { useDashboardData } from '@/hooks/use-dashboard'
 import { DashboardApiError, dashboardApi, type AccessCredential, type AgentPermissionCatalog, type DashboardAccessStatus, type DashboardRecord, type EnrollmentRequest, type HookDefinition, type HookDelivery, type InferenceCredential, type LifecyclePlan, type LifecycleTransitionAction, type ProviderArtifactInventory, type ProviderWorkspace } from '@/lib/api'
 import { dashboardScreens, useOperatorDashboardStore, type DashboardScreen } from '@/stores/operator-dashboard'
-import type { Bundle, CometBftDashboard, CometBftInstall, Endpoint, Fleet, Readiness, RuntimeOperations, WalletDashboard } from '@/lib/types'
+import type { AssistedInstallationAction, Bundle, CometBftDashboard, CometBftInstall, Endpoint, Fleet, Readiness, RuntimeOperations, WalletDashboard } from '@/lib/types'
 import { createSavedHypervisor, loadSavedHypervisors, saveSavedHypervisors, type SavedHypervisorConnection } from '@/lib/hypervisor-connections'
 import { JourneyPage } from '@/components/journey/JourneyPage'
 import { ResourceBrokerWorkspace } from '@/components/resources/ResourceBrokerWorkspace'
@@ -376,10 +376,10 @@ function App() {
 
         <main className="min-w-0 flex-1 lg:pl-5">
           {activeScreen === 'overview' ? (
-            <JourneyPage graph={data.journey.data} residentAgent={data.residentAgent.data} installationPlan={data.installationPlan.data} isLoading={data.journey.isLoading} error={data.journey.error} onRefresh={refreshAll} onNavigate={navigate} onApplyInstallationPlan={async (planHash) => {
+            <JourneyPage graph={data.journey.data} residentAgent={data.residentAgent.data} installationPlan={data.installationPlan.data} isLoading={data.journey.isLoading} error={data.journey.error} onRefresh={refreshAll} onNavigate={navigate} onApplyInstallationPlan={async (planHash, action: AssistedInstallationAction = 'prepare_review') => {
               try {
-                await dashboardApi.applyInstallationPlan({ plan_hash: planHash, idempotency_key: `dashboard-${planHash}` })
-                pushNotification('Assisted installation plan accepted; the next reviewed step is now visible.')
+                await dashboardApi.applyInstallationPlan({ plan_hash: planHash, action, idempotency_key: `dashboard-${action}-${planHash}` })
+                pushNotification(action === 'prepare_review' ? 'Assisted installation review prepared.' : `Assisted setup action completed: ${action.replaceAll('_', ' ')}.`)
                 await data.installationPlan.refetch()
               } catch (error) {
                 pushNotification(error instanceof Error ? error.message : 'Assisted installation plan was rejected.')

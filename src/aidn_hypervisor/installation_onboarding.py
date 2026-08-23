@@ -428,6 +428,18 @@ def build_installation_workflow_projection(
     endpoint_plan = plan.get("endpoint")
     endpoint_plan = endpoint_plan if isinstance(endpoint_plan, Mapping) else {}
     endpoint_action = str(endpoint_plan.get("requested_action") or "skip")
+    application_endpoint = application.get("endpoint")
+    application_endpoint = (
+        application_endpoint if isinstance(application_endpoint, Mapping) else {}
+    )
+    application_forecast = application.get("forecast")
+    application_forecast = (
+        application_forecast if isinstance(application_forecast, Mapping) else {}
+    )
+    application_runtime = application.get("runtime")
+    application_runtime = (
+        application_runtime if isinstance(application_runtime, Mapping) else {}
+    )
     matching_bundles = [
         item
         for item in bundles
@@ -451,10 +463,6 @@ def build_installation_workflow_projection(
             item for item in endpoints if str(item.get("bundle_id") or "") == bundle_id
         ]
         endpoint_item = matching_endpoints[-1] if matching_endpoints else {}
-        application_endpoint = application.get("endpoint")
-        application_endpoint = (
-            application_endpoint if isinstance(application_endpoint, Mapping) else {}
-        )
         if not endpoint_item and application_endpoint.get("endpoint_id"):
             endpoint_item = application_endpoint
         endpoint_runtime_state = _status(endpoint_item.get("status"))
@@ -463,7 +471,22 @@ def build_installation_workflow_projection(
             endpoint_publication if isinstance(endpoint_publication, Mapping) else {}
         )
         publication_state = _status(endpoint_publication.get("visibility"))
-        if not endpoint_item:
+        runtime_readiness = application_runtime.get("readiness")
+        runtime_readiness = (
+            runtime_readiness if isinstance(runtime_readiness, Mapping) else {}
+        )
+        runtime_readiness_status = _status(runtime_readiness.get("status"))
+        runtime_status = _status(application_runtime.get("status"))
+        if runtime_readiness_status == "READY":
+            endpoint_state = "READY"
+        elif runtime_readiness_status in {"FAILED", "ERROR"} or runtime_status in {"FAILED", "ERROR"}:
+            endpoint_state = "ERROR"
+        elif application_runtime.get("runtime_id"):
+            endpoint_state = "IN_PROGRESS"
+        elif not endpoint_item or endpoint_item is application_endpoint or (
+            endpoint_item.get("status") == "CREATED"
+            and application_endpoint.get("endpoint_id")
+        ):
             endpoint_state = "NOT_STARTED"
         elif endpoint_runtime_state in {"ACTIVE"} or publication_state in {"PUBLIC", "SHARED"}:
             endpoint_state = "READY"
@@ -517,14 +540,28 @@ def build_installation_workflow_projection(
         action_id = "create_bundle"
         action_label = "Create a Bundle from the installed model"
         reason = "The model is ready; create a reproducible runtime Bundle next."
+    elif endpoint_action != "skip" and application_endpoint.get("endpoint_id") and not application_runtime.get("runtime_id"):
+        forecast_decision = str(application_forecast.get("decision") or "").upper()
+        if forecast_decision == "ADMIT":
+            action_id = "start_private_endpoint"
+            action_label = "Start the private Endpoint"
+            reason = "The Resource Broker forecast admits this Bundle; start it and verify readiness."
+        elif forecast_decision == "RESOURCE_WAIT":
+            action_id = "forecast_private_endpoint"
+            action_label = "Recheck resource availability"
+            reason = "The Bundle does not fit current allocatable resources yet; no process was started."
+        else:
+            action_id = "forecast_private_endpoint"
+            action_label = "Forecast private Endpoint resources"
+            reason = "Check Resource Broker capacity before activating the private Endpoint."
     elif endpoint_state in {"NOT_STARTED", "BLOCKED"}:
         action_id = "create_private_endpoint"
         action_label = "Create a private Endpoint"
         reason = "Keep publication separate; first validate a local/private Endpoint."
-    elif endpoint_state == "IN_PROGRESS":
+    elif endpoint_state in {"IN_PROGRESS", "ERROR"}:
         action_id = "verify_endpoint_readiness"
         action_label = "Verify Endpoint readiness"
-        reason = "The Endpoint exists but is not active yet."
+        reason = "The Endpoint runtime needs a fresh readiness probe before it can be treated as healthy."
     else:
         action_id = "continue_in_dashboard"
         action_label = "Continue in the dashboard"
@@ -543,6 +580,7 @@ def build_installation_workflow_projection(
             "required": required,
             "percent": round(completed / required * 100) if required else 100,
         },
+        "forecast": dict(application_forecast) if application_forecast else None,
         "next_action": {"id": action_id, "label": action_label, "reason": reason},
     }
 
