@@ -359,6 +359,14 @@ class ResidentInferenceAdapter:
         fallback_reason = None
         runtime = None
         try:
+            # A service restart restores durable resource leases before the
+            # adapter can restore a live child process.  If this stable
+            # resident lease is left behind while the adapter has no runtime,
+            # the first automatic start is rejected as a duplicate
+            # reservation.  It is safe to reclaim only this adapter-owned ID;
+            # an active in-memory runtime takes the early return above.
+            if self.resources.has_active_lease(lease_id):
+                self.resources.release_lease(lease_id)
             lease = self.resources.acquire_lease(
                 lease_id,
                 cpu=float(request["cpu"]),

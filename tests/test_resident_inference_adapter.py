@@ -69,6 +69,29 @@ def test_cpu_resident_start_and_stop_are_lease_gated(tmp_path: Path) -> None:
     assert runtimes.list_runtimes() == []
 
 
+def test_cpu_resident_start_reclaims_stale_restart_lease(tmp_path: Path) -> None:
+    adapter, resources, runtimes, model = _adapter(tmp_path)
+    adapter.prepare(
+        model_path=str(model),
+        provider_type="fake",
+        plugin_id="fake-managed",
+    )
+    resources.acquire_lease(
+        "steward:node-test:inference",
+        cpu=0.25,
+        ram_mb=1024,
+        vram_mb=0,
+        owner_id="NODE_STEWARD",
+    )
+
+    started = adapter.start()
+
+    assert started["state"] == "RUNNING"
+    assert len(runtimes.list_runtimes()) == 1
+    assert resources.has_active_lease("steward:node-test:inference")
+    adapter.stop()
+
+
 @pytest.mark.parametrize("profile", ["CPU_RESIDENT", "IGPU_RESIDENT"])
 def test_llamacpp_cpu_profiles_force_zero_gpu_layers(
     tmp_path: Path, profile: str
