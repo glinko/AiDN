@@ -78,10 +78,10 @@ The first interactive question is the setup mode. Manual keeps the existing
 step-by-step flow. AI-assisted still asks and validates every required node
 parameter, then records an explicit, resumable plan for the CPU-first Resident
 Steward. After an operator selects a concrete llama.cpp artifact, the installer
-downloads and verifies it before the Hypervisor service starts, then prepares
-and starts the Resident Steward automatically. Provider installation, Bundle
-creation, endpoint start, and publication remain bounded, operator-approved
-actions that can be continued from the dashboard.
+installs the reviewed CPU runtime, downloads and verifies the artifact before
+the Hypervisor service starts, then prepares and starts the Resident Steward
+automatically. Bundle creation, endpoint start, and publication remain bounded,
+operator-approved actions that can be continued from the dashboard.
 
 The installer creates a host-local encrypted Registry Secret Manager and an
 Ed25519 operator identity. The private material stays below --data-dir with
@@ -709,6 +709,19 @@ PY
   }
 }
 
+ensure_assisted_provider_runtime() {
+  [[ "$setup_mode" == 'ai_assisted' && "$setup_provider" == 'llama.cpp' && "$setup_model_id" != 'skip' ]] || return 0
+  local runtime_root="$data_dir/providers/llama.cpp"
+  if "$runtime_dispatcher" llama.cpp status --ref b10433 --root "$runtime_root" >/dev/null 2>&1; then
+    printf '  [provider runtime] reviewed llama.cpp runtime is already installed\n' >&2
+    return 0
+  fi
+  printf '  [provider runtime] installing reviewed llama.cpp CPU runtime\n' >&2
+  "$runtime_dispatcher" llama.cpp install \
+    --ref b10433 --backend cpu --root "$runtime_root" \
+    || die "the reviewed llama.cpp runtime could not be installed"
+}
+
 model_source_for_id() {
   case "$1" in
     'Qwen/Qwen3-0.6B-GGUF:Q8_0')
@@ -1263,8 +1276,8 @@ if [[ "$setup_mode" == 'ai_assisted' ]]; then
       valid_model_id "$setup_model_id" || die 'setup model ID contains unsupported characters'
       valid_model_source "$setup_model_source" || die 'setup model source must be an HTTPS URL or hf://owner/repository[@40-hex-revision] reference without credentials or query data'
       # Selecting a concrete llama.cpp artifact is the explicit operator
-      # approval needed to warm the local model cache.  The provider, Bundle,
-      # and Endpoint lifecycle remains separate and still requires review.
+      # approval for the reviewed runtime and model preparation. Bundle and
+      # Endpoint lifecycle remains separate and still requires review.
       start_model_prefetch "$setup_provider" "$setup_model_id" "$setup_model_source"
     else
       setup_model_source=''
@@ -1385,6 +1398,8 @@ if [[ "$no_start" != 'true' ]]; then
   "${sudo_cmd[@]}" systemctl daemon-reload
   "${sudo_cmd[@]}" systemctl enable --now "$runtime_broker_service"
 fi
+
+ensure_assisted_provider_runtime
 
 node_root="$(bash "$install_dir/tools/install-node-runtime-ubuntu.sh" \
   --output-dir "$data_dir/tooling/node")"
@@ -1568,6 +1583,7 @@ if [[ "\$AIDN_INSTALLATION_SETUP_MODE" == 'ai_assisted' ]]; then
   export AIDN_STEWARD_PROVIDER_TYPE=$(shell_quote "$setup_provider")
   export AIDN_STEWARD_PLUGIN_ID=$(shell_quote "$setup_provider")
   export AIDN_STEWARD_AUTOSTART=$(shell_quote "$steward_autostart")
+  export AIDN_LLAMA_CPP_RUNTIME_ROOT="\$data/providers/llama.cpp"
   if [[ "$steward_autostart" == 'true' ]]; then
     export AIDN_STEWARD_MODEL_PATH=$steward_model_path_q
     if [[ -n "$steward_model_sha256" ]]; then
@@ -2131,7 +2147,7 @@ if [[ "$setup_mode" == 'ai_assisted' ]]; then
   else
     printf '  steward           : CPU-first, bounded, dashboard start available\n' >&2
   fi
-  printf '  note              : provider, Bundle, and public Endpoint changes remain operator-approved\n' >&2
+  printf '  note              : Bundle and public Endpoint changes remain operator-approved\n' >&2
 else
   printf '  next step         : continue configuration from the Dashboard or CLI\n' >&2
 fi
