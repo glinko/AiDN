@@ -70,12 +70,15 @@ def test_release_operator_bootstrap_uses_safe_defaults_and_user_systemd() -> Non
     assert "operator-config.toml" in script
     assert "AIDN_CONFIG_FILE" in script
     assert "write_operator_config_from_environment" in script
+    assert "BOOTSTRAP_CONFIG_INIT_ONLY" in script
+    assert 'BOOTSTRAP_CONFIG_INIT_ONLY=true "$wrapper"' in script
     assert "read_operator_config_values" in script
     assert "AIDN_HYPERVISOR_RESTART_ON_CONFIG_CHANGE=true" in script
     assert "AIDN_DASHBOARD_ACCESS_ALLOW_INSECURE_LAN=true" in script
     assert "127.0.0.1|0.0.0.0" in script
     assert "--enable-registry" in script
     assert "systemctl --user enable --now" in script
+    assert 'systemctl --user restart "$service_name"' in script
     assert "loginctl enable-linger" in script
     assert "master-key.b64" in script
     assert "AIDN_SECRET_MANAGER_MASTER_KEY" in script

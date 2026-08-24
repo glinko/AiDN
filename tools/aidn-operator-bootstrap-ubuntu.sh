@@ -1558,6 +1558,9 @@ from aidn_hypervisor.config import write_operator_config_from_environment
 write_operator_config_from_environment(sys.argv[1], os.environ)
 PY
 fi
+if [[ "${BOOTSTRAP_CONFIG_INIT_ONLY:-false}" == 'true' ]]; then
+  exit 0
+fi
 while IFS=$'\t' read -r -d '' key value; do
   [[ -n "$key" ]] || continue
   export "$key=$value"
@@ -1586,6 +1589,11 @@ chmod 600 "$bind_host_path"
 exec "$python_bin" -m uvicorn aidn_hypervisor.main:build_app --factory --host "$api_host" --port "$api_port"
 EOF
 chmod 700 "$wrapper"
+# Materialize the operator profile before starting (or reusing) a service.
+# Reruns may find an already-active unit, in which case systemd would not
+# execute the wrapper's normal startup path before the bootstrap invokes the
+# local operator CLI.
+BOOTSTRAP_CONFIG_INIT_ONLY=true "$wrapper"
 
 operator_cli_wrapper="$data_dir/aidn-operator-wrapper.sh"
 dashboard_url_host="$advertise_host"
@@ -1696,7 +1704,12 @@ if [[ "$no_start" != 'true' ]]; then
   uid="$(id -u)"
   export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$uid}"
   systemctl --user daemon-reload
-  systemctl --user enable --now "$service_name"
+  systemctl --user enable "$service_name"
+  if systemctl --user is-active --quiet "$service_name"; then
+    systemctl --user restart "$service_name"
+  else
+    systemctl --user start "$service_name"
+  fi
   health_host="$api_host"
   if [[ "$health_host" == '0.0.0.0' || "$health_host" == '::' ]]; then
     health_host='127.0.0.1'
