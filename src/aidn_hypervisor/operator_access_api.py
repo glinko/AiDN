@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import os
 from collections.abc import Callable
@@ -52,6 +53,10 @@ from aidn_hypervisor.operator_cometbft_install import (
 from aidn_hypervisor.operator_config_service import (
     OperatorConfigConflict,
     OperatorConfigService,
+)
+from aidn_hypervisor.operator_update_service import (
+    OperatorUpdateError,
+    OperatorUpdateService,
 )
 from aidn_hypervisor.resource_probe import refresh_resource_probe_from_environment
 from aidn_hypervisor.wallet_identity import wallet_identity_registration_payload
@@ -221,6 +226,16 @@ class OperatorConfigWriteRequest(OperatorConfigValidateRequest):
     )
 
 
+class SoftwareUpdateApplyRequest(BaseModel):
+    """Apply the exact commit the paired Dashboard showed to the operator."""
+
+    expected_commit: str = Field(
+        min_length=40,
+        max_length=40,
+        pattern=r"^[0-9a-fA-F]{40}$",
+    )
+
+
 class LocalAgentUseRequest(BaseModel):
     """A local-only inference permission; never part of endpoint publication."""
 
@@ -307,12 +322,14 @@ def build_operator_access_router(
     validation_service: Any | None = None,
     network_access_service: DashboardNetworkAccessService | None = None,
     config_service: OperatorConfigService | None = None,
+    update_service: OperatorUpdateService | None = None,
     session_service: Any | None = None,
 ) -> APIRouter:
     """Build a browser-only credential management boundary."""
     router = APIRouter(prefix="/operators/dashboard/access")
     network_access = network_access_service or DashboardNetworkAccessService()
     operator_config = config_service or OperatorConfigService()
+    software_update = update_service
 
     def session_expiry(request: Request) -> str | None:
         if access_service is None:
@@ -1079,6 +1096,69 @@ def build_operator_access_router(
             status_code=202 if result.get("restart_scheduled") else 200,
             content=result,
         )
+
+    @router.get("/operations/software-update")
+    async def read_software_update(request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if software_update is None:
+            return JSONResponse(
+                content={
+                    "status": "unavailable",
+                    "repository_url": None,
+                    "target_ref": None,
+                    "current_commit": None,
+                    "available_commit": None,
+                    "started_at": None,
+                    "checked_at": None,
+                    "finished_at": None,
+                    "restart_scheduled": False,
+                    "restart_required": False,
+                    "step": None,
+                    "message": "Software updates are available only for a supported bootstrap deployment.",
+                    "error": None,
+                }
+            )
+        return JSONResponse(content=software_update.read_payload())
+
+    @router.post("/operations/software-update/check")
+    async def check_software_update(request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if software_update is None:
+            return JSONResponse(
+                status_code=409,
+                content={"error": {"code": "SOFTWARE_UPDATE_UNAVAILABLE", "message": "Software updates are unavailable for this process."}},
+            )
+        try:
+            result = await asyncio.to_thread(software_update.check)
+            return JSONResponse(content=result)
+        except (OperatorUpdateError, OSError, ValueError) as error:
+            return operation_error(error)
+
+    @router.post("/operations/software-update/apply")
+    async def apply_software_update(
+        payload: SoftwareUpdateApplyRequest,
+        request: Request,
+    ) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        if software_update is None:
+            return JSONResponse(
+                status_code=409,
+                content={"error": {"code": "SOFTWARE_UPDATE_UNAVAILABLE", "message": "Software updates are unavailable for this process."}},
+            )
+        try:
+            result = await asyncio.to_thread(
+                software_update.apply,
+                expected_commit=payload.expected_commit,
+            )
+        except (OperatorUpdateError, OSError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(status_code=202, content=result)
 
     @router.post("/operations/cometbft/install")
     async def install_cometbft(

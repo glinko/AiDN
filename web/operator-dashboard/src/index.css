@@ -172,6 +172,20 @@ button {
   text-transform: uppercase;
 }
 
+/* The TOML editor intentionally stays on a deep, code-friendly surface. Keep
+   its text explicit so legacy utility overrides cannot collapse it into dark
+   text on dark background. */
+.operator-config-editor {
+  color: #e8f7f7 !important;
+  caret-color: #b7e2e1;
+  -webkit-text-fill-color: #e8f7f7;
+}
+
+.operator-config-editor::placeholder {
+  color: #9fc2cc;
+  opacity: 1;
+}
+
 .journey-edge {
   fill: none;
   stroke: var(--brand-cyan);

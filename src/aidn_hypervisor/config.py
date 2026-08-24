@@ -54,6 +54,14 @@ _READ_ONLY_KEYS = frozenset(
         "AIDN_REMOTE_TRUST_ANCHOR_CONFIG",
         "AIDN_COMETBFT_FINALITY_CONFIG",
         "AIDN_PROTOCOL_AUTHORITY_POLICY_PATH",
+        # The software updater is deliberately bound to the reviewed
+        # bootstrap checkout and tooling. These values are not operator
+        # editable from the TOML editor.
+        "AIDN_UPDATE_REPOSITORY_URL",
+        "AIDN_UPDATE_REF",
+        "AIDN_UPDATE_NODE_ROOT",
+        "AIDN_UPDATE_TOOLING_DIR",
+        "AIDN_UV_BIN",
     }
 )
 

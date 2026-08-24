@@ -83,6 +83,7 @@ import { ResourceBrokerWorkspace } from '@/components/resources/ResourceBrokerWo
 import { StewardEscalationPanel } from '@/components/steward/StewardEscalationPanel'
 import { StewardPolicyPanel } from '@/components/steward/StewardPolicyPanel'
 import { OperatorConfigEditor } from '@/components/settings/OperatorConfigEditor'
+import { SoftwareUpdatePanel } from '@/components/settings/SoftwareUpdatePanel'
 
 type NavigationItem = {
   id: DashboardScreen
@@ -2102,6 +2103,7 @@ function SettingsAccessWorkspace({ endpoints }: { endpoints: DashboardRecord[] }
            </CardContent>
           </Card>
           <OperatorConfigEditor enabled={status.enabled} sessionActive={status.session.active} />
+          <SoftwareUpdatePanel enabled={status.enabled} sessionActive={status.session.active} />
          {!status.enabled ? <PanelError title="Credential management is unavailable" detail="This Hypervisor was started without the encrypted local secret store. Re-run the supported operator bootstrap or configure the secret manager before enabling remote MCP access." /> : null}
         {status.enabled && !status.session.active ? <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-5 py-4"><p className="eyebrow">Terminal-to-browser pairing</p><CardTitle className="mt-1 text-lg font-semibold">Trust this browser</CardTitle><p className="mt-1 text-sm leading-6 text-muted-foreground">On the Hypervisor host, run <code className="rounded bg-black/20 px-1.5 py-0.5 font-mono text-xs text-cyan-100">aidn-operator pair</code>. The one-time code creates a browser-bound session. The node stores only hashes of the browser key and session cookie; use Forget this browser to revoke it.</p></CardHeader><CardContent className="flex flex-col gap-3 p-5"><label className="grid gap-2"><span className="eyebrow">Pairing code</span><input value={pairingCode} onChange={(event) => setPairingCode(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void pair() }} autoComplete="one-time-code" placeholder="Paste code from the node terminal" className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none transition focus:border-cyan-300" /></label><label className="grid gap-2"><span className="eyebrow">Trust duration</span><select value={sessionDuration} onChange={(event) => setSessionDuration(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none transition focus:border-cyan-300"><option value="ten_minutes">10 minutes</option><option value="one_day">1 day</option><option value="thirty_days">30 days</option><option value="forever">Indefinitely</option></select></label><div className="flex justify-end"><Button className="bg-cyan-300 text-[#06121d] hover:bg-cyan-200" disabled={!pairingCode.trim() || busy === 'pair'} onClick={() => void pair()}>{busy === 'pair' ? 'Pairing...' : 'Trust browser'}<ChevronRight /></Button></div></CardContent></Card> : null}
         {status.enabled && status.session.active ? <>

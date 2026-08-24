@@ -469,6 +469,72 @@ def test_operator_config_editor_is_pair_bound_validated_and_concurrency_safe(tmp
     assert conflict.json()["error"]["code"] == "DASHBOARD_CONFIG_CONFLICT"
 
 
+def test_software_update_routes_are_pair_bound_and_pin_the_reviewed_commit(tmp_path) -> None:
+    manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
+    credentials = McpCredentialStore(secret_manager=manager)
+    access = DashboardAccessService(store=credentials)
+    target_commit = "b" * 40
+
+    class UpdateStub:
+        def __init__(self) -> None:
+            self.payload = {
+                "status": "available",
+                "repository_url": "https://github.com/glinko/AiDN.git",
+                "target_ref": "main",
+                "current_commit": "a" * 40,
+                "available_commit": target_commit,
+                "started_at": None,
+                "checked_at": "2026-08-24T00:00:00+00:00",
+                "finished_at": None,
+                "restart_scheduled": False,
+                "restart_required": False,
+                "step": "ready",
+                "message": "A reviewed software update is ready to install.",
+                "error": None,
+            }
+            self.applied: list[str] = []
+
+        def read_payload(self):
+            return self.payload
+
+        def check(self):
+            return self.payload
+
+        def apply(self, *, expected_commit: str):
+            self.applied.append(expected_commit)
+            self.payload = {**self.payload, "status": "updating", "step": "queued"}
+            return self.payload
+
+    update = UpdateStub()
+    app = FastAPI()
+    app.include_router(
+        build_operator_access_router(
+            access_service=access,
+            credential_store=credentials,
+            allow_insecure_lan=True,
+            update_service=update,  # type: ignore[arg-type]
+        )
+    )
+    client = TestClient(app)
+    client.headers.update(_BROWSER_HEADERS)
+
+    assert client.get("/operators/dashboard/access/operations/software-update").status_code == 401
+    pairing = access.create_pairing(ttl_seconds=600)
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 200
+
+    initial = client.get("/operators/dashboard/access/operations/software-update")
+    assert initial.status_code == 200
+    assert initial.json()["available_commit"] == target_commit
+    checked = client.post("/operators/dashboard/access/operations/software-update/check")
+    assert checked.status_code == 200
+    applied = client.post(
+        "/operators/dashboard/access/operations/software-update/apply",
+        json={"expected_commit": target_commit},
+    )
+    assert applied.status_code == 202
+    assert update.applied == [target_commit]
+
+
 def test_paired_operator_can_list_and_update_only_known_agent_permissions(tmp_path) -> None:
     manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
     credentials = McpCredentialStore(secret_manager=manager)

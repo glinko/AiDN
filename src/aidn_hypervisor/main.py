@@ -60,6 +60,7 @@ from aidn_hypervisor.operator_cometbft_install import (
     load_active_cometbft_configuration,
 )
 from aidn_hypervisor.operator_config_service import OperatorConfigService
+from aidn_hypervisor.operator_update_service import OperatorUpdateService
 from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
 from aidn_hypervisor.plugins.ollama import OllamaPlugin
@@ -364,6 +365,16 @@ def build_app(
         apply_callback=sync_dashboard_config,
         restart_supported=dashboard_network_access_service.restart_supported,
     )
+    # Only the reviewed Ubuntu bootstrap opts a process into in-place code
+    # updates. Development/manual launches keep the endpoint unavailable
+    # instead of guessing which checkout or tooling should be mutated.
+    dashboard_update_service = (
+        OperatorUpdateService(
+            restart_callback=dashboard_network_access_service.schedule_restart,
+        )
+        if os.getenv("AIDN_UPDATE_REPOSITORY_URL")
+        else None
+    )
     mcp_enrollment_service = (
         McpEnrollmentService(
             secret_manager=mcp_secret_manager,
@@ -377,6 +388,7 @@ def build_app(
     app.state.dashboard_access_service = dashboard_access_service
     app.state.dashboard_network_access_service = dashboard_network_access_service
     app.state.operator_config_service = dashboard_config_service
+    app.state.operator_update_service = dashboard_update_service
     app.state.mcp_enrollment_service = mcp_enrollment_service
     app.state.inference_gateway_enabled = mcp_credential_store is not None
     if mcp_remote_gateway.enabled:
@@ -404,6 +416,7 @@ def build_app(
             validation_service=resolved_validation_service,
             network_access_service=dashboard_network_access_service,
             config_service=dashboard_config_service,
+            update_service=dashboard_update_service,
             session_service=resolved_session_service,
         )
     )

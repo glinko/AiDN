@@ -91,6 +91,22 @@ export type OperatorConfigValidation = {
   read_only_keys: string[]
 }
 
+export type SoftwareUpdatePayload = {
+  status: 'idle' | 'up_to_date' | 'available' | 'updating' | 'restart_scheduled' | 'updated' | 'error' | 'unavailable' | string
+  repository_url: string | null
+  target_ref: string | null
+  current_commit: string | null
+  available_commit: string | null
+  started_at: string | null
+  checked_at: string | null
+  finished_at: string | null
+  restart_scheduled: boolean
+  restart_required: boolean
+  step: string | null
+  message: string | null
+  error: string | null
+}
+
 export type DashboardAccessStatus = {
   enabled: boolean
   session: { active: boolean; expires_at: string | null }
@@ -381,6 +397,9 @@ export const dashboardApi = {
   validateOperatorConfig: (text: string): Promise<OperatorConfigValidation> => writeDashboard<OperatorConfigValidation>('/operators/dashboard/access/config/validate', { method: 'POST', body: JSON.stringify({ text }) }) as Promise<OperatorConfigValidation>,
   saveOperatorConfig: (text: string, expectedSha256: string | null): Promise<OperatorConfigPayload> => writeDashboard<OperatorConfigPayload>('/operators/dashboard/access/config', { method: 'PUT', body: JSON.stringify({ text, expected_sha256: expectedSha256 }) }) as Promise<OperatorConfigPayload>,
   applyOperatorConfig: (text: string, expectedSha256: string | null): Promise<OperatorConfigPayload> => writeDashboard<OperatorConfigPayload>('/operators/dashboard/access/config/apply', { method: 'POST', body: JSON.stringify({ text, expected_sha256: expectedSha256 }) }) as Promise<OperatorConfigPayload>,
+  softwareUpdate: (): Promise<SoftwareUpdatePayload> => writeDashboard<SoftwareUpdatePayload>('/operators/dashboard/access/operations/software-update', { method: 'GET' }) as Promise<SoftwareUpdatePayload>,
+  checkSoftwareUpdate: (): Promise<SoftwareUpdatePayload> => writeDashboard<SoftwareUpdatePayload>('/operators/dashboard/access/operations/software-update/check', { method: 'POST' }) as Promise<SoftwareUpdatePayload>,
+  applySoftwareUpdate: (expectedCommit: string): Promise<SoftwareUpdatePayload> => writeDashboard<SoftwareUpdatePayload>('/operators/dashboard/access/operations/software-update/apply', { method: 'POST', body: JSON.stringify({ expected_commit: expectedCommit }) }) as Promise<SoftwareUpdatePayload>,
   updateDashboardNetworkAccess: (mode: DashboardNetworkAccess['mode']): Promise<DashboardNetworkAccess & { status: string }> => writeDashboard<DashboardNetworkAccess & { status: string }>('/operators/dashboard/access/operations/network', { method: 'POST', body: JSON.stringify({ mode }) }) as Promise<DashboardNetworkAccess & { status: string }>,
   cometbftAction: (action: 'start' | 'stop' | 'restart') => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/cometbft/${action}`, { method: 'POST' }),
   installCometbft: (payload: { mode: 'validator' | 'non_validator'; chain_id: string; version: string; moniker?: string; rpc_host: '127.0.0.1'; rpc_port: number; p2p_host: '127.0.0.1' | '0.0.0.0'; p2p_port: number; external_address: string; seeds: string; persistent_peers: string; abci_host: '127.0.0.1'; abci_port: number; acknowledge_network_scope: boolean }) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/cometbft/install', { method: 'POST', body: JSON.stringify(payload) }),

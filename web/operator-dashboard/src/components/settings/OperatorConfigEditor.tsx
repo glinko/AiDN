@@ -10,7 +10,7 @@ type OperatorConfigEditorProps = {
   sessionActive: boolean
 }
 
-const editorClass = 'min-h-[22rem] w-full resize-y rounded-lg border border-input bg-[#050d16] px-4 py-3 font-mono text-xs leading-6 text-slate-100 outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20 disabled:cursor-not-allowed disabled:opacity-60'
+const editorClass = 'operator-config-editor min-h-[22rem] w-full resize-y rounded-lg border border-input bg-[#050d16] px-4 py-3 font-mono text-xs leading-6 text-[#e8f7f7] outline-none transition focus:border-cyan-300 focus:ring-2 focus:ring-cyan-300/20 disabled:cursor-not-allowed disabled:opacity-60'
 
 function shortHash(value: string | null) {
   return value ? `${value.slice(0, 12)}…${value.slice(-8)}` : 'not created yet'

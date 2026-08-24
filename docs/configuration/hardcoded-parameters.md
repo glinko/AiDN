@@ -48,6 +48,19 @@ and load the revision. The editor uses the file SHA-256 so a second operator
 cannot silently overwrite a newer edit. Secrets, private keys, and bootstrap
 identity paths remain outside the browser editor.
 
+### Dashboard-managed software updates
+
+After pairing, **Settings → Software updates** can check the release ref that
+was selected by the bootstrap and show the current and exact target commit.
+Installing requires a second explicit confirmation. The node then rejects
+ordinary checkout changes, fetches only the fixed HTTPS AiDN repository, runs
+the pinned dependency and Dashboard build steps, and restarts through the
+bootstrap-managed supervisor. A failed build returns the checkout to its
+previous commit; the operator TOML, wallet, model cache, and other data remain
+in the persistent data directory. The repository, ref, tooling paths, and
+`uv` executable are protected settings and cannot be changed in the TOML
+editor or supplied by the browser.
+
 ## What is configurable today
 
 | Area | Configuration surface | Important defaults / notes | Source of truth |
@@ -58,6 +71,7 @@ identity paths remain outside the browser editor.
 | Inference admission | `AIDN_INFERENCE_MAX_REQUEST_BYTES`, `AIDN_INFERENCE_MAX_MESSAGES` | Defaults are 4 MiB and 512 messages; these guard the HTTP request and are independent of model context | `src/aidn_hypervisor/inference_gateway.py` |
 | Consensus | `AIDN_CONSENSUS_*`, `AIDN_COMETBFT_*` | Consensus defaults to disabled; local RPC `tcp://127.0.0.1:26657`, ABCI `127.0.0.1:26658`, chain `aidn-localnet-1` | `src/aidn_hypervisor/main.py`, `operator_cometbft_install.py` |
 | Host runtime broker | `AIDN_ENABLE_PROVIDER_RUNTIME_INSTALL`, `AIDN_PROVIDER_RUNTIME_*` | Must be explicitly enabled and socket-bound; broker is the privilege boundary for host-mutating installs | `src/aidn_hypervisor/main.py`, `tools/aidn-operator-bootstrap-ubuntu.sh` |
+| Software lifecycle | `AIDN_UPDATE_REPOSITORY_URL`, `AIDN_UPDATE_REF`, `AIDN_UPDATE_NODE_ROOT`, `AIDN_UPDATE_TOOLING_DIR`, `AIDN_UV_BIN` | Bootstrap-owned and read-only; the paired Dashboard may check and apply only the reviewed target commit | `src/aidn_hypervisor/operator_update_service.py`, `tools/aidn-operator-bootstrap-ubuntu.sh` |
 | Network trust/policy | `AIDN_REGISTRY_REPLICATION_CONFIG`, `AIDN_REMOTE_TRUST_ANCHOR_CONFIG`, `AIDN_COMETBFT_FINALITY_CONFIG`, `AIDN_PROTOCOL_AUTHORITY_POLICY_*`, `AIDN_EPOCH_*`, `AIDN_NETWORK_ID` | Paths and schedule inputs are configurable; loaded artifacts remain schema- and signature-checked | `src/aidn_hypervisor/main.py`, `consensus/deployment.py` |
 | Optional custody | `AIDN_HYPERVISOR_CUSTODY_SIGNING_KEY` | Secret; opt-in only | `src/aidn_hypervisor/main.py` |
 | External Faucet | `AIDN_FAUCET_*` | Faucet has a separate systemd unit and secret set; do not share signing material with the node | `services/aidn-faucet/src/aidn_faucet/cli.py` |
@@ -72,6 +86,8 @@ ad-hoc shell locals):
   `AIDN_CONFIG_FILE`,
   `AIDN_HYPERVISOR_STATE_PATH`, `AIDN_HYPERVISOR_BUNDLES_PATH`,
   `AIDN_HYPERVISOR_MODEL_STORE_PATH`, `AIDN_OPERATOR_API_URL`.
+- **Software lifecycle:** `AIDN_UPDATE_REPOSITORY_URL`, `AIDN_UPDATE_REF`,
+  `AIDN_UPDATE_NODE_ROOT`, `AIDN_UPDATE_TOOLING_DIR`, `AIDN_UV_BIN`.
 - **Dashboard/listener:** `AIDN_HYPERVISOR_API_HOST`,
   `AIDN_HYPERVISOR_API_PORT`, `AIDN_HYPERVISOR_BIND_HOST_PATH`,
   `AIDN_HYPERVISOR_RESTART_ON_BIND_CHANGE`,
