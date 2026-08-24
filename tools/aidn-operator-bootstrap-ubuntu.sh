@@ -8,6 +8,7 @@ set -euo pipefail
 
 readonly REPOSITORY_URL="https://github.com/glinko/AiDN.git"
 readonly SCRIPT_NAME="aidn-operator-bootstrap-ubuntu.sh"
+readonly GENERATED_DASHBOARD_PATH="src/aidn_hypervisor/static/react-dashboard"
 
 usage() {
   cat <<'EOF'
@@ -69,6 +70,10 @@ artifacts use immutable Hugging Face revisions and pinned size/SHA-256 checks;
 Custom model remains available for a public HTTPS or hf:// reference (optionally
 with @40-hex-revision).
 
+Rerunning the installer refreshes generated Dashboard assets left by an earlier
+attempt. Any other local checkout changes are preserved in a timestamped
+bootstrap-backup directory before a clean reviewed checkout is activated.
+
 The first interactive question is the setup mode. Manual keeps the existing
 step-by-step flow. AI-assisted still asks and validates every required node
 parameter, then records an explicit, resumable plan for the CPU-first Resident
@@ -103,6 +108,69 @@ valid_port() {
 
 valid_path() {
   [[ "$1" =~ ^/[A-Za-z0-9._/-]+$ && "$1" != *".."* ]]
+}
+
+checkout_is_clean() {
+  local checkout="$1"
+  [[ -z "$(git -C "$checkout" status --porcelain=v1 --untracked-files=all)" ]]
+}
+
+clean_generated_dashboard_assets() {
+  local checkout="$1"
+  local generated_status
+  generated_status="$(git -C "$checkout" status --porcelain=v1 --untracked-files=all -- "$GENERATED_DASHBOARD_PATH")"
+  [[ -n "$generated_status" ]] || return 0
+
+  # The dashboard build replaces this directory atomically. It is a generated
+  # deployment artifact, not operator configuration, so restore the tracked
+  # baseline and remove stale generated files before the next build.
+  printf '  [bootstrap] refreshing generated Dashboard assets in %s\n' "$checkout/$GENERATED_DASHBOARD_PATH" >&2
+  git -C "$checkout" restore --source=HEAD --staged --worktree -- "$GENERATED_DASHBOARD_PATH"
+  git -C "$checkout" clean -fd -- "$GENERATED_DASHBOARD_PATH"
+}
+
+next_checkout_path() {
+  local base="$1"
+  local suffix="$2"
+  local stamp
+  local candidate
+  local counter=0
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  candidate="${base}.${suffix}-${stamp}"
+  while [[ -e "$candidate" ]]; do
+    counter=$((counter + 1))
+    candidate="${base}.${suffix}-${stamp}-${counter}"
+  done
+  printf '%s' "$candidate"
+}
+
+clone_reviewed_checkout() {
+  local target="$1"
+  mkdir -p "$(dirname "$target")"
+  git clone --depth 1 "$REPOSITORY_URL" "$target"
+  git -C "$target" fetch --depth 1 origin "$ref"
+  git -C "$target" checkout --detach FETCH_HEAD
+}
+
+replace_dirty_checkout() {
+  local checkout="$1"
+  local backup_path
+  local staging_path
+
+  backup_path="$(next_checkout_path "$checkout" 'bootstrap-backup')"
+  staging_path="$(next_checkout_path "$checkout" 'bootstrap-new')"
+  printf '  [bootstrap] local checkout changes detected; preparing a clean checkout\n' >&2
+  clone_reviewed_checkout "$staging_path"
+
+  if ! mv -- "$checkout" "$backup_path"; then
+    die "could not preserve the existing checkout: $checkout"
+  fi
+  if ! mv -- "$staging_path" "$checkout"; then
+    mv -- "$backup_path" "$checkout" || die "could not restore the existing checkout: $backup_path"
+    die "could not activate the clean checkout: $checkout"
+  fi
+  checkout_backup_path="$backup_path"
+  printf '  [bootstrap] preserved previous checkout at %s\n' "$checkout_backup_path" >&2
 }
 
 is_loopback_host() {
@@ -593,10 +661,12 @@ prompt_yes_no() {
   local label="$1"
   local default_value="$2"
   local explanation="${3:-}"
+  local yes_hint="${4:-Подтвердить действие}"
+  local no_hint="${5:-Изменить выбор}"
   local answer
   answer="$(prompt_choice "$label" "$default_value" "$explanation" \
-    'yes|Да|Подтвердить действие' \
-    'no|Нет|Оставить безопасное значение')"
+    "yes|Да|$yes_hint" \
+    "no|Нет|$no_hint")"
   [[ "$answer" == 'yes' ]]
 }
 
@@ -728,6 +798,7 @@ model_prefetch_python=''
 model_prefetch_status='not_started'
 model_prefetch_expected_sha256=''
 model_prefetch_expected_bytes=''
+checkout_backup_path=''
 operator_id_supplied='false'
 enable_registry_supplied='false'
 consensus_mode_supplied='false'
@@ -976,7 +1047,8 @@ if [[ "$setup_mode" == 'ai_assisted' && "$non_interactive" != 'true' ]]; then
   printf '  Registry        : %s\n' "$enable_registry" >&2
   printf '  Resident AI     : %s · %s\n' "$setup_provider" "$setup_model_id" >&2
   printf '  Handoff         : Dashboard with Resident Steward\n\n' >&2
-  if prompt_yes_no 'Install with these recommended settings?' 'yes' 'Yes applies the complete safe local profile shown above. Choose no to review every node, path, consensus, wallet, port, and network setting individually.'; then
+  if prompt_yes_no 'Install with these recommended settings?' 'yes' 'Yes applies the complete safe local profile shown above. Choose no to review every node, path, consensus, wallet, port, and network setting individually.' \
+    'Установить профиль' 'Перейти к ручной настройке'; then
     recommended_defaults='true'
     operator_id="$recommended_operator_id"
     install_dir="$recommended_install_dir"
@@ -1084,7 +1156,8 @@ esac
 if [[ "$non_interactive" != 'true' && "$recommended_defaults" != 'true' ]]; then
   if [[ "$api_host_supplied" == 'true' ]]; then
     api_host="$(prompt_value 'Hypervisor API bind address' "$api_host" 'Loopback limits the dashboard and API to this machine; a LAN address makes them reachable by other devices. A non-loopback bind needs a trusted network, firewall rules, and an explicit unauthenticated-API risk decision.')"
-  elif prompt_yes_no 'Expose Dashboard/API to the LAN on 0.0.0.0?' 'no' 'No keeps the service on loopback and blocks remote browsers; yes binds all interfaces so LAN devices can connect. The current bootstrap API has no public authentication boundary, so never expose this directly to the Internet.'; then
+  elif prompt_yes_no 'Expose Dashboard/API to the LAN on 0.0.0.0?' 'no' 'No keeps the service on loopback and blocks remote browsers; yes binds all interfaces so LAN devices can connect. The current bootstrap API has no public authentication boundary, so never expose this directly to the Internet.' \
+    'Открыть доступ в LAN' 'Оставить loopback'; then
     api_host='0.0.0.0'
     allow_public_api='true'
   else
@@ -1098,13 +1171,15 @@ if ! is_loopback_host "$api_host" && [[ "$allow_public_api" != 'true' ]]; then
   if [[ "$non_interactive" == 'true' ]]; then
     die 'non-loopback API requires --allow-public-api because the MVP API has no public auth boundary'
   fi
-  prompt_yes_no 'The API is unauthenticated; allow a non-loopback bind?' 'no' 'Approving this permits unauthenticated HTTP access from the selected network. Rejecting it keeps the service loopback-only; if you approve, restrict the network and firewall immediately.' || die 'public API bind was not approved'
+  prompt_yes_no 'The API is unauthenticated; allow a non-loopback bind?' 'no' 'Approving this permits unauthenticated HTTP access from the selected network. Rejecting it keeps the service loopback-only; if you approve, restrict the network and firewall immediately.' \
+    'Разрешить bind' 'Отменить доступ' || die 'public API bind was not approved'
   allow_public_api='true'
 fi
 
 if [[ "$enable_registry_supplied" != 'true' ]]; then
   if [[ "$non_interactive" != 'true' ]]; then
-    if prompt_yes_no 'Enable the mTLS Registry listener for peer onboarding?' 'no' 'Enable this only when the node must exchange signed peer bundles with other operators. It opens a separate listener and still requires mutual peer approval; disabling it keeps this node local and avoids an additional network surface.'; then
+    if prompt_yes_no 'Enable the mTLS Registry listener for peer onboarding?' 'no' 'Enable this only when the node must exchange signed peer bundles with other operators. It opens a separate listener and still requires mutual peer approval; disabling it keeps this node local and avoids an additional network surface.' \
+      'Включить listener' 'Оставить listener выключенным'; then
       enable_registry='true'
     fi
   fi
@@ -1201,16 +1276,22 @@ uv_bin="$(command -v uv || true)"
 if [[ -e "$install_dir" && ! -d "$install_dir/.git" ]]; then
   die "install directory exists but is not an AiDN checkout: $install_dir"
 fi
+checkout_replaced='false'
 if [[ -d "$install_dir/.git" ]]; then
-  git -C "$install_dir" diff --quiet || die "refusing to overwrite local changes in $install_dir"
-  git -C "$install_dir" diff --cached --quiet || die "refusing to overwrite staged changes in $install_dir"
-  git -C "$install_dir" fetch --depth 1 origin "$ref"
-else
-  mkdir -p "$(dirname "$install_dir")"
-  git clone --depth 1 "$REPOSITORY_URL" "$install_dir"
-  git -C "$install_dir" fetch --depth 1 origin "$ref"
+  clean_generated_dashboard_assets "$install_dir"
+  if ! checkout_is_clean "$install_dir"; then
+    replace_dirty_checkout "$install_dir"
+    checkout_replaced='true'
+  fi
 fi
-git -C "$install_dir" checkout --detach FETCH_HEAD
+if [[ "$checkout_replaced" == 'true' ]]; then
+  :
+elif [[ -d "$install_dir/.git" ]]; then
+  git -C "$install_dir" fetch --depth 1 origin "$ref"
+  git -C "$install_dir" checkout --detach FETCH_HEAD
+else
+  clone_reviewed_checkout "$install_dir"
+fi
 commit="$(git -C "$install_dir" rev-parse HEAD)"
 "$uv_bin" --directory "$install_dir" sync --all-extras --frozen
 
@@ -1813,6 +1894,7 @@ payload = {
     "operator_api": operator_api_url,
     "dashboard": dashboard_url,
     "checkout": install_dir,
+    "checkout_backup": checkout_backup_path or None,
     "data": data_dir,
     "service": service_name,
     "operator_identity": os.path.join(identity_root, "operator-identity.json"),
@@ -1898,6 +1980,9 @@ else
   printf '  access boundary   : LAN/non-loopback (firewall and trusted-network policy required)\n' >&2
 fi
 printf '  checkout          : %s\n' "$install_dir" >&2
+if [[ -n "$checkout_backup_path" ]]; then
+  printf '  previous checkout : %s (preserved local changes)\n' "$checkout_backup_path" >&2
+fi
 printf '  persistent data   : %s\n' "$data_dir" >&2
 printf '  bootstrap state   : %s\n' "$state_path" >&2
 printf '  capacity report   : %s\n' "$resource_capacity_path" >&2

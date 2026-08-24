@@ -96,6 +96,10 @@ def test_release_operator_bootstrap_uses_safe_defaults_and_user_systemd() -> Non
     assert "AI-assisted endpoint step (skip/draft/start)" not in script
     assert "prompt_choice()" in script
     assert "prompt_model_choice()" not in script
+    assert "Оставить безопасное значение" not in script
+    assert "Изменить выбор" in script
+    assert "Перейти к ручной настройке" in script
+    assert "Оставить loopback" in script
     assert "detect_assisted_model_id()" in script
     assert "Qwen/Qwen3-0.6B-GGUF:Q8_0" in script
     assert "Qwen/Qwen3-4B-GGUF:Q4_K_M" in script
@@ -148,6 +152,10 @@ def test_release_operator_bootstrap_uses_safe_defaults_and_user_systemd() -> Non
     assert "sudo password was used only by sudo" in script
     assert "install-node-runtime-ubuntu.sh" in script
     assert "build-operator-dashboard.sh" in script
+    assert "GENERATED_DASHBOARD_PATH" in script
+    assert "clean_generated_dashboard_assets" in script
+    assert "preserved local changes" in script
+    assert '"checkout_backup"' in script
     assert "aidn-operator-wrapper.sh" in script
     assert "master-key-file" in script
     assert "ln -sfn" in script
