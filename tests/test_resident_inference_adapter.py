@@ -7,6 +7,7 @@ from aidn_hypervisor.domain.models import NodeCapacity
 from aidn_hypervisor.main import build_app
 from aidn_hypervisor.model_store import FileModelStore
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
+from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.process_manager import ProviderProcessManager
 from aidn_hypervisor.queue import InMemoryTaskQueue
@@ -66,6 +67,43 @@ def test_cpu_resident_start_and_stop_are_lease_gated(tmp_path: Path) -> None:
     adapter.stop()
     assert resources.summary()["reserved"]["ram_mb"] == 0
     assert runtimes.list_runtimes() == []
+
+
+@pytest.mark.parametrize("profile", ["CPU_RESIDENT", "IGPU_RESIDENT"])
+def test_llamacpp_cpu_profiles_force_zero_gpu_layers(
+    tmp_path: Path, profile: str
+) -> None:
+    model = tmp_path / "steward.gguf"
+    model.write_bytes(b"test-model")
+    plugins = PluginRegistry()
+    plugins.register(LlamaCppPlugin())
+    adapter = ResidentInferenceAdapter(
+        node_id="node-test",
+        resources=ResourceOrchestrator(
+            NodeCapacity(cpu_cores=4, ram_mb=4096, vram_mb={})
+        ),
+        runtimes=ProviderProcessManager(),
+        plugin_resolver=plugins.get,
+    )
+
+    adapter.prepare(
+        model_path=str(model),
+        provider_type="llama.cpp",
+        plugin_id="llama.cpp",
+        profile=profile,
+        runtime_parameter_policy={
+            "gpu_layers": {
+                "value": 24,
+                "consumer_editable": False,
+                "min": 0,
+                "max": 999,
+            }
+        },
+    )
+
+    policy = adapter.snapshot_state()["config"]["runtime_parameter_policy"]
+    assert policy["gpu_layers"]["value"] == 0
+    assert policy["gpu_layers"]["consumer_editable"] is False
 
 
 def test_gpu_burst_falls_back_to_cpu_when_gpu_lease_is_denied(tmp_path: Path) -> None:

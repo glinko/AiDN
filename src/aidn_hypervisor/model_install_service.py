@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+from pathlib import Path
 from urllib import parse, request
 from uuid import uuid4
 
 from aidn_hypervisor.runtime_parameter_policy import normalize_runtime_parameter_policy
 
 _MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$")
+
+
 class ModelInstallService:
     """Model install orchestration extracted from HypervisorService."""
 
@@ -115,6 +119,15 @@ class ModelInstallService:
             queued_jobs = queued_jobs[:limit]
 
         for job in queued_jobs:
+            prefetch_state = self._prefetch_state_for_job(job)
+            if prefetch_state.get("status") == "running":
+                # The installer may already be warming the selected artifact.
+                # Keep the install queued so a later process pass can adopt the
+                # completed file instead of starting a duplicate download.
+                job["prefetch_status"] = "running"
+                job["last_error"] = "waiting for background model prefetch"
+                self._host._persist_state()
+                continue
             job["status"] = "running"
             job["last_error"] = None
             self._host.record_event(
@@ -136,10 +149,14 @@ class ModelInstallService:
                     if job.get("provider_type") == "ollama":
                         self._pull_ollama_model(str(job["provider_model_reference"]))
                 else:
-                    self._host.model_store.materialize_artifact(
-                        str(job.get("resolved_source_url", job["source_url"])),
-                        str(job["target_path"]),
-                    )
+                    if prefetch_state.get("status") == "completed":
+                        job["prefetched"] = True
+                        job["prefetch_sha256"] = prefetch_state.get("sha256")
+                    else:
+                        self._host.model_store.materialize_artifact(
+                            str(job.get("resolved_source_url", job["source_url"])),
+                            str(job["target_path"]),
+                        )
                     if job.get("provider_type") == "ollama":
                         self._create_ollama_model(
                             model_id=str(job["model_id"]),
@@ -183,6 +200,49 @@ class ModelInstallService:
             processed.append(dict(job))
 
         return processed
+
+    @staticmethod
+    def _prefetch_state_for_job(job: dict) -> dict:
+        """Return a matching installer prefetch marker when it is usable.
+
+        The marker is deliberately colocated with the final artifact.  A
+        running marker is adopted only while its worker PID is alive; a stale
+        marker therefore falls back to the normal model-store download path
+        instead of blocking the install forever.
+        """
+
+        target = Path(str(job.get("target_path") or ""))
+        if not target or not target.name:
+            return {}
+        marker_path = Path(f"{target}.aidn-prefetch.json")
+        try:
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return {}
+        if not isinstance(marker, dict):
+            return {}
+        if (
+            str(marker.get("provider_type") or "")
+            != str(job.get("provider_type") or "")
+            or str(marker.get("model_id") or "")
+            != str(job.get("model_id") or "")
+        ):
+            return {}
+        if str(marker.get("source_url") or "") != str(job.get("source_url") or ""):
+            return {}
+        status = str(marker.get("status") or "").lower()
+        if status in {"queued", "running"}:
+            try:
+                pid = int(marker.get("pid") or 0)
+                if pid > 0:
+                    os.kill(pid, 0)
+                    return marker
+            except (OSError, TypeError, ValueError):
+                pass
+            return {}
+        if status == "completed" and target.is_file():
+            return marker
+        return {}
 
     @staticmethod
     def _validate_model_id(model_id: str) -> str:

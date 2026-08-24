@@ -62,12 +62,18 @@ prints one structured handoff with URLs, identities, public artifacts, wallet
 and pairing state, private-file locations, and next commands; secret contents
 are never printed.
 
+Finite-choice prompts are numbered: enter 1, 2, 3, and so on (or press Enter
+for the marked default). AI-assisted setup includes a reviewed Qwen3 GGUF
+model catalog with approximate download, VRAM, and RAM requirements; Custom
+model remains available for a public HTTPS or hf:// reference.
+
 The first interactive question is the setup mode. Manual keeps the existing
 step-by-step flow. AI-assisted still asks and validates every required node
 parameter, then records an explicit, resumable plan for the CPU-first Resident
-Steward to review. Provider installation, model downloads, endpoint start, and
-publication never happen implicitly; they remain bounded, operator-approved
-actions that can be continued from the dashboard.
+Steward to review. After an operator selects a concrete llama.cpp artifact, the
+installer warms that artifact into the local cache in the background; provider
+installation, runtime registration, endpoint start, and publication remain
+bounded, operator-approved actions that can be continued from the dashboard.
 
 The installer creates a host-local encrypted Registry Secret Manager and an
 Ed25519 operator identity. The private material stays below --data-dir with
@@ -126,6 +132,243 @@ detect_advertise_host() {
   printf '%s' "$value"
 }
 
+model_prefetch_progress() {
+  # Render only between questions so a background writer never corrupts the
+  # operator's current prompt line.
+  local state_path="${model_prefetch_state_path:-}"
+  local progress_python="${model_prefetch_python:-}"
+  [[ -n "$state_path" && -f "$state_path" && -n "$progress_python" ]] || return 0
+  local line
+  line="$($progress_python - "$state_path" <<'PY' 2>/dev/null || true
+import json
+import sys
+
+try:
+    payload = json.loads(open(sys.argv[1], encoding="utf-8").read())
+except Exception:
+    print("status unavailable")
+    raise SystemExit(0)
+
+status = str(payload.get("status") or "unknown")
+downloaded = int(payload.get("downloaded_bytes") or 0)
+total = payload.get("total_bytes")
+if isinstance(total, int) and total > 0:
+    percent = int(downloaded * 100 / total)
+    width = 24
+    filled = min(width, max(0, int(width * percent / 100)))
+    bar = "#" * filled + "." * (width - filled)
+
+    def human(value):
+        value = float(value)
+        for unit in ("B", "KB", "MB", "GB", "TB"):
+            if value < 1024 or unit == "TB":
+                return f"{value:.1f} {unit}"
+            value /= 1024
+
+    print(f"{status} [{bar}] {percent:3d}% ({human(downloaded)} / {human(total)})")
+else:
+    print(f"{status} ({downloaded} bytes)")
+PY
+)"
+  printf '  [model download] %s\n' "$line" >&2
+}
+
+model_source_to_download_url() {
+  local source="$1"
+  if [[ "$source" == hf://* ]]; then
+    local reference="${source#hf://}"
+    local owner="${reference%%/*}"
+    local remainder="${reference#*/}"
+    local repository="${remainder%%/*}"
+    local file_path="${remainder#*/}"
+    [[ -n "$owner" && -n "$repository" && "$file_path" != "$remainder" ]] || return 1
+    printf 'https://huggingface.co/%s/%s/resolve/main/%s' "$owner" "$repository" "$file_path"
+    return 0
+  fi
+  printf '%s' "$source"
+}
+
+start_model_prefetch() {
+  local provider="$1"
+  local model_id="$2"
+  local source="$3"
+  [[ "$provider" == 'llama.cpp' && "$model_id" != 'skip' && -n "$source" ]] || return 0
+
+  local download_url
+  download_url="$(model_source_to_download_url "$source")" || {
+    printf '  [model download] skipped: source could not be resolved\n' >&2
+    return 0
+  }
+  local prefetch_python
+  prefetch_python="$(command -v python3 || command -v python || true)"
+  if [[ -z "$prefetch_python" ]]; then
+    printf '  [model download] skipped: Python 3 is not available for the background worker\n' >&2
+    return 0
+  fi
+
+  local safe_model_id="${model_id//\//_}"
+  local model_dir="$data_dir/models/$provider"
+  local prefetch_target="$model_dir/$safe_model_id"
+  local state_path="${prefetch_target}.aidn-prefetch.json"
+  local temporary_path="${prefetch_target}.part.$$"
+  local safe_log_name="${safe_model_id//[^A-Za-z0-9._-]/_}"
+  local log_path="$data_dir/logs/model-prefetch-$safe_log_name.log"
+  local max_bytes="${AIDN_PREFETCH_MAX_BYTES:-68719476736}"
+  if [[ ! "$max_bytes" =~ ^[0-9]+$ || "$max_bytes" -le 0 ]]; then
+    max_bytes=68719476736
+  fi
+  if ! mkdir -p "$model_dir" "$data_dir/logs"; then
+    printf '  [model download] skipped: model cache directory is not writable\n' >&2
+    return 0
+  fi
+  if ! chmod 700 "$data_dir" "$data_dir/models" "$model_dir" "$data_dir/logs"; then
+    printf '  [model download] skipped: could not secure model cache permissions\n' >&2
+    return 0
+  fi
+
+  model_prefetch_state_path="$state_path"
+  model_prefetch_target="$prefetch_target"
+  model_prefetch_source="$source"
+  model_prefetch_python="$prefetch_python"
+
+  nohup "$prefetch_python" - "$download_url" "$source" "$provider" "$model_id" \
+    "$temporary_path" "$prefetch_target" "$state_path" "$max_bytes" \
+    >"$log_path" 2>&1 <<'PY' &
+import hashlib
+import json
+import os
+import sys
+import tempfile
+import time
+from pathlib import Path
+from urllib.request import Request, urlopen
+
+(
+    download_url,
+    source_url,
+    provider_type,
+    model_id,
+    temporary_path,
+    target_path,
+    state_path,
+    max_bytes_raw,
+) = sys.argv[1:]
+max_bytes = int(max_bytes_raw)
+state_file = Path(state_path)
+target = Path(target_path)
+temporary = Path(temporary_path)
+
+def write_state(status, **fields):
+    payload = {
+        "schema_version": 1,
+        "status": status,
+        "pid": os.getpid(),
+        "provider_type": provider_type,
+        "model_id": model_id,
+        "source_url": source_url,
+        "resolved_source_url": download_url,
+        "target_path": str(target),
+        "updated_at": time.time(),
+        **fields,
+    }
+    state_file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temporary_state = tempfile.mkstemp(
+        prefix=f".{state_file.name}.", dir=state_file.parent
+    )
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, sort_keys=True)
+            stream.write("\n")
+        os.replace(temporary_state, state_file)
+    except Exception:
+        try:
+            os.unlink(temporary_state)
+        except OSError:
+            pass
+        raise
+
+try:
+    if target.is_file() and state_file.is_file():
+        try:
+            existing = json.loads(state_file.read_text(encoding="utf-8"))
+        except Exception:
+            existing = {}
+        if (
+            existing.get("status") == "completed"
+            and existing.get("source_url") == source_url
+            and existing.get("provider_type") == provider_type
+            and existing.get("model_id") == model_id
+        ):
+            write_state(
+                "completed",
+                downloaded_bytes=target.stat().st_size,
+                total_bytes=target.stat().st_size,
+                percent=100,
+                sha256=existing.get("sha256"),
+                reused=True,
+            )
+            raise SystemExit(0)
+
+    write_state("queued", downloaded_bytes=0, total_bytes=None, percent=None)
+    request = Request(download_url, headers={"User-Agent": "AiDN-model-prefetch/1"})
+    digest = hashlib.sha256()
+    downloaded = 0
+    next_update = 0.0
+    with urlopen(request, timeout=45) as response, temporary.open("wb") as output:
+        raw_total = response.headers.get("Content-Length")
+        total = int(raw_total) if raw_total and raw_total.isdigit() else None
+        if total is not None and total > max_bytes:
+            raise ValueError(f"model artifact exceeds prefetch limit ({max_bytes} bytes)")
+        write_state("running", downloaded_bytes=0, total_bytes=total, percent=0)
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            downloaded += len(chunk)
+            if downloaded > max_bytes:
+                raise ValueError(f"model artifact exceeds prefetch limit ({max_bytes} bytes)")
+            output.write(chunk)
+            digest.update(chunk)
+            now = time.monotonic()
+            if now >= next_update:
+                percent = int(downloaded * 100 / total) if total else None
+                write_state(
+                    "running",
+                    downloaded_bytes=downloaded,
+                    total_bytes=total,
+                    percent=percent,
+                )
+                next_update = now + 0.5
+    if downloaded <= 0:
+        raise ValueError("model artifact download returned no bytes")
+    temporary.replace(target)
+    write_state(
+        "completed",
+        downloaded_bytes=downloaded,
+        total_bytes=downloaded if total is None else total,
+        percent=100,
+        sha256=digest.hexdigest(),
+    )
+except Exception as error:
+    try:
+        temporary.unlink()
+    except OSError:
+        pass
+    write_state(
+        "failed",
+        downloaded_bytes=0,
+        total_bytes=None,
+        percent=None,
+        error=str(error)[:512],
+    )
+    raise
+PY
+  model_prefetch_pid=$!
+  printf '  [model download] started in background for %s\n' "$model_id" >&2
+  printf '  [model download] progress: %s\n' "$state_path" >&2
+}
+
 prompt_value() {
   local label="$1"
   local default_value="$2"
@@ -135,6 +378,7 @@ prompt_value() {
     printf '%s' "$default_value"
     return
   fi
+  model_prefetch_progress
   if [[ -n "$explanation" ]]; then
     printf '\n  %s\n' "$explanation" >&2
   fi
@@ -147,7 +391,64 @@ prompt_value() {
   if [[ -z "$answer" ]]; then
     answer="$default_value"
   fi
+  model_prefetch_progress
   printf '%s' "$answer"
+}
+
+prompt_choice() {
+  local label="$1"
+  local default_value="$2"
+  local explanation="${3:-}"
+  shift 3
+  local options=("$@")
+  local answer entry key display detail
+  local index=0 default_index=1 selected=''
+
+  if [[ "$non_interactive" == 'true' ]]; then
+    printf '%s' "$default_value"
+    return
+  fi
+
+  model_prefetch_progress
+  if [[ -n "$explanation" ]]; then
+    printf '\n  %s\n' "$explanation" >&2
+  fi
+  printf '\n%s\n' "$label" >&2
+  for entry in "${options[@]}"; do
+    IFS='|' read -r key display detail <<< "$entry"
+    index=$((index + 1))
+    [[ "$key" == "$default_value" ]] && default_index="$index"
+    if [[ "$key" == "$default_value" ]]; then
+      printf '  %d) %s [по умолчанию]\n' "$index" "$display" >&2
+    else
+      printf '  %d) %s\n' "$index" "$display" >&2
+    fi
+    [[ -n "$detail" ]] && printf '     %s\n' "$detail" >&2
+  done
+  printf 'Введите номер [%d]: ' "$default_index" >&2
+  IFS= read -r -u 3 answer || die 'interactive wizard requires a terminal'
+  [[ -n "$answer" ]] || answer="$default_index"
+
+  if [[ "$answer" =~ ^[0-9]+$ ]]; then
+    if (( 10#$answer >= 1 && 10#$answer <= ${#options[@]} )); then
+      entry="${options[$((10#$answer - 1))]}"
+      IFS='|' read -r selected _ <<< "$entry"
+    fi
+  else
+    # Keep accepting the old textual values for operators who have memorized
+    # them, while making the numbered path the primary UX.
+    local normalized_answer="${answer,,}"
+    for entry in "${options[@]}"; do
+      IFS='|' read -r key _ <<< "$entry"
+      if [[ "${key,,}" == "$normalized_answer" ]]; then
+        selected="$key"
+        break
+      fi
+    done
+  fi
+  [[ -n "$selected" ]] || die "invalid selection for: $label (enter a number from 1 to ${#options[@]})"
+  model_prefetch_progress
+  printf '%s' "$selected"
 }
 
 prompt_yes_no() {
@@ -155,18 +456,41 @@ prompt_yes_no() {
   local default_value="$2"
   local explanation="${3:-}"
   local answer
-  if [[ "$non_interactive" == 'true' ]]; then
-    [[ "$default_value" == 'yes' ]]
-    return
-  fi
-  if [[ -n "$explanation" ]]; then
-    printf '\n  %s\n' "$explanation" >&2
-  fi
-  printf '%s [%s]: ' "$label" "$default_value" >&2
-  IFS= read -r -u 3 answer || die 'interactive wizard requires a terminal'
-  answer="${answer,,}"
-  [[ -n "$answer" ]] || answer="$default_value"
-  [[ "$answer" == 'y' || "$answer" == 'yes' ]]
+  answer="$(prompt_choice "$label" "$default_value" "$explanation" \
+    'yes|Да|Подтвердить действие' \
+    'no|Нет|Оставить безопасное значение')"
+  [[ "$answer" == 'yes' ]]
+}
+
+model_source_for_id() {
+  case "$1" in
+    'Qwen/Qwen3-0.6B-GGUF:Q8_0')
+      printf '%s' 'hf://Qwen/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q8_0.gguf' ;;
+    'Qwen/Qwen3-1.7B-GGUF:Q4_K_M')
+      printf '%s' 'hf://ggml-org/Qwen3-1.7B-GGUF/Qwen3-1.7B-Q4_K_M.gguf' ;;
+    'Qwen/Qwen3-4B-GGUF:Q4_K_M')
+      printf '%s' 'hf://Qwen/Qwen3-4B-GGUF/Qwen3-4B-Q4_K_M.gguf' ;;
+    'Qwen/Qwen3-8B-GGUF:Q4_K_M')
+      printf '%s' 'hf://Qwen/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf' ;;
+    'Qwen/Qwen3-14B-GGUF:Q4_K_M')
+      printf '%s' 'hf://Qwen/Qwen3-14B-GGUF/Qwen3-14B-Q4_K_M.gguf' ;;
+    *) return 1 ;;
+  esac
+}
+
+prompt_model_choice() {
+  local provider="$1"
+  local model_choice
+  local catalog_note='Оценка: один активный запрос, квантование GGUF и контекст около 8K. Увеличение контекста или параллельности потребует дополнительной VRAM/RAM.'
+  model_choice="$(prompt_choice 'AI-assisted model (номер модели)' 'skip' "$catalog_note" \
+    'skip|Не скачивать сейчас|Продолжить установку без модели; настройку можно выполнить в Dashboard' \
+    'Qwen/Qwen3-0.6B-GGUF:Q8_0|Qwen3 0.6B Q8_0 — ~0.64 GB|VRAM ~1.5 GB · RAM ~2 GB · лёгкий Steward/проверка' \
+    'Qwen/Qwen3-1.7B-GGUF:Q4_K_M|Qwen3 1.7B Q4_K_M — ~1.1 GB|VRAM ~2.5 GB · RAM ~4 GB · быстрые локальные задачи' \
+    'Qwen/Qwen3-4B-GGUF:Q4_K_M|Qwen3 4B Q4_K_M — ~2.5 GB|VRAM ~4–6 GB · RAM ~8 GB · сбалансированный вариант' \
+    'Qwen/Qwen3-8B-GGUF:Q4_K_M|Qwen3 8B Q4_K_M — ~5.0 GB|VRAM ~7–10 GB · RAM ~12 GB · сложнее, но ещё подходит одной GPU' \
+    'Qwen/Qwen3-14B-GGUF:Q4_K_M|Qwen3 14B Q4_K_M — ~9.0 GB|VRAM ~12–16 GB · RAM ~20 GB · только при достаточном запасе ресурсов' \
+    'custom|Своя модель|Ввести идентификатор и публичный HTTPS/hf:// источник вручную')"
+  printf '%s' "$model_choice"
 }
 
 valid_model_id() {
@@ -220,6 +544,11 @@ setup_model_id='skip'
 setup_model_source=''
 setup_endpoint_action='skip'
 setup_handoff='dashboard'
+model_prefetch_pid=''
+model_prefetch_state_path=''
+model_prefetch_target=''
+model_prefetch_source=''
+model_prefetch_python=''
 operator_id_supplied='false'
 enable_registry_supplied='false'
 consensus_mode_supplied='false'
@@ -420,7 +749,9 @@ if [[ "$non_interactive" != 'true' ]]; then
 fi
 
 if [[ "$setup_mode_supplied" != 'true' && "$non_interactive" != 'true' ]]; then
-  setup_mode="$(prompt_value 'Installation mode (manual/ai_assisted)' 'manual' 'Manual asks each operator question and leaves the next actions to you. AI-assisted asks the same required questions, then prepares a bounded plan for the local CPU-first Resident Steward; it does not silently install software, download a model, or publish an endpoint.')"
+  setup_mode="$(prompt_choice 'Installation mode (manual/ai_assisted)' 'manual' 'Choose how much guidance the installer should prepare. Both modes ask every required node question; AI-assisted additionally stages a bounded, reviewable plan for the local CPU-first Resident Steward.' \
+    'manual|Ручной режим|После базовой установки дальнейшие действия остаются у оператора' \
+    'ai_assisted|AI-assisted|После базовых вопросов предложит провайдер, модель и приватный Endpoint-план')"
 fi
 case "${setup_mode,,}" in
   manual) setup_mode='manual' ;;
@@ -458,7 +789,10 @@ valid_path "$install_dir" || die 'install directory must be an absolute path'
 valid_path "$data_dir" || die 'data directory must be an absolute path'
 
 if [[ "$non_interactive" != 'true' && "$consensus_mode_supplied" != 'true' ]]; then
-  consensus_mode="$(prompt_value 'Consensus mode (validator/non_validator/disabled)' "$consensus_mode" 'Validator installs and runs a local CometBFT node; non-validator observes an existing private RPC; disabled skips local consensus integration. This choice changes network participation, ports, storage, and recovery responsibilities.')"
+  consensus_mode="$(prompt_choice 'Consensus mode (validator/non_validator/disabled)' "$consensus_mode" 'This controls whether the node participates in CometBFT consensus. Validator uses local ports and storage; non-validator follows a trusted private RPC; disabled skips local consensus integration.' \
+    'validator|Validator|Запустить локальный CometBFT и участвовать в консенсусе' \
+    'non_validator|Non-validator|Подключиться к существующему приватному RPC без локального валидатора' \
+    'disabled|Disabled|Не устанавливать локальную consensus-службу')"
 fi
 case "$consensus_mode" in
   validator|non_validator|disabled) ;;
@@ -477,7 +811,10 @@ if [[ "$wallet_action_supplied" != 'true' ]]; then
   if [[ "$non_interactive" == 'true' ]]; then
     wallet_action='skip'
   else
-    wallet_action="$(prompt_value 'Owner wallet action (create/import/skip)' 'create' 'Create generates a new local owner wallet; import uses an existing private key; skip leaves ownership-dependent actions unavailable. Private material is handled by the encrypted secret manager and is never printed by the installer.')"
+    wallet_action="$(prompt_choice 'Owner wallet action (create/import/skip)' 'create' 'The wallet signs ownership and publication actions. Create makes a new encrypted local wallet; import uses an existing key; skip leaves ownership-dependent actions unavailable.' \
+      'create|Создать кошелёк|Сгенерировать новый локальный кошелёк в зашифрованном хранилище' \
+      'import|Импортировать|Использовать уже существующий приватный ключ' \
+      'skip|Пропустить|Оставить публикацию и операции владельца недоступными')"
   fi
 fi
 case "$wallet_action" in
@@ -489,7 +826,9 @@ if [[ "$dashboard_pairing_supplied" != 'true' ]]; then
   if [[ "$non_interactive" == 'true' ]]; then
     dashboard_pairing_action='skip'
   else
-    dashboard_pairing_action="$(prompt_value 'Dashboard pairing (create/skip)' 'create' 'Create prints a one-time browser pairing code and URL after installation; the code expires and is consumed once. Skip keeps the dashboard unpaired, so you can run aidn-operator pair later from the node terminal.')"
+    dashboard_pairing_action="$(prompt_choice 'Dashboard pairing (create/skip)' 'create' 'Pairing creates a one-time browser code. It expires after use; skipping keeps the Dashboard locked until you run aidn-operator pair later.' \
+      'create|Создать код pairing|Показать одноразовый URL и код после установки' \
+      'skip|Пропустить|Оставить Dashboard непарным до ручного запуска pair')"
   fi
 fi
 case "$dashboard_pairing_action" in
@@ -558,7 +897,11 @@ fi
 
 if [[ "$setup_mode" == 'ai_assisted' ]]; then
   if [[ "$setup_provider_supplied" != 'true' ]]; then
-    setup_provider="$(prompt_value 'AI-assisted provider (skip/ollama/llama.cpp/vllm)' 'skip' 'Choose one reviewed provider for the next guided step. Selecting a provider only records intent and opens a reviewed installation path; it does not execute arbitrary plugin code or grant the agent host access.')"
+    setup_provider="$(prompt_choice 'AI-assisted provider (skip/ollama/llama.cpp/vllm)' 'skip' 'Selecting a provider records intent and opens a reviewed installation path. It does not execute arbitrary plugin code or grant the agent host access.' \
+      'skip|Не устанавливать провайдер|Настроить провайдер позже через Dashboard' \
+      'llama.cpp|llama.cpp|Лучший вариант для локальных GGUF-моделей и частичного offload' \
+      'ollama|Ollama|Простой локальный runtime с каталогом моделей Ollama' \
+      'vllm|vLLM|Высокая производительность, обычно требует больше VRAM/RAM')"
   fi
   setup_provider="${setup_provider,,}"
   case "$setup_provider" in
@@ -571,17 +914,33 @@ if [[ "$setup_mode" == 'ai_assisted' ]]; then
 
   if [[ "$setup_provider" != 'skip' ]]; then
     if [[ "$setup_model_id_supplied" != 'true' && "$non_interactive" != 'true' ]]; then
-      setup_model_id="$(prompt_value 'AI-assisted model ID' 'skip' 'Give a bounded provider/model identifier, or skip to finish provider setup later in the dashboard. The model is not downloaded until the source and resource policy are reviewed.')"
+      model_choice="$(prompt_model_choice "$setup_provider")"
+      case "$model_choice" in
+        skip)
+          setup_model_id='skip'
+          ;;
+        custom)
+          setup_model_id="$(prompt_value 'AI-assisted model ID' 'skip' 'Enter a bounded provider/model identifier. After the source is validated, a concrete llama.cpp artifact is downloaded in the background; runtime activation still requires review.')"
+          ;;
+        *)
+          setup_model_id="$model_choice"
+          setup_model_source="$(model_source_for_id "$setup_model_id")"
+          ;;
+      esac
     fi
     if [[ -z "$setup_model_id" ]]; then
       setup_model_id='skip'
     fi
     if [[ "$setup_model_id" != 'skip' ]]; then
       valid_model_id "$setup_model_id" || die 'setup model ID contains unsupported characters'
-      if [[ "$setup_model_source_supplied" != 'true' && "$non_interactive" != 'true' ]]; then
-        setup_model_source="$(prompt_value 'AI-assisted model source (HTTPS or hf://)' '' 'Use a public HTTPS artifact or Hugging Face reference without credentials, query strings, or fragments. The installer stores the reference in the plan; the model download remains an explicit reviewed operation.')"
+      if [[ -z "$setup_model_source" && "$setup_model_source_supplied" != 'true' && "$non_interactive" != 'true' ]]; then
+        setup_model_source="$(prompt_value 'AI-assisted model source (HTTPS or hf://)' '' 'Use a public HTTPS artifact or Hugging Face reference without credentials, query strings, or fragments. Selecting it starts a bounded background cache download; provider and Endpoint actions remain separately reviewed.')"
       fi
       valid_model_source "$setup_model_source" || die 'setup model source must be an HTTPS URL or hf://owner/repository reference without credentials or query data'
+      # Selecting a concrete llama.cpp artifact is the explicit operator
+      # approval needed to warm the local model cache.  The provider, Bundle,
+      # and Endpoint lifecycle remains separate and still requires review.
+      start_model_prefetch "$setup_provider" "$setup_model_id" "$setup_model_source"
     else
       setup_model_source=''
       setup_endpoint_action='skip'
@@ -594,7 +953,10 @@ if [[ "$setup_mode" == 'ai_assisted' ]]; then
 
   if [[ "$setup_model_id" != 'skip' ]]; then
     if [[ "$setup_endpoint_supplied" != 'true' && "$non_interactive" != 'true' ]]; then
-      setup_endpoint_action="$(prompt_value 'AI-assisted endpoint step (skip/draft/start)' 'draft' 'Skip leaves the model staged only. Draft prepares a private Bundle/Endpoint review. Start asks the Steward to continue only after resource and port checks; public publication still requires validation and operator policy.')"
+      setup_endpoint_action="$(prompt_choice 'AI-assisted endpoint step (skip/draft/start)' 'draft' 'This controls only the private next step. Nothing is published automatically: draft prepares a review, while start is still checked by the Resource Broker and port allocator.' \
+        'skip|Только модель|Остановиться после подготовки модели' \
+        'draft|Создать приватный draft|Подготовить Bundle/Endpoint для проверки оператором' \
+        'start|Подготовить запуск|Запросить запуск после resource/port checks; публикация остаётся отдельной')"
     fi
     setup_endpoint_action="${setup_endpoint_action,,}"
     case "$setup_endpoint_action" in
@@ -604,7 +966,9 @@ if [[ "$setup_mode" == 'ai_assisted' ]]; then
   fi
 
   if [[ "$setup_handoff_supplied" != 'true' && "$non_interactive" != 'true' ]]; then
-    setup_handoff="$(prompt_value 'After base install (continue/dashboard)' 'dashboard' 'Continue leaves the bounded plan for the Resident Steward to review. Dashboard hands you the browser URL immediately; both paths preserve the plan and let you stop or resume without repeating the required node questions.')"
+    setup_handoff="$(prompt_choice 'After base install (continue/dashboard)' 'dashboard' 'Choose where to continue after the required installation. The plan is saved in both cases, so you can pause and resume without repeating the node questions.' \
+      'dashboard|Открыть Dashboard|Сразу перейти к браузерной проверке и ручному продолжению' \
+      'continue|Продолжить со Steward|Оставить план для локального Resident Steward')"
   fi
   setup_handoff="${setup_handoff,,}"
   case "$setup_handoff" in
@@ -1295,6 +1659,14 @@ if [[ "$setup_mode" == 'ai_assisted' ]]; then
   printf '  note              : no provider, model, or public Endpoint is changed implicitly\n' >&2
 else
   printf '  next step         : continue configuration from the Dashboard or CLI\n' >&2
+fi
+if [[ -n "$model_prefetch_state_path" ]]; then
+  printf '\n[MODEL CACHE PREFETCH]\n' >&2
+  model_prefetch_progress
+  printf '  target            : %s\n' "$model_prefetch_target" >&2
+  printf '  state             : %s\n' "$model_prefetch_state_path" >&2
+  printf '  background PID    : %s\n' "${model_prefetch_pid:-finished}" >&2
+  printf '  note              : model registration and runtime activation remain explicit next steps\n' >&2
 fi
 printf '\n[PUBLIC ARTIFACTS — SAFE TO SHARE]\n' >&2
 printf '  public peer bundle: %s\n' "$registry_root/public-peer.json" >&2

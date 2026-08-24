@@ -80,6 +80,18 @@ def test_release_operator_bootstrap_uses_safe_defaults_and_user_systemd() -> Non
     assert "Installation mode (manual/ai_assisted)" in script
     assert "AI-assisted provider (skip/ollama/llama.cpp/vllm)" in script
     assert "AI-assisted endpoint step (skip/draft/start)" in script
+    assert "prompt_choice()" in script
+    assert "prompt_model_choice()" in script
+    assert "Qwen/Qwen3-0.6B-GGUF:Q8_0" in script
+    assert "Qwen/Qwen3-4B-GGUF:Q4_K_M" in script
+    assert "Qwen/Qwen3-14B-GGUF:Q4_K_M" in script
+    assert "VRAM ~7–10 GB" in script
+    assert "Введите номер" in script
+    assert "start_model_prefetch" in script
+    assert "model_prefetch_progress" in script
+    assert "AIDN_PREFETCH_MAX_BYTES" in script
+    assert ".aidn-prefetch.json" in script
+    assert "[MODEL CACHE PREFETCH]" in script
     assert "installation-plan.json" in script
     assert "AIDN_INSTALLATION_SETUP_MODE" in script
     assert "AIDN_INSTALLATION_PLAN_PATH" in script

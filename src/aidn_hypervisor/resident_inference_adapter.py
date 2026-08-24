@@ -87,6 +87,44 @@ _GPU_PROFILES = {"GPU_RESIDENT", "GPU_BURST"}
 _CPU_PROFILES = {"CPU_RESIDENT", "IGPU_RESIDENT"}
 
 
+def _apply_profile_residency_policy(
+    provider_type: str,
+    profile: str,
+    policy: dict[str, Any],
+) -> dict[str, Any]:
+    """Make the execution profile authoritative for accelerator residency.
+
+    The generic llama.cpp policy intentionally defaults to ``gpu_layers=99``
+    for operator-managed GPU endpoints.  That default must not leak into a
+    CPU/iGPU Resident Steward profile: those profiles reserve no VRAM, so a
+    non-zero layer setting would make the launch command contradict the
+    Resource Broker lease and could still make llama.cpp probe or allocate a
+    GPU.  Keep the override operator-owned and apply it both when preparing a
+    config and again at start for restored legacy snapshots.
+    """
+
+    effective = dict(policy or {})
+    if (
+        str(provider_type).strip().lower() == "llama.cpp"
+        and str(profile).strip().upper() in _CPU_PROFILES
+    ):
+        current = effective.get("gpu_layers")
+        if hasattr(current, "model_copy"):
+            # Keep the normalized Pydantic representation used during
+            # preparation; the persisted start path receives JSON mappings.
+            effective["gpu_layers"] = current.model_copy(
+                update={"value": 0, "consumer_editable": False}
+            )
+        else:
+            effective["gpu_layers"] = {
+                "value": 0,
+                "consumer_editable": False,
+                "min": 0,
+                "max": 999,
+            }
+    return effective
+
+
 def _bounded_path(value: str) -> Path:
     raw = str(value or "").strip()
     if not raw or len(raw) > 2048:
@@ -228,7 +266,11 @@ class ResidentInferenceAdapter:
                     "plugin_id": resolved_plugin_id,
                 },
             ) from error
-        policy = normalize_runtime_parameter_policy(provider, runtime_parameter_policy)
+        policy = _apply_profile_residency_policy(
+            provider,
+            normalized_profile,
+            normalize_runtime_parameter_policy(provider, runtime_parameter_policy),
+        )
         resource_request = InferenceResourceRequest(
             cpu=float(cpu),
             ram_mb=int(ram_mb),
@@ -364,13 +406,11 @@ class ResidentInferenceAdapter:
                 ) from fallback_error
         try:
             plugin = self._plugin_resolver(str(config["plugin_id"]))
-            policy = dict(config.get("runtime_parameter_policy") or {})
-            if (
-                effective_profile == "CPU_RESIDENT"
-                and profile == "GPU_BURST"
-                and str(config["provider_type"]).strip().lower() == "llama.cpp"
-            ):
-                policy["gpu_layers"] = {"value": 0, "consumer_editable": False, "min": 0, "max": 999}
+            policy = _apply_profile_residency_policy(
+                str(config["provider_type"]),
+                effective_profile,
+                dict(config.get("runtime_parameter_policy") or {}),
+            )
             bundle = self._bundle_for(
                 model_path=Path(str(config["model_path"])),
                 provider_type=str(config["provider_type"]),
@@ -798,6 +838,12 @@ class ResidentInferenceAdapter:
         runtime_parameter_policy: dict[str, Any],
     ) -> BundleConfig:
         device = "cuda" if profile in _GPU_PROFILES else "cpu"
+        policy_payload: dict[str, Any] | None = runtime_parameter_policy
+        if runtime_parameter_policy and all(
+            hasattr(value, "model_dump")
+            for value in runtime_parameter_policy.values()
+        ):
+            policy_payload = policy_json(runtime_parameter_policy)
         return BundleConfig(
             bundle_id=f"{self.RUNTIME_BUNDLE_PREFIX}:{self.node_id}",
             plugin_id=plugin_id,
@@ -820,7 +866,7 @@ class ResidentInferenceAdapter:
             priority_class=0,
             max_parallel_requests=1,
             runtime_parameter_policy=normalize_runtime_parameter_policy(
-                provider_type, runtime_parameter_policy
+                provider_type, policy_payload
             ),
         )
 

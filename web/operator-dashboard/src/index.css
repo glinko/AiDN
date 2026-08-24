@@ -37,7 +37,16 @@
   --brand-amber: #8a5a00;
   --brand-orange: #a65314;
   --brand-red: #b33f53;
-  --quiet: #71879a;
+  /* Secondary copy is still small in a dense operator UI, so it must remain
+     above the AA body-text threshold on the light field. */
+  --quiet: #526b80;
+  --text-cyan: #0a666b;
+  --text-blue: #2b628f;
+  --text-green: #17633f;
+  --text-amber: #765000;
+  --text-orange: #8d440d;
+  --text-red: #963044;
+  --amber-surface: #fff6df;
 }
 
 @theme inline {
@@ -198,6 +207,104 @@ button {
 .resource-broker-workspace [class*="text-amber-200"] { color: var(--brand-amber) !important; }
 .resource-broker-workspace [class*="text-rose-100"],
 .resource-broker-workspace [class*="text-rose-200"] { color: var(--brand-red) !important; }
+
+/*
+ * Light theme contrast bridge
+ *
+ * A large part of the dashboard still uses the original dark-workspace
+ * utility vocabulary (text-amber-100, text-cyan-50, and friends). The light
+ * shell remaps the surfaces, but those utilities would otherwise keep their
+ * near-white dark-theme foregrounds. Keep the existing component markup and
+ * state names while remapping their foreground roles to deliberate, AA-safe
+ * light-theme values. This is intentionally scoped to the operator shell so
+ * the public site and any future dark workspace keep their own palette.
+ */
+.operator-shell [class*="text-cyan-50"],
+.operator-shell [class*="text-cyan-100"],
+.operator-shell [class*="text-cyan-200"],
+.operator-shell [class*="text-cyan-300"] { color: var(--text-cyan) !important; }
+.operator-shell [class*="text-sky-100"],
+.operator-shell [class*="text-sky-200"],
+.operator-shell [class*="text-sky-300"] { color: var(--text-blue) !important; }
+.operator-shell [class*="text-blue-300"],
+.operator-shell [class*="text-blue-400"],
+.operator-shell [class*="text-blue-500"] { color: var(--text-blue) !important; }
+.operator-shell [class*="text-emerald-50"],
+.operator-shell [class*="text-emerald-100"],
+.operator-shell [class*="text-emerald-200"],
+.operator-shell [class*="text-emerald-300"],
+.operator-shell [class*="text-emerald-400"],
+.operator-shell [class*="text-emerald-500"] { color: var(--text-green) !important; }
+.operator-shell [class*="text-amber-50"],
+.operator-shell [class*="text-amber-100"],
+.operator-shell [class*="text-amber-200"],
+.operator-shell [class*="text-amber-300"] { color: var(--text-amber) !important; }
+.operator-shell [class*="text-orange-300"],
+.operator-shell [class*="text-orange-400"] { color: var(--text-orange) !important; }
+.operator-shell [class*="text-rose-50"],
+.operator-shell [class*="text-rose-100"],
+.operator-shell [class*="text-rose-200"],
+.operator-shell [class*="text-rose-300"] { color: var(--text-red) !important; }
+.operator-shell [class*="text-violet-100"],
+.operator-shell [class*="text-violet-300"] { color: var(--text-blue) !important; }
+.operator-shell [class*="text-slate-100"],
+.operator-shell [class*="text-slate-200"],
+.operator-shell [class*="text-slate-300"] { color: var(--card-foreground) !important; }
+.operator-shell [class*="text-slate-400"],
+.operator-shell [class*="text-slate-500"],
+.operator-shell [class*="text-slate-600"] { color: var(--quiet) !important; }
+
+/* Semantic outlines are also content-bearing state indicators. The pale
+   dark-theme ramps were too faint after the light surface migration. */
+.operator-shell [class*="border-cyan-300"],
+.operator-shell [class*="border-cyan-200"] { border-color: var(--brand-cyan) !important; }
+.operator-shell [class*="border-sky-300"] { border-color: var(--brand-blue) !important; }
+.operator-shell [class*="border-emerald-300"],
+.operator-shell [class*="border-emerald-400"] { border-color: var(--brand-green) !important; }
+.operator-shell [class*="border-amber-300"] { border-color: var(--brand-amber) !important; }
+.operator-shell [class*="border-rose-300"] { border-color: var(--brand-red) !important; }
+.operator-shell [class*="border-violet-300"] { border-color: var(--brand-blue) !important; }
+
+/* Keep the small resource meter track visible on the light surface. */
+.operator-shell [class*="bg-slate-800"] { background-color: var(--secondary) !important; }
+
+/* Token/key previews are intentionally recessed, but must remain readable in
+   the light theme instead of pairing dark translucent ink with pale text. */
+.operator-shell pre[class*="bg-black/25"],
+.operator-shell code[class*="bg-black/25"] {
+  background-color: var(--secondary) !important;
+  color: var(--foreground) !important;
+}
+
+/* Cyan primary buttons carry light text on the darkened route color. A few
+   legacy screens still pair that background with the old dark foreground. */
+.operator-shell [class*="bg-cyan-300"][class*="text-[#04101c]"],
+.operator-shell [class*="bg-cyan-300"][class*="text-[#06121d]"] {
+  color: var(--primary-foreground) !important;
+}
+
+/* Disabled controls still communicate state and should not disappear behind
+   the legacy 50% opacity treatment. Keep them quiet, but readable. */
+.operator-shell button:disabled {
+  opacity: 1 !important;
+  cursor: not-allowed;
+  filter: saturate(0.72);
+  background-color: var(--secondary) !important;
+  border-color: var(--border) !important;
+  color: var(--muted-foreground) !important;
+}
+.operator-shell button:disabled[class*="bg-amber-200"],
+.operator-shell button:disabled[class*="bg-amber-300"] {
+  background-color: var(--amber-surface) !important;
+  border-color: var(--brand-amber) !important;
+  color: var(--text-amber) !important;
+}
+.operator-shell button:disabled[class*="bg-rose-200"],
+.operator-shell button:disabled[class*="bg-rose-300"] {
+  background-color: var(--color-rose-50) !important;
+  border-color: var(--brand-red) !important;
+  color: var(--text-red) !important;
+}
 
 :where(button, a, input, select, textarea):focus-visible {
   outline: 2px solid var(--ring);

@@ -10,7 +10,17 @@ The first interactive question is:
 
 ```text
 Installation mode (manual/ai_assisted)
+  1) Manual
+  2) AI-assisted
+Enter the number:
 ```
+
+All finite-choice questions use the same numbered interaction. The operator
+can enter `1`, `2`, `3`, and so on instead of typing a long value; pressing
+Enter selects the marked default. The previous textual values remain accepted
+for compatibility with operators who already use them in scripts or muscle
+memory. Free-form fields (paths, IDs, RPC URLs, and custom model references)
+still require text input.
 
 `manual` keeps the existing step-by-step operator flow. `ai_assisted` does not
 remove or infer any required value. The installer still asks for and validates
@@ -21,9 +31,41 @@ opening a listener, or creating a wallet on the operator's behalf.
 After the required questions, AI-assisted mode offers a bounded continuation:
 
 1. reviewed Provider (`ollama`, `llama.cpp`, `vllm`, or `skip`);
-2. model identifier and HTTPS/`hf://` source;
+2. numbered model catalog with an estimated download size, VRAM/RAM budget,
+   and a conservative context profile;
 3. private Endpoint action (`skip`, `draft`, or `start`);
 4. handoff (`continue` with the Resident Steward or `dashboard`).
+
+The built-in catalog currently contains Apache-2.0 Qwen3 GGUF choices:
+
+| Choice | Approx. artifact | Estimated VRAM | Estimated RAM | Intended use |
+| --- | ---: | ---: | ---: | --- |
+| Qwen3 0.6B Q8_0 | 0.64 GB | ~1.5 GB | ~2 GB | lightweight resident Steward and checks |
+| Qwen3 1.7B Q4_K_M | ~1.1 GB | ~2.5 GB | ~4 GB | fast local control tasks |
+| Qwen3 4B Q4_K_M | ~2.5 GB | ~4–6 GB | ~8 GB | balanced general local model |
+| Qwen3 8B Q4_K_M | ~5.0 GB | ~7–10 GB | ~12 GB | stronger local reasoning on a single GPU |
+| Qwen3 14B Q4_K_M | ~9.0 GB | ~12–16 GB | ~20 GB | only when the node has sufficient headroom |
+
+These are planning estimates for one active request and roughly 8K context;
+larger context windows, batching, and KV-cache growth require additional
+capacity. The operator can choose `Custom model` to enter another bounded
+model ID and public source. Once a concrete `llama.cpp` artifact is selected,
+the installer starts a bounded background cache prefetch immediately. This
+does not install a provider, register a model, start a runtime, or publish an
+Endpoint; those lifecycle actions remain explicit and reviewable.
+
+### Background model prefetch
+
+The prefetch worker downloads only public HTTPS/Hugging Face artifacts and
+writes atomically to the selected node data directory. It keeps an owner-only
+state marker next to the final model path and updates `status`, byte counts,
+percent, PID, and SHA-256. The CLI renders a snapshot progress bar between
+questions so the input prompt is never overwritten by a competing writer.
+When the later model-install action runs, the Hypervisor adopts a matching
+completed prefetch instead of downloading the same artifact a second time. A
+failed or stale prefetch safely falls back to the normal model-install worker.
+The default prefetch ceiling is 64 GiB and can be changed for a controlled
+installation with `AIDN_PREFETCH_MAX_BYTES`.
 
 Every optional question explains its consequence. A model reference is never
 treated as executable code, and a URL containing credentials, query strings,
@@ -42,7 +84,9 @@ It also records the plan path and the selected mode in
 private keys, wallet material, or agent token. It records authority boundaries:
 
 - Provider installation requires explicit operator review.
-- Model download requires explicit operator review and resource checks.
+- A selected llama.cpp artifact may be prefetched in the background; model
+  registration and runtime activation still require explicit operator review
+  and resource checks.
 - Endpoint publication still requires validation and existing Hypervisor
   policy.
 - The Resident Steward cannot execute arbitrary shell commands or mutate state
@@ -54,9 +98,10 @@ When assisted mode is selected, the generated service exports
 Steward profile. The Resident inference adapter and Resource Broker integration
 are implemented. The installer remains a control-plane boundary: the Steward
 may advance only the reviewed private workflow through the same policy-bound
-service actions as the Dashboard. It does not silently download a model,
-reserve VRAM, or publish an Endpoint; those changes continue through their
-dedicated approval, admission and validation paths.
+  service actions as the Dashboard. The selected artifact may already be
+  cached by the installer, but the Steward still does not silently register
+  it, reserve VRAM, or publish an Endpoint; those changes continue through
+  their dedicated approval, admission and validation paths.
 
 ## Non-interactive use
 
@@ -81,10 +126,10 @@ integrity status. `Review and continue` is a plan-hash-bound operator action:
 it re-reads the file, rejects legacy or tampered plans, and persists an
 idempotent, secret-free **Provider review**. Once the operator approves that
 exact Provider plan in the normal Provider workflow, the card can submit the
-approval to the privileged broker. Provider installation, model download,
-Bundle creation, Runtime activation, validation and publication remain
-separate policy-gated actions. The review never attempts a hidden host
-mutation and cannot turn a model URL into a permission grant.
+approval to the privileged broker. Provider installation, model
+registration/materialization, Bundle creation, Runtime activation, validation
+and publication remain separate policy-gated actions. The review never attempts
+a hidden host mutation and cannot turn a model URL into a permission grant.
 
 The Dashboard read endpoint is:
 
@@ -149,6 +194,7 @@ the existing model-install job, records its `install_id`, and returns
 
 This targeted action invokes the existing worker only for the install ID bound
 to the plan; it cannot consume another queued model on the node. The worker
+adopts a matching completed installer prefetch when available, otherwise it
 performs the download/materialization and provider-specific verification. A
 running job returns `wait_model_install`; a failed job remains visible with its
 bounded error and must be inspected before retry. After the worker reports that

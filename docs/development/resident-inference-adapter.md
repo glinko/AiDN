@@ -40,6 +40,13 @@ execution profile (`CPU_RESIDENT`, `IGPU_RESIDENT`, `GPU_RESIDENT`, or
 `GPU_BURST`), resource estimates, fallback policy, and the normalized runtime
 parameter policy. Model downloads remain a separate installation operation.
 
+For `llama.cpp`, `CPU_RESIDENT` and `IGPU_RESIDENT` are strict no-VRAM
+profiles: the adapter pins the operator-owned `gpu_layers` parameter to `0`
+when preparing the runtime and reapplies that rule at start. This also protects
+older persisted configurations that were created while the generic llama.cpp
+default was `gpu_layers=99`. GPU profiles keep their explicit layer policy and
+continue to be admitted by the Resource Broker.
+
 ## Installation-plan handoff
 
 When an assisted installation plan requests `endpoint_action: start`, the

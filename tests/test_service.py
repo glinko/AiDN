@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -3305,6 +3306,49 @@ def test_service_process_model_installs_materializes_artifact_and_marks_job_comp
         "model.install.started",
         "model.install.completed",
     ]
+
+
+def test_service_adopts_completed_model_prefetch_without_redownloading(tmp_path) -> None:
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})),
+        bundles=[],
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+        model_store=FileModelStore(tmp_path / "models"),
+    )
+    source = tmp_path / "source.gguf"
+    source.write_text("source", encoding="utf-8")
+    install = service.request_model_install(
+        provider_type="fake-managed",
+        model_id="prefetched.gguf",
+        source_url=source.as_uri(),
+        requested_by="operator-a",
+    )
+    target = Path(install["target_path"])
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("prefetched", encoding="utf-8")
+    Path(f"{target}.aidn-prefetch.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "provider_type": "fake-managed",
+                "model_id": "prefetched.gguf",
+                "source_url": source.as_uri(),
+                "sha256": "prefetch-sha256",
+            }
+        ),
+        encoding="utf-8",
+    )
+    source.unlink()
+
+    processed = service.process_model_installs()
+
+    assert processed[0]["status"] == "completed"
+    assert processed[0]["prefetched"] is True
+    assert processed[0]["prefetch_sha256"] == "prefetch-sha256"
+    assert target.read_text(encoding="utf-8") == "prefetched"
 
 
 def test_service_targeted_model_processing_does_not_consume_other_queue_entries(
