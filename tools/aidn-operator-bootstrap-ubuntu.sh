@@ -710,9 +710,13 @@ PY
 }
 
 ensure_assisted_provider_runtime() {
-  [[ "$setup_mode" == 'ai_assisted' && "$setup_provider" == 'llama.cpp' && "$setup_model_id" != 'skip' ]] || return 0
+  # Run this only after the model prefetch has been accepted for automatic
+  # Resident Steward startup.  The derived flag is deliberately used here
+  # instead of re-reading CLI intent so reruns with an existing plan cannot
+  # accidentally skip the runtime required by the generated wrapper.
+  [[ "${steward_autostart:-false}" == 'true' ]] || return 0
   local runtime_root="$data_dir/providers/llama.cpp"
-  if "$runtime_dispatcher" llama.cpp status --ref b10433 --root "$runtime_root" >/dev/null 2>&1; then
+  if [[ -x "$runtime_root/bin/llama-server" ]]; then
     printf '  [provider runtime] reviewed llama.cpp runtime is already installed\n' >&2
     return 0
   fi
@@ -720,6 +724,8 @@ ensure_assisted_provider_runtime() {
   "$runtime_dispatcher" llama.cpp install \
     --ref b10433 --backend cpu --root "$runtime_root" \
     || die "the reviewed llama.cpp runtime could not be installed"
+  [[ -x "$runtime_root/bin/llama-server" ]] \
+    || die "the reviewed llama.cpp runtime install completed without llama-server"
 }
 
 model_source_for_id() {
@@ -1399,8 +1405,6 @@ if [[ "$no_start" != 'true' ]]; then
   "${sudo_cmd[@]}" systemctl enable --now "$runtime_broker_service"
 fi
 
-ensure_assisted_provider_runtime
-
 node_root="$(bash "$install_dir/tools/install-node-runtime-ubuntu.sh" \
   --output-dir "$data_dir/tooling/node")"
 bash "$install_dir/tools/build-operator-dashboard.sh" \
@@ -1507,6 +1511,11 @@ if [[ "$setup_mode" == 'ai_assisted' && "$setup_provider" == 'llama.cpp' && "$se
   steward_model_path="$model_prefetch_target"
   steward_model_sha256="$model_prefetch_expected_sha256"
 fi
+
+# The model artifact and its integrity are now confirmed.  Install the exact
+# reviewed runtime before writing the wrapper so a fresh service restart can
+# autostart the Resident Steward immediately after the CLI exits.
+ensure_assisted_provider_runtime
 
 mkdir -p "$data_dir/logs" "$HOME/.config/systemd/user"
 chmod 700 "$data_dir/logs" "$HOME/.config/systemd" "$HOME/.config/systemd/user"
