@@ -46,6 +46,28 @@ def test_validator_write_boundary_allows_only_bounded_resource_measurement() -> 
     assert _is_validator_consensus_write_path("/operators/resources/configure") is False
 
 
+def test_validator_write_boundary_allows_local_resident_inference_lifecycle() -> None:
+    allowed_paths = (
+        "/operators/dashboard/steward/enabled",
+        "/operators/dashboard/steward/action-policy",
+        "/operators/dashboard/steward/action-execute",
+        "/operators/dashboard/steward/inference/prepare",
+        "/operators/dashboard/steward/inference/start",
+        "/operators/dashboard/steward/inference/stop",
+        "/operators/dashboard/steward/inference/model/prepare",
+        "/operators/dashboard/steward/inference/model/verify",
+        "/operators/dashboard/steward/inference/invoke",
+        "/operators/dashboard/steward/chat",
+    )
+    for path in allowed_paths:
+        assert _is_validator_consensus_write_path(path, "POST") is True
+
+    assert _is_validator_consensus_write_path(
+        "/operators/dashboard/steward/inference/restart", "POST"
+    ) is False
+    assert _is_validator_consensus_write_path(allowed_paths[0], "GET") is False
+
+
 def test_validator_write_boundary_allows_bounded_local_provider_installation() -> None:
     assert _is_validator_consensus_write_path(
         "/operators/dashboard/access/operations/cometbft/reconnect",

@@ -581,6 +581,23 @@ def _is_validator_consensus_write_path(path: str, method: str | None = None) -> 
         # OpenAI-compatible inference is a separately bearer-authenticated,
         # endpoint-scoped data-plane request. It never mutates consensus state.
         return True
+    if tuple(parts) in {
+        ("operators", "dashboard", "steward", "enabled"),
+        ("operators", "dashboard", "steward", "action-policy"),
+        ("operators", "dashboard", "steward", "action-execute"),
+        ("operators", "dashboard", "steward", "inference", "prepare"),
+        ("operators", "dashboard", "steward", "inference", "start"),
+        ("operators", "dashboard", "steward", "inference", "stop"),
+        ("operators", "dashboard", "steward", "inference", "model", "prepare"),
+        ("operators", "dashboard", "steward", "inference", "model", "verify"),
+        ("operators", "dashboard", "steward", "inference", "invoke"),
+        ("operators", "dashboard", "steward", "chat"),
+    } and (method is None or method == "POST"):
+        # Resident Steward controls and inference stay on this node. They
+        # update local policy/enablement, prepare or verify a local artifact,
+        # reserve or release a Resource Broker lease, execute allow-listed
+        # local actions, and invoke the local runtime; none writes Ledger state.
+        return True
     if parts == ["operators", "dashboard", "access", "operations", "network"]:
         # The Dashboard listener is constrained to the two reviewed host
         # boundaries and is persisted for the bootstrap service wrapper.

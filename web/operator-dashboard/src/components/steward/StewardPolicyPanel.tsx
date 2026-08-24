@@ -32,6 +32,11 @@ type StewardPolicyPanelProps = {
   onStop: () => Promise<unknown>
 }
 
+type StewardFeedback = {
+  kind: 'success' | 'error'
+  message: string
+}
+
 function labelForAction(action: string): string {
   return action.replaceAll('.', ' · ').replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase())
 }
@@ -52,7 +57,7 @@ export function StewardPolicyPanel({ status, policy, inference, isFetching, onRe
   const [profile, setProfile] = useState<'CPU_RESIDENT' | 'IGPU_RESIDENT' | 'GPU_RESIDENT' | 'GPU_BURST'>((status?.execution.profile as 'CPU_RESIDENT' | 'IGPU_RESIDENT' | 'GPU_RESIDENT' | 'GPU_BURST') || 'CPU_RESIDENT')
   const [ramMb, setRamMb] = useState(String(status?.execution.ram_budget_mb ?? 1024))
   const [vramMb, setVramMb] = useState(String(status?.execution.vram_mb ?? 0))
-  const [feedback, setFeedback] = useState<string | null>(null)
+  const [feedback, setFeedback] = useState<StewardFeedback | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
 
   useEffect(() => {
@@ -78,10 +83,13 @@ export function StewardPolicyPanel({ status, policy, inference, isFetching, onRe
     setFeedback(null)
     try {
       await work()
-      setFeedback(message)
+      setFeedback({ kind: 'success', message })
       onRefresh()
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : 'Steward operation failed.')
+      setFeedback({
+        kind: 'error',
+        message: error instanceof Error ? error.message : 'Steward operation failed.',
+      })
     } finally {
       setBusy(null)
     }
@@ -110,16 +118,16 @@ export function StewardPolicyPanel({ status, policy, inference, isFetching, onRe
 
         <section className="rounded-xl border border-border/80 bg-[#07111d] p-4" aria-label="Steward local reasoning model">
           <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow">Local reasoning</p><p className="mt-1 text-sm font-semibold text-white">Model lifecycle</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Prepare verifies the artifact and runtime profile. Start obtains a Resource Broker lease; stop releases it.</p></div><Badge variant="outline" className={cn('font-mono text-[10px] uppercase', isRunning ? 'border-emerald-300/30 text-emerald-100' : 'border-slate-300/30 text-slate-300')}>{runtimeState}</Badge></div>
-          <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_150px_150px]">
-            <label className="grid gap-1.5 md:col-span-1"><span className="eyebrow">GGUF model path</span><input value={modelPath} onChange={(event) => setModelPath(event.target.value)} placeholder="/var/lib/aidn/models/steward.gguf" className="min-h-11 rounded-lg border border-input bg-[#091725] px-3 font-mono text-xs text-white outline-none focus:border-emerald-300" /></label>
-            <label className="grid gap-1.5"><span className="eyebrow">Execution profile</span><select value={profile} onChange={(event) => setProfile(event.target.value as typeof profile)} className="min-h-11 rounded-lg border border-input bg-[#091725] px-3 text-sm text-white outline-none focus:border-emerald-300"><option value="CPU_RESIDENT">CPU resident</option><option value="IGPU_RESIDENT">iGPU resident</option><option value="GPU_RESIDENT">GPU resident</option><option value="GPU_BURST">GPU burst</option></select></label>
-            <label className="grid gap-1.5"><span className="eyebrow">RAM budget (MB)</span><input type="number" min={128} value={ramMb} onChange={(event) => setRamMb(event.target.value)} className="min-h-11 rounded-lg border border-input bg-[#091725] px-3 font-mono text-sm text-white outline-none focus:border-emerald-300" /></label>
-            <label className="grid gap-1.5"><span className="eyebrow">VRAM budget (MB)</span><input type="number" min={0} value={vramMb} onChange={(event) => setVramMb(event.target.value)} className="min-h-11 rounded-lg border border-input bg-[#091725] px-3 font-mono text-sm text-white outline-none focus:border-emerald-300" /></label>
-            <label className="grid gap-1.5 md:col-span-4"><span className="eyebrow">Optional HTTPS source</span><input value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://huggingface.co/.../resolve/main/steward.gguf" className="min-h-11 rounded-lg border border-input bg-[#091725] px-3 font-mono text-xs text-white outline-none focus:border-emerald-300" /><span className="text-xs leading-5 text-slate-500">When supplied, Prepare downloads atomically from the configured allow-list and verifies the artifact before the runtime can start.</span></label>
+          <div className="mt-4 grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(160px,180px)_minmax(120px,150px)_minmax(120px,150px)]">
+            <label className="grid min-w-0 gap-1.5 md:col-span-2 xl:col-span-1"><span className="eyebrow">GGUF model path</span><input value={modelPath} onChange={(event) => setModelPath(event.target.value)} placeholder="/var/lib/aidn/models/steward.gguf" className="min-h-11 w-full max-w-full min-w-0 rounded-lg border border-input bg-[#091725] px-3 font-mono text-xs text-white outline-none focus:border-emerald-300" /></label>
+            <label className="grid min-w-0 gap-1.5"><span className="eyebrow">Execution profile</span><select value={profile} onChange={(event) => setProfile(event.target.value as typeof profile)} className="min-h-11 w-full max-w-full min-w-0 rounded-lg border border-input bg-[#091725] px-3 text-sm text-white outline-none focus:border-emerald-300"><option value="CPU_RESIDENT">CPU resident</option><option value="IGPU_RESIDENT">iGPU resident</option><option value="GPU_RESIDENT">GPU resident</option><option value="GPU_BURST">GPU burst</option></select></label>
+            <label className="grid min-w-0 gap-1.5"><span className="eyebrow">RAM budget (MB)</span><input type="number" min={128} value={ramMb} onChange={(event) => setRamMb(event.target.value)} className="min-h-11 w-full max-w-full min-w-0 rounded-lg border border-input bg-[#091725] px-3 font-mono text-sm text-white outline-none focus:border-emerald-300" /></label>
+            <label className="grid min-w-0 gap-1.5"><span className="eyebrow">VRAM budget (MB)</span><input type="number" min={0} value={vramMb} onChange={(event) => setVramMb(event.target.value)} className="min-h-11 w-full max-w-full min-w-0 rounded-lg border border-input bg-[#091725] px-3 font-mono text-sm text-white outline-none focus:border-emerald-300" /></label>
+            <label className="grid min-w-0 gap-1.5 md:col-span-2 xl:col-span-4"><span className="eyebrow">Optional HTTPS source</span><input value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://huggingface.co/.../resolve/main/steward.gguf" className="min-h-11 w-full max-w-full min-w-0 rounded-lg border border-input bg-[#091725] px-3 font-mono text-xs text-white outline-none focus:border-emerald-300" /><span className="text-xs leading-5 text-slate-500">When supplied, Prepare downloads atomically from the configured allow-list and verifies the artifact before the runtime can start.</span></label>
           </div>
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><div className="flex flex-wrap gap-2"><Button variant="outline" className="min-h-11 border-border bg-[#091725] text-slate-100" disabled={busy === 'prepare' || !modelPath.trim()} onClick={() => void run('prepare', () => onPrepare({ model_path: modelPath.trim(), provider_type: 'llama.cpp', profile, ram_mb: Math.max(128, Number(ramMb) || 1024), vram_mb: Math.max(0, Number(vramMb) || 0), fallback_enabled: true, readiness_timeout_seconds: 60, ...(sourceUrl.trim() ? { source_url: sourceUrl.trim(), download: true } : {}) }), sourceUrl.trim() ? 'Model downloaded, verified, and prepared.' : 'Local model prepared and verified.')}>{busy === 'prepare' ? <Zap className="animate-pulse" /> : <Check />}{busy === 'prepare' ? 'Preparing…' : sourceUrl.trim() ? 'Download & prepare' : 'Prepare model'}</Button><Button className="min-h-11 bg-emerald-300 text-[#06121d] hover:bg-emerald-200" disabled={busy === 'start' || isRunning} onClick={() => void run('start', onStart, 'Resident model started.')}>{busy === 'start' ? <Zap className="animate-pulse" /> : <Play />}{busy === 'start' ? 'Starting…' : 'Start model'}</Button><Button variant="outline" className="min-h-11 border-rose-300/25 bg-[#091725] text-rose-100" disabled={busy === 'stop' || !isRunning} onClick={() => void run('stop', onStop, 'Resident model stopped and its lease was released.')}>{busy === 'stop' ? <Zap className="animate-pulse" /> : <Square />}{busy === 'stop' ? 'Stopping…' : 'Stop model'}</Button></div><div className="flex items-center gap-2 text-xs text-slate-500"><Cpu className="size-4" />{inference?.lease_id ? `Lease ${inference.lease_id}` : 'No active lease'}<ShieldCheck className="ml-2 size-4 text-emerald-200" />Operator-controlled</div></div>
         </section>
-        {feedback ? <div className="rounded-lg border border-emerald-300/25 bg-emerald-300/[0.06] px-3 py-2 text-xs leading-5 text-emerald-100" role="status">{feedback}</div> : null}
+        {feedback ? <div className={cn('min-w-0 break-words rounded-lg border px-3 py-2 text-xs leading-5', feedback.kind === 'error' ? 'border-rose-300/30 bg-rose-300/[0.06] text-rose-100' : 'border-emerald-300/25 bg-emerald-300/[0.06] text-emerald-100')} role={feedback.kind === 'error' ? 'alert' : 'status'} aria-live="polite">{feedback.message}</div> : null}
       </CardContent>
     </Card>
   )
