@@ -7,6 +7,11 @@ from typing import Any
 
 from aidn_hypervisor.domain.models import NodeCapacity
 
+# Keep the large-host absolute reserve while ensuring it cannot consume the
+# entire allocatable pool on a small operator node. The 4 GiB production
+# floor is retained once the host has at least 16 GiB of physical RAM.
+_SMALL_HOST_RAM_SAFETY_CAP_RATIO = 0.25
+
 
 @dataclass(frozen=True)
 class Reservation:
@@ -111,9 +116,13 @@ class ResourceSafetyPolicy:
         )
 
     def headroom(self, *, cpu: float, ram_mb: int, vram_mb: int) -> dict[str, float | int]:
+        ram_safety_floor = min(
+            self.ram_min_mb,
+            max(0, int(ram_mb * _SMALL_HOST_RAM_SAFETY_CAP_RATIO)),
+        )
         return {
             "cpu": min(cpu, max(self.cpu_min_cores, cpu * self.cpu_ratio)),
-            "ram_mb": min(ram_mb, max(self.ram_min_mb, int(ram_mb * self.ram_ratio))),
+            "ram_mb": min(ram_mb, max(ram_safety_floor, int(ram_mb * self.ram_ratio))),
             "vram_mb": min(vram_mb, max(self.vram_min_mb, int(vram_mb * self.vram_ratio))),
             "storage_mb": max(0, self.storage_min_mb),
         }

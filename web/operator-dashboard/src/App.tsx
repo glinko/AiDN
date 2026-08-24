@@ -82,6 +82,7 @@ import { JourneyPage } from '@/components/journey/JourneyPage'
 import { ResourceBrokerWorkspace } from '@/components/resources/ResourceBrokerWorkspace'
 import { StewardEscalationPanel } from '@/components/steward/StewardEscalationPanel'
 import { StewardPolicyPanel } from '@/components/steward/StewardPolicyPanel'
+import { ResidentStewardChat } from '@/components/steward/ResidentStewardChat'
 import { OperatorConfigEditor } from '@/components/settings/OperatorConfigEditor'
 import { SoftwareUpdatePanel } from '@/components/settings/SoftwareUpdatePanel'
 
@@ -3117,7 +3118,7 @@ function HooksWorkspace({ data, onRefresh }: { data: DashboardData; onRefresh: (
 
 function AgentsWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
   const refreshSteward = () => { void data.residentAgent.refetch(); void data.escalations.refetch(); void data.stewardActionPolicy.refetch(); void data.residentInference.refetch() }
-  return <div className="space-y-4"><StewardEscalationPanel status={data.residentAgent.data} tasks={data.escalations.data?.items ?? []} isLoading={data.escalations.isLoading} error={data.escalations.error} isFetching={data.escalations.isFetching} onRefresh={refreshSteward} /><StewardPolicyPanel
+  return <div className="space-y-4"><StewardEscalationPanel status={data.residentAgent.data} tasks={data.escalations.data?.items ?? []} isLoading={data.escalations.isLoading} error={data.escalations.error} isFetching={data.escalations.isFetching} onRefresh={refreshSteward} /><ResidentStewardChat inference={data.residentInference.data} onChat={dashboardApi.stewardChat} /><StewardPolicyPanel
     status={data.residentAgent.data}
     policy={data.stewardActionPolicy.data}
     inference={data.residentInference.data}

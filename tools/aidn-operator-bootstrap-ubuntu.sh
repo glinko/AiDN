@@ -77,10 +77,11 @@ bootstrap-backup directory before a clean reviewed checkout is activated.
 The first interactive question is the setup mode. Manual keeps the existing
 step-by-step flow. AI-assisted still asks and validates every required node
 parameter, then records an explicit, resumable plan for the CPU-first Resident
-Steward to review. After an operator selects a concrete llama.cpp artifact, the
-installer warms that artifact into the local cache in the background; provider
-installation, runtime registration, endpoint start, and publication remain
-bounded, operator-approved actions that can be continued from the dashboard.
+Steward. After an operator selects a concrete llama.cpp artifact, the installer
+downloads and verifies it before the Hypervisor service starts, then prepares
+and starts the Resident Steward automatically. Provider installation, Bundle
+creation, endpoint start, and publication remain bounded, operator-approved
+actions that can be continued from the dashboard.
 
 The installer creates a host-local encrypted Registry Secret Manager and an
 Ed25519 operator identity. The private material stays below --data-dir with
@@ -670,6 +671,44 @@ prompt_yes_no() {
   [[ "$answer" == 'yes' ]]
 }
 
+wait_for_model_prefetch() {
+  if [[ -z "${model_prefetch_pid:-}" ]]; then
+    [[ "${model_prefetch_status:-}" == 'completed' && -f "${model_prefetch_target:-}" ]] || return 1
+    return 0
+  fi
+  printf '  [model download] waiting for the selected artifact before starting the Resident Steward\n' >&2
+  local exit_status=0
+  wait "$model_prefetch_pid" || exit_status=$?
+  model_prefetch_pid=''
+  if (( exit_status != 0 )); then
+    model_prefetch_status='failed'
+    printf '  [model download] failed; inspect logs under %s\n' "$data_dir/logs" >&2
+    return "$exit_status"
+  fi
+  local status='unknown'
+  if [[ -n "${model_prefetch_state_path:-}" && -f "$model_prefetch_state_path" ]]; then
+    status="$($model_prefetch_python - "$model_prefetch_state_path" <<'PY'
+import json
+import sys
+
+try:
+    print(json.loads(open(sys.argv[1], encoding="utf-8").read()).get("status") or "unknown")
+except Exception:
+    print("unknown")
+PY
+    )"
+  fi
+  model_prefetch_status="$status"
+  [[ "$status" == 'completed' ]] || {
+    printf '  [model download] did not complete (status: %s)\n' "$status" >&2
+    return 1
+  }
+  [[ -f "$model_prefetch_target" ]] || {
+    printf '  [model download] completed without a readable target: %s\n' "$model_prefetch_target" >&2
+    return 1
+  }
+}
+
 model_source_for_id() {
   case "$1" in
     'Qwen/Qwen3-0.6B-GGUF:Q8_0')
@@ -798,6 +837,9 @@ model_prefetch_python=''
 model_prefetch_status='not_started'
 model_prefetch_expected_sha256=''
 model_prefetch_expected_bytes=''
+steward_autostart='false'
+steward_model_path=''
+steward_model_sha256=''
 checkout_backup_path=''
 operator_id_supplied='false'
 enable_registry_supplied='false'
@@ -1443,6 +1485,14 @@ PY
     --root "$registry_root" --listen-host "$registry_listen_host" --port "$registry_port"
 fi
 
+if [[ "$setup_mode" == 'ai_assisted' && "$setup_provider" == 'llama.cpp' && "$setup_model_id" != 'skip' ]]; then
+  wait_for_model_prefetch || die "the selected Resident Steward model was not downloaded successfully"
+  [[ "$model_prefetch_status" == 'completed' && -f "$model_prefetch_target" ]] || die "the selected Resident Steward model is not ready at $model_prefetch_target"
+  steward_autostart='true'
+  steward_model_path="$model_prefetch_target"
+  steward_model_sha256="$model_prefetch_expected_sha256"
+fi
+
 mkdir -p "$data_dir/logs" "$HOME/.config/systemd/user"
 chmod 700 "$data_dir/logs" "$HOME/.config/systemd" "$HOME/.config/systemd/user"
 bind_host_path="$data_dir/hypervisor-bind-host"
@@ -1462,6 +1512,8 @@ setup_plan_path="$data_dir/installation-plan.json"
 setup_plan_q="$(shell_quote "$setup_plan_path")"
 operator_config_path="$data_dir/operator-config.toml"
 operator_config_q="$(shell_quote "$operator_config_path")"
+steward_model_path_q="$(shell_quote "$steward_model_path")"
+steward_model_sha256_q="$(shell_quote "$steward_model_sha256")"
 cat > "$wrapper" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1505,16 +1557,26 @@ export AIDN_SECRET_MANAGER_PATH="\$data/registry-replication/secrets.json"
 export AIDN_SECRET_MANAGER_MASTER_KEY="\$(tr -d '\r\n' < "\$data/registry-replication/master-key.b64")"
 export AIDN_MCP_REMOTE_ENABLED=true
 if [[ "\$AIDN_INSTALLATION_SETUP_MODE" == 'ai_assisted' ]]; then
-  # This enables the Resident Steward control-plane boundary only.  The
-  # current adapter is CPU-first and does not imply model download, tool
-  # execution, or Endpoint publication.
+  # The assisted bootstrap supplies a verified local artifact and opts the
+  # Resident Steward into automatic prepare/start. Tool execution and Endpoint
+  # publication remain separate, operator-approved lifecycle actions.
   export AIDN_STEWARD_ENABLED=true
   export AIDN_STEWARD_EXECUTION_PROFILE=CPU_RESIDENT
   export AIDN_STEWARD_MODEL_REPO='Qwen/Qwen2.5-0.5B-Instruct-GGUF'
   export AIDN_STEWARD_MODEL_QUANT=Q4_K_M
   export AIDN_STEWARD_RAM_BUDGET_MB=1024
+  export AIDN_STEWARD_PROVIDER_TYPE=$(shell_quote "$setup_provider")
+  export AIDN_STEWARD_PLUGIN_ID=$(shell_quote "$setup_provider")
+  export AIDN_STEWARD_AUTOSTART=$(shell_quote "$steward_autostart")
+  if [[ "$steward_autostart" == 'true' ]]; then
+    export AIDN_STEWARD_MODEL_PATH=$steward_model_path_q
+    if [[ -n "$steward_model_sha256" ]]; then
+      export AIDN_STEWARD_MODEL_SHA256=$steward_model_sha256_q
+    fi
+  fi
 else
   export AIDN_STEWARD_ENABLED=false
+  export AIDN_STEWARD_AUTOSTART=false
 fi
 export AIDN_ENABLE_PROVIDER_RUNTIME_INSTALL=true
 export AIDN_PROVIDER_RUNTIME_DISPATCHER=/usr/libexec/aidn-provider-runtime/aidn-provider-runtime-ubuntu.sh
@@ -1732,6 +1794,31 @@ if [[ "$no_start" != 'true' ]]; then
     systemctl --user --no-pager --full status "$service_name" >&2 || true
     die "Hypervisor did not become healthy; inspect journalctl --user -u $service_name"
   }
+  if [[ "$steward_autostart" == 'true' ]]; then
+    inference_status_json=''
+    inference_status_json="$(curl --fail --silent "http://$health_host:$api_port/operators/dashboard/steward/inference")" || {
+      systemctl --user --no-pager --full status "$service_name" >&2 || true
+      die "Resident Steward status could not be read after service start"
+    }
+    if ! "$python_bin" - "$inference_status_json" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+state = str(payload.get("state") or "").upper()
+if state != "RUNNING":
+    print(
+        "Resident Steward did not start automatically "
+        f"(state={state or 'UNKNOWN'}, error={payload.get('last_error') or 'none'})",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+PY
+    then
+      systemctl --user --no-pager --full status "$service_name" >&2 || true
+      die "Resident Steward model did not reach RUNNING state"
+    fi
+  fi
   if [[ "$consensus_mode" == 'validator' ]]; then
     systemctl --user enable --now "$consensus_service_name"
     for _ in $(seq 1 30); do
@@ -2039,8 +2126,12 @@ if [[ "$setup_mode" == 'ai_assisted' ]]; then
   fi
   printf '  endpoint intent   : %s\n' "$setup_endpoint_action" >&2
   printf '  handoff           : %s\n' "$setup_handoff" >&2
-  printf '  steward           : CPU-first, bounded, review required\n' >&2
-  printf '  note              : no provider, model, or public Endpoint is changed implicitly\n' >&2
+  if [[ "$steward_autostart" == 'true' ]]; then
+    printf '  steward           : CPU-first, bounded, prepared and started\n' >&2
+  else
+    printf '  steward           : CPU-first, bounded, dashboard start available\n' >&2
+  fi
+  printf '  note              : provider, Bundle, and public Endpoint changes remain operator-approved\n' >&2
 else
   printf '  next step         : continue configuration from the Dashboard or CLI\n' >&2
 fi
@@ -2053,7 +2144,11 @@ if [[ -n "$model_prefetch_state_path" ]]; then
   printf '  expected size     : %s\n' "${model_prefetch_expected_bytes:-unknown}" >&2
   printf '  expected SHA-256  : %s\n' "${model_prefetch_expected_sha256:-computed after download}" >&2
   printf '  background PID    : %s\n' "${model_prefetch_pid:-finished}" >&2
-  printf '  note              : model registration and runtime activation remain explicit next steps\n' >&2
+  if [[ "$steward_autostart" == 'true' ]]; then
+    printf '  note              : verified before service start; Resident Steward is running\n' >&2
+  else
+    printf '  note              : model runtime activation remains available from the Dashboard\n' >&2
+  fi
 fi
 printf '\n[PUBLIC ARTIFACTS — SAFE TO SHARE]\n' >&2
 printf '  public peer bundle: %s\n' "$registry_root/public-peer.json" >&2

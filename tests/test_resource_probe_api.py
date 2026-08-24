@@ -68,6 +68,29 @@ def test_validator_write_boundary_allows_local_resident_inference_lifecycle() ->
     assert _is_validator_consensus_write_path(allowed_paths[0], "GET") is False
 
 
+def test_validator_write_boundary_allows_local_config_and_software_update() -> None:
+    assert _is_validator_consensus_write_path(
+        "/operators/dashboard/access/config/validate", "POST"
+    ) is True
+    assert _is_validator_consensus_write_path(
+        "/operators/dashboard/access/config", "PUT"
+    ) is True
+    assert _is_validator_consensus_write_path(
+        "/operators/dashboard/access/config/apply", "POST"
+    ) is True
+    for action in ("check", "apply"):
+        assert _is_validator_consensus_write_path(
+            f"/operators/dashboard/access/operations/software-update/{action}", "POST"
+        ) is True
+
+    assert _is_validator_consensus_write_path(
+        "/operators/dashboard/access/config", "POST"
+    ) is False
+    assert _is_validator_consensus_write_path(
+        "/operators/dashboard/access/operations/software-update/rollback", "POST"
+    ) is False
+
+
 def test_validator_write_boundary_allows_bounded_local_provider_installation() -> None:
     assert _is_validator_consensus_write_path(
         "/operators/dashboard/access/operations/cometbft/reconnect",

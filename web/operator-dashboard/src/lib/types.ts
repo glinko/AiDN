@@ -349,6 +349,7 @@ const stewardActionPolicySchema = z.object({
 }).passthrough()
 
 const residentInferenceSchema = z.object({
+  configured: z.boolean().catch(false),
   state: stringValue,
   profile: stringValue,
   model_path: z.string().nullable().optional(),

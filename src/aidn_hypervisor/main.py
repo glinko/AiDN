@@ -1,5 +1,6 @@
 import hmac
 import json
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -104,6 +105,8 @@ from aidn_hypervisor.validation.custody_store import ValidationReportCustodyStor
 from aidn_hypervisor.validation.service import ValidationService
 from aidn_hypervisor.validation.store import ValidationStore
 from aidn_hypervisor.wallet_reconciliation import reconcile_pending_wallet_transfers
+
+logger = logging.getLogger(__name__)
 
 
 def build_app(
@@ -250,6 +253,7 @@ def build_app(
                 enabled=steward_worker_enabled,
                 interval_seconds=steward_worker_interval,
             )
+        _autostart_resident_steward(resolved_service)
         if steward_worker_enabled and callable(start_steward_worker):
             start_steward_worker()
         if resolved_remote_trust_anchor_runtime is not None:
@@ -611,6 +615,31 @@ def _is_validator_consensus_write_path(path: str, method: str | None = None) -> 
         # reserve or release a Resource Broker lease, execute allow-listed
         # local actions, and invoke the local runtime; none writes Ledger state.
         return True
+    if (
+        parts == ["operators", "dashboard", "access", "config", "validate"]
+        and (method is None or method == "POST")
+    ) or (
+        parts == ["operators", "dashboard", "access", "config"]
+        and (method is None or method == "PUT")
+    ) or (
+        parts == ["operators", "dashboard", "access", "config", "apply"]
+        and (method is None or method == "POST")
+    ):
+        # The TOML profile is operator-owned local state. The paired access
+        # router still validates protected keys, paths, URLs, and restart
+        # boundaries; these operations do not mutate the consensus Ledger.
+        return True
+    if (
+        tuple(parts)
+        in {
+            ("operators", "dashboard", "access", "operations", "software-update", "check"),
+            ("operators", "dashboard", "access", "operations", "software-update", "apply"),
+        }
+        and (method is None or method == "POST")
+    ):
+        # Updating the reviewed local checkout and rebuilding its Dashboard is
+        # a paired, exact-commit operator operation; it has no Ledger effect.
+        return True
     if parts == ["operators", "dashboard", "access", "operations", "network"]:
         # The Dashboard listener is constrained to the two reviewed host
         # boundaries and is persisted for the bootstrap service wrapper.
@@ -936,6 +965,56 @@ def _build_default_service(
             persist=False,
         )
     return service
+
+
+def _autostart_resident_steward(service: HypervisorService) -> None:
+    """Prepare and start the installer-selected local model when requested.
+
+    The Ubuntu assisted bootstrap sets the model path only after its pinned
+    prefetch has completed. Keeping this opt-in and environment-driven leaves
+    embedded/test applications unchanged while making a production restart
+    recover the Resident Steward runtime automatically.
+    """
+
+    if not _env_bool("AIDN_STEWARD_AUTOSTART", default=False):
+        return
+    model_path = os.getenv("AIDN_STEWARD_MODEL_PATH", "").strip()
+    if not model_path:
+        logger.warning("Resident Steward autostart requested without a model path")
+        return
+    artifact = Path(os.path.expanduser(model_path))
+    if not artifact.is_file():
+        logger.warning("Resident Steward autostart skipped; model artifact is missing: %s", artifact)
+        return
+
+    provider_type = os.getenv("AIDN_STEWARD_PROVIDER_TYPE", "llama.cpp").strip() or "llama.cpp"
+    plugin_id = os.getenv("AIDN_STEWARD_PLUGIN_ID", provider_type).strip() or provider_type
+    profile = os.getenv("AIDN_STEWARD_EXECUTION_PROFILE", "CPU_RESIDENT").strip().upper()
+    ram_mb = _env_int("AIDN_STEWARD_RAM_BUDGET_MB", default=1024, minimum=128, maximum=1_048_576)
+    vram_mb = _env_int("AIDN_STEWARD_VRAM_BUDGET_MB", default=0, minimum=0, maximum=1_048_576)
+    expected_sha256 = os.getenv("AIDN_STEWARD_MODEL_SHA256", "").strip() or None
+
+    try:
+        current = service.resident_inference_status()
+        if not current.get("configured") or current.get("model_path") != str(artifact.resolve()):
+            current = service.prepare_resident_inference(
+                model_path=str(artifact),
+                provider_type=provider_type,
+                plugin_id=plugin_id,
+                profile=profile,
+                ram_mb=ram_mb,
+                vram_mb=vram_mb,
+                fallback_enabled=True,
+                expected_sha256=expected_sha256,
+                readiness_timeout_seconds=60,
+            )
+        if str(current.get("state") or "").upper() != "RUNNING":
+            service.start_resident_inference()
+            logger.info("Resident Steward model started automatically: %s", artifact)
+    except Exception as error:  # pragma: no cover - production provider boundary
+        # Keep the Hypervisor API available so the Dashboard can expose the
+        # actionable failure and the operator can retry after correcting it.
+        logger.warning("Resident Steward autostart failed: %s", error)
 
 
 def _build_default_provider_installation_executor():

@@ -90,6 +90,20 @@ def test_resource_safety_headroom_is_configurable(monkeypatch: pytest.MonkeyPatc
     assert broker.admission_report(cpu=0, ram_mb=0, vram_mb=3585)["allowed"] is False
 
 
+def test_production_ram_headroom_keeps_small_hosts_admissible() -> None:
+    policy = ResourceSafetyPolicy.from_environment({}, production_defaults=True)
+    broker = ResourceOrchestrator(
+        _capacity(ram_mb=3915, vram_mb=0),
+        probe={"measured_ram_mb": 837},
+        safety=policy,
+    )
+
+    assert policy.headroom(cpu=4, ram_mb=3915, vram_mb=0)["ram_mb"] == 978
+    assert policy.headroom(cpu=4, ram_mb=16384, vram_mb=0)["ram_mb"] == 4096
+    assert broker.summary()["free"]["ram_mb"] == 2100
+    assert broker.admission_report(cpu=0.25, ram_mb=1024, vram_mb=0)["allowed"] is True
+
+
 def test_resource_probe_extended_hardware_fields_round_trip(tmp_path) -> None:
     report = ResourceProbeReport(
         capacity=_capacity(),
