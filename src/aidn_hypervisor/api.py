@@ -393,6 +393,13 @@ class ResidentInferenceInvokeRequest(BaseModel):
     parameters: dict[str, object] = Field(default_factory=dict, max_length=32)
 
 
+class ResidentStewardChatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message: str = Field(min_length=1, max_length=16_384)
+    parameters: dict[str, object] = Field(default_factory=dict, max_length=16)
+
+
 class ResidentAgentEnabledRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -2176,10 +2183,21 @@ def build_api_router(
         payload: ResidentInferenceInvokeRequest,
     ) -> dict:
         try:
-            return service.invoke_resident_inference(
+            return service.resident_steward_chat(
                 payload.prompt,
                 **payload.parameters,
             )
+        except ValueError as error:
+            code = getattr(error, "code", "INFERENCE_ADAPTER_ERROR")
+            status_code = 409 if code == "INFERENCE_RESOURCE_WAIT" else 422
+            raise HTTPException(status_code=status_code, detail={"code": code, "message": str(error), "details": getattr(error, "details", {})}) from error
+
+    @router.post("/operators/dashboard/steward/chat")
+    async def chat_with_operator_steward(payload: ResidentStewardChatRequest) -> dict:
+        """Chat through the versioned Steward prompt and safe node context."""
+
+        try:
+            return service.resident_steward_chat(payload.message, **payload.parameters)
         except ValueError as error:
             code = getattr(error, "code", "INFERENCE_ADAPTER_ERROR")
             status_code = 409 if code == "INFERENCE_RESOURCE_WAIT" else 422

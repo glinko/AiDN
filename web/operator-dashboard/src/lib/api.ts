@@ -374,6 +374,7 @@ export const dashboardApi = {
   verifyResidentModel: (payload: { model_path: string; expected_sha256?: string }) => writeDashboard<DashboardRecord>('/operators/dashboard/steward/inference/model/verify', { method: 'POST', body: JSON.stringify(payload) }),
   startResidentInference: () => writeDashboard<ResidentInference>('/operators/dashboard/steward/inference/start', { method: 'POST' }),
   stopResidentInference: () => writeDashboard<ResidentInference>('/operators/dashboard/steward/inference/stop', { method: 'POST' }),
+  stewardChat: (message: string) => writeDashboard<DashboardRecord>('/operators/dashboard/steward/chat', { method: 'POST', body: JSON.stringify({ message }) }),
   enrollmentRequests: () => writeDashboard<{ items: EnrollmentRequest[] }>('/operators/dashboard/access/enrollment-requests', { method: 'GET' }),
   approveEnrollment: (requestId: string) => writeDashboard<EnrollmentRequest>(`/operators/dashboard/access/enrollment-requests/${requestId}/approve`, { method: 'POST' }),
   rejectEnrollment: (requestId: string) => writeDashboard<EnrollmentRequest>(`/operators/dashboard/access/enrollment-requests/${requestId}/reject`, { method: 'POST' }),

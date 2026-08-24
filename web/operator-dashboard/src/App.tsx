@@ -384,7 +384,7 @@ function App() {
               } catch (error) {
                 pushNotification(error instanceof Error ? error.message : 'Assisted installation plan was rejected.')
               }
-            }} />
+            }} onStewardChat={dashboardApi.stewardChat} />
           ) : null}
           {activeScreen === 'bundles' ? (
             <BundlesScreen bundles={data.bundles.data?.items ?? []} isLoading={data.bundles.isLoading} error={data.bundles.error} onNavigate={navigate} onRefresh={refreshAll} readiness={data.readiness.data} fleet={data.fleet.data} providers={data.providers.data} />

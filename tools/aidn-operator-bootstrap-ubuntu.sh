@@ -478,19 +478,29 @@ model_source_for_id() {
   esac
 }
 
-prompt_model_choice() {
-  local provider="$1"
-  local model_choice
-  local catalog_note='Оценка: один активный запрос, квантование GGUF и контекст около 8K. Увеличение контекста или параллельности потребует дополнительной VRAM/RAM.'
-  model_choice="$(prompt_choice 'AI-assisted model (номер модели)' 'skip' "$catalog_note" \
-    'skip|Не скачивать сейчас|Продолжить установку без модели; настройку можно выполнить в Dashboard' \
-    'Qwen/Qwen3-0.6B-GGUF:Q8_0|Qwen3 0.6B Q8_0 — ~0.64 GB|VRAM ~1.5 GB · RAM ~2 GB · лёгкий Steward/проверка' \
-    'Qwen/Qwen3-1.7B-GGUF:Q4_K_M|Qwen3 1.7B Q4_K_M — ~1.1 GB|VRAM ~2.5 GB · RAM ~4 GB · быстрые локальные задачи' \
-    'Qwen/Qwen3-4B-GGUF:Q4_K_M|Qwen3 4B Q4_K_M — ~2.5 GB|VRAM ~4–6 GB · RAM ~8 GB · сбалансированный вариант' \
-    'Qwen/Qwen3-8B-GGUF:Q4_K_M|Qwen3 8B Q4_K_M — ~5.0 GB|VRAM ~7–10 GB · RAM ~12 GB · сложнее, но ещё подходит одной GPU' \
-    'Qwen/Qwen3-14B-GGUF:Q4_K_M|Qwen3 14B Q4_K_M — ~9.0 GB|VRAM ~12–16 GB · RAM ~20 GB · только при достаточном запасе ресурсов' \
-    'custom|Своя модель|Ввести идентификатор и публичный HTTPS/hf:// источник вручную')"
-  printf '%s' "$model_choice"
+detect_assisted_model_id() {
+  local ram_mb=0
+  local vram_mb=0
+  if [[ -r /proc/meminfo ]]; then
+    ram_mb="$(awk '/^MemTotal:/ { print int($2 / 1024); exit }' /proc/meminfo 2>/dev/null || printf '0')"
+  fi
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    vram_mb="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | sort -nr | head -n 1 | tr -dc '0-9' || true)"
+  fi
+  [[ "$ram_mb" =~ ^[0-9]+$ ]] || ram_mb=0
+  [[ "$vram_mb" =~ ^[0-9]+$ ]] || vram_mb=0
+
+  if (( vram_mb >= 12000 && ram_mb >= 20000 )); then
+    printf '%s' 'Qwen/Qwen3-14B-GGUF:Q4_K_M'
+  elif (( vram_mb >= 7000 && ram_mb >= 12000 )); then
+    printf '%s' 'Qwen/Qwen3-8B-GGUF:Q4_K_M'
+  elif (( (vram_mb >= 4000 && ram_mb >= 8000) || ram_mb >= 14000 )); then
+    printf '%s' 'Qwen/Qwen3-4B-GGUF:Q4_K_M'
+  elif (( ram_mb >= 6000 )); then
+    printf '%s' 'Qwen/Qwen3-1.7B-GGUF:Q4_K_M'
+  else
+    printf '%s' 'Qwen/Qwen3-0.6B-GGUF:Q8_0'
+  fi
 }
 
 valid_model_id() {
@@ -562,6 +572,7 @@ setup_model_id_supplied='false'
 setup_model_source_supplied='false'
 setup_endpoint_supplied='false'
 setup_handoff_supplied='false'
+recommended_defaults='false'
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -749,9 +760,9 @@ if [[ "$non_interactive" != 'true' ]]; then
 fi
 
 if [[ "$setup_mode_supplied" != 'true' && "$non_interactive" != 'true' ]]; then
-  setup_mode="$(prompt_choice 'Installation mode (manual/ai_assisted)' 'manual' 'Choose how much guidance the installer should prepare. Both modes ask every required node question; AI-assisted additionally stages a bounded, reviewable plan for the local CPU-first Resident Steward.' \
+  setup_mode="$(prompt_choice 'Installation mode (manual/ai_assisted)' 'manual' 'Manual reviews every setting. AI-assisted detects a conservative llama.cpp model, shows one complete recommended profile, and stages a bounded plan for the local Resident Steward.' \
     'manual|Ручной режим|После базовой установки дальнейшие действия остаются у оператора' \
-    'ai_assisted|AI-assisted|После базовых вопросов предложит провайдер, модель и приватный Endpoint-план')"
+    'ai_assisted|AI-assisted|Показать один безопасный профиль, автоматически выбрать локальную модель и продолжить в Dashboard')"
 fi
 case "${setup_mode,,}" in
   manual) setup_mode='manual' ;;
@@ -760,6 +771,59 @@ case "${setup_mode,,}" in
 esac
 if [[ "$setup_mode" == 'manual' && ( "$setup_provider_supplied" == 'true' || "$setup_model_id_supplied" == 'true' || "$setup_model_source_supplied" == 'true' || "$setup_endpoint_supplied" == 'true' || "$setup_handoff_supplied" == 'true' ) ]]; then
   die 'AI-assisted setup flags require --setup-mode ai_assisted'
+fi
+
+if [[ "$setup_mode" == 'ai_assisted' ]]; then
+  if [[ "$setup_provider_supplied" != 'true' ]]; then
+    setup_provider='llama.cpp'
+  fi
+  if [[ "$setup_model_id_supplied" != 'true' ]]; then
+    setup_model_id="$(detect_assisted_model_id)"
+  fi
+  if [[ "$setup_model_source_supplied" != 'true' && -z "$setup_model_source" ]]; then
+    setup_model_source="$(model_source_for_id "$setup_model_id" || true)"
+  fi
+  if [[ "$setup_endpoint_supplied" != 'true' ]]; then
+    setup_endpoint_action='draft'
+  fi
+  if [[ "$setup_handoff_supplied" != 'true' ]]; then
+    setup_handoff='dashboard'
+  fi
+fi
+
+if [[ "$setup_mode" == 'ai_assisted' && "$non_interactive" != 'true' ]]; then
+  recommended_operator_id="${operator_id:-$(sanitize_hostname)}"
+  recommended_install_dir="${install_dir:-$HOME/aidn/$recommended_operator_id/AiDN}"
+  recommended_data_dir="${data_dir:-$HOME/.local/share/aidn/$recommended_operator_id}"
+  recommended_wallet_action="${wallet_action:-create}"
+  recommended_pairing_action="${dashboard_pairing_action:-create}"
+  printf '\nRecommended assisted setup\n' >&2
+  printf '  Node name       : %s\n' "$recommended_operator_id" >&2
+  printf '  Install path    : %s\n' "$recommended_install_dir" >&2
+  printf '  Data path       : %s\n' "$recommended_data_dir" >&2
+  printf '  Consensus       : %s\n' "$consensus_mode" >&2
+  printf '  Wallet          : %s in protected local storage\n' "$recommended_wallet_action" >&2
+  printf '  Dashboard       : %s one-time pairing code; bind %s:%s\n' "$recommended_pairing_action" "$api_host" "$api_port" >&2
+  printf '  Registry        : %s\n' "$enable_registry" >&2
+  printf '  Resident AI     : %s · %s\n' "$setup_provider" "$setup_model_id" >&2
+  printf '  Handoff         : Dashboard with Resident Steward\n\n' >&2
+  if prompt_yes_no 'Install with these recommended settings?' 'yes' 'Yes applies the complete safe local profile shown above. Choose no to review every node, path, consensus, wallet, port, and network setting individually.'; then
+    recommended_defaults='true'
+    operator_id="$recommended_operator_id"
+    install_dir="$recommended_install_dir"
+    data_dir="$recommended_data_dir"
+    [[ "$consensus_mode_supplied" == 'true' ]] || consensus_mode='validator'
+    consensus_mode_supplied='true'
+    [[ "$wallet_action_supplied" == 'true' ]] || wallet_action='create'
+    wallet_action_supplied='true'
+    [[ "$dashboard_pairing_supplied" == 'true' ]] || dashboard_pairing_action='create'
+    dashboard_pairing_supplied='true'
+    [[ "$agent_action_supplied" == 'true' ]] || agent_action='guide'
+    agent_action_supplied='true'
+    [[ "$api_host_supplied" == 'true' ]] || api_host='127.0.0.1'
+    [[ "$enable_registry_supplied" == 'true' ]] || enable_registry='false'
+    enable_registry_supplied='true'
+  fi
 fi
 
 if [[ -z "$operator_id" ]]; then
@@ -848,7 +912,7 @@ case "$agent_action" in
   *) die 'agent action must be guide or skip' ;;
 esac
 
-if [[ "$non_interactive" != 'true' ]]; then
+if [[ "$non_interactive" != 'true' && "$recommended_defaults" != 'true' ]]; then
   if [[ "$api_host_supplied" == 'true' ]]; then
     api_host="$(prompt_value 'Hypervisor API bind address' "$api_host" 'Loopback limits the dashboard and API to this machine; a LAN address makes them reachable by other devices. A non-loopback bind needs a trusted network, firewall rules, and an explicit unauthenticated-API risk decision.')"
   elif prompt_yes_no 'Expose Dashboard/API to the LAN on 0.0.0.0?' 'no' 'No keeps the service on loopback and blocks remote browsers; yes binds all interfaces so LAN devices can connect. The current bootstrap API has no public authentication boundary, so never expose this directly to the Internet.'; then
@@ -896,13 +960,6 @@ fi
 [[ -n "$advertise_host" && "$advertise_host" != *[[:space:]]* ]] || die 'advertise host is invalid'
 
 if [[ "$setup_mode" == 'ai_assisted' ]]; then
-  if [[ "$setup_provider_supplied" != 'true' ]]; then
-    setup_provider="$(prompt_choice 'AI-assisted provider (skip/ollama/llama.cpp/vllm)' 'skip' 'Selecting a provider records intent and opens a reviewed installation path. It does not execute arbitrary plugin code or grant the agent host access.' \
-      'skip|Не устанавливать провайдер|Настроить провайдер позже через Dashboard' \
-      'llama.cpp|llama.cpp|Лучший вариант для локальных GGUF-моделей и частичного offload' \
-      'ollama|Ollama|Простой локальный runtime с каталогом моделей Ollama' \
-      'vllm|vLLM|Высокая производительность, обычно требует больше VRAM/RAM')"
-  fi
   setup_provider="${setup_provider,,}"
   case "$setup_provider" in
     skip|ollama|llama.cpp|vllm) ;;
@@ -913,29 +970,11 @@ if [[ "$setup_mode" == 'ai_assisted' ]]; then
   fi
 
   if [[ "$setup_provider" != 'skip' ]]; then
-    if [[ "$setup_model_id_supplied" != 'true' && "$non_interactive" != 'true' ]]; then
-      model_choice="$(prompt_model_choice "$setup_provider")"
-      case "$model_choice" in
-        skip)
-          setup_model_id='skip'
-          ;;
-        custom)
-          setup_model_id="$(prompt_value 'AI-assisted model ID' 'skip' 'Enter a bounded provider/model identifier. After the source is validated, a concrete llama.cpp artifact is downloaded in the background; runtime activation still requires review.')"
-          ;;
-        *)
-          setup_model_id="$model_choice"
-          setup_model_source="$(model_source_for_id "$setup_model_id")"
-          ;;
-      esac
-    fi
     if [[ -z "$setup_model_id" ]]; then
       setup_model_id='skip'
     fi
     if [[ "$setup_model_id" != 'skip' ]]; then
       valid_model_id "$setup_model_id" || die 'setup model ID contains unsupported characters'
-      if [[ -z "$setup_model_source" && "$setup_model_source_supplied" != 'true' && "$non_interactive" != 'true' ]]; then
-        setup_model_source="$(prompt_value 'AI-assisted model source (HTTPS or hf://)' '' 'Use a public HTTPS artifact or Hugging Face reference without credentials, query strings, or fragments. Selecting it starts a bounded background cache download; provider and Endpoint actions remain separately reviewed.')"
-      fi
       valid_model_source "$setup_model_source" || die 'setup model source must be an HTTPS URL or hf://owner/repository reference without credentials or query data'
       # Selecting a concrete llama.cpp artifact is the explicit operator
       # approval needed to warm the local model cache.  The provider, Bundle,
@@ -952,12 +991,6 @@ if [[ "$setup_mode" == 'ai_assisted' ]]; then
   fi
 
   if [[ "$setup_model_id" != 'skip' ]]; then
-    if [[ "$setup_endpoint_supplied" != 'true' && "$non_interactive" != 'true' ]]; then
-      setup_endpoint_action="$(prompt_choice 'AI-assisted endpoint step (skip/draft/start)' 'draft' 'This controls only the private next step. Nothing is published automatically: draft prepares a review, while start is still checked by the Resource Broker and port allocator.' \
-        'skip|Только модель|Остановиться после подготовки модели' \
-        'draft|Создать приватный draft|Подготовить Bundle/Endpoint для проверки оператором' \
-        'start|Подготовить запуск|Запросить запуск после resource/port checks; публикация остаётся отдельной')"
-    fi
     setup_endpoint_action="${setup_endpoint_action,,}"
     case "$setup_endpoint_action" in
       skip|draft|start) ;;
@@ -965,11 +998,6 @@ if [[ "$setup_mode" == 'ai_assisted' ]]; then
     esac
   fi
 
-  if [[ "$setup_handoff_supplied" != 'true' && "$non_interactive" != 'true' ]]; then
-    setup_handoff="$(prompt_choice 'After base install (continue/dashboard)' 'dashboard' 'Choose where to continue after the required installation. The plan is saved in both cases, so you can pause and resume without repeating the node questions.' \
-      'dashboard|Открыть Dashboard|Сразу перейти к браузерной проверке и ручному продолжению' \
-      'continue|Продолжить со Steward|Оставить план для локального Resident Steward')"
-  fi
   setup_handoff="${setup_handoff,,}"
   case "$setup_handoff" in
     continue|dashboard) ;;

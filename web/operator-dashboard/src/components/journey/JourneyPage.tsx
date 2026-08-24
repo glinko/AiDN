@@ -42,6 +42,78 @@ type JourneyPageProps = {
   onRefresh: () => void
   onNavigate: (screen: DashboardScreen) => void
   onApplyInstallationPlan: (planHash: string, action?: AssistedInstallationAction) => Promise<void>
+  onStewardChat: (message: string) => Promise<Record<string, unknown> | undefined>
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+function text(value: unknown, fallback = '—'): string {
+  return typeof value === 'string' && value.trim() ? value : fallback
+}
+
+function InstallationHandoffPanel({ plan, onStewardChat }: { plan: InstallationPlan | undefined; onStewardChat: (message: string) => Promise<Record<string, unknown> | undefined> }) {
+  const [message, setMessage] = useState('')
+  const [reply, setReply] = useState('')
+  const [chatError, setChatError] = useState('')
+  const [sending, setSending] = useState(false)
+  if (!plan?.available || !plan.ai_assisted || !plan.completion_report) return null
+  const report = plan.completion_report
+  const node = record(report.node)
+  const wallet = record(report.wallet)
+  const installation = record(report.installation)
+  const security = record(report.security)
+  const handoff = plan.steward_handoff
+
+  const submit = async (nextMessage?: string) => {
+    const value = (nextMessage ?? message).trim()
+    if (!value || sending) return
+    setMessage(value)
+    setSending(true)
+    setChatError('')
+    try {
+      const response = record(await onStewardChat(value))
+      const nested = record(response.result)
+      setReply(text(response.output_text ?? response.content ?? response.response ?? nested.output_text ?? nested.content, 'The Steward returned no text. Refresh inference status and try again.'))
+    } catch (cause) {
+      setChatError(cause instanceof Error ? cause.message : 'The Resident Steward could not answer. Check that local inference is running.')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-border bg-white" aria-labelledby="installation-report-title">
+      <div className="grid xl:grid-cols-[minmax(0,1.05fr)_minmax(22rem,0.95fr)]">
+        <div className="p-5 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div><h2 id="installation-report-title" className="text-xl font-bold tracking-[-0.025em] text-foreground">Your operator handoff</h2><p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">Observed installation facts are collected here. Secret material stays in local protected storage and is never returned by this page.</p></div>
+            <span className="rounded-full border border-emerald-700/25 bg-emerald-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.1em] text-emerald-800">{text(installation.workflow_status, 'Recorded')}</span>
+          </div>
+          <dl className="mt-5 divide-y divide-border/75 border-y border-border/75 text-sm">
+            <div className="grid gap-1 py-3 sm:grid-cols-[9rem_1fr]"><dt className="text-muted-foreground">Node</dt><dd className="break-all font-mono text-xs text-foreground">{text(node.node_id)} · {text(node.base_url, 'address unavailable')}</dd></div>
+            <div className="grid gap-1 py-3 sm:grid-cols-[9rem_1fr]"><dt className="text-muted-foreground">Runtime</dt><dd className="break-all font-mono text-xs text-foreground">{text(installation.provider, 'not selected')} · {text(installation.model_id, 'model not selected')}</dd></div>
+            <div className="grid gap-1 py-3 sm:grid-cols-[9rem_1fr]"><dt className="text-muted-foreground">Wallet</dt><dd className="break-all font-mono text-xs text-foreground">{text(wallet.wallet_id, 'not configured')}</dd></div>
+            <div className="grid gap-1 py-3 sm:grid-cols-[9rem_1fr]"><dt className="text-muted-foreground">Public key</dt><dd className="break-all font-mono text-xs text-foreground">{text(wallet.public_key, 'not available')}</dd></div>
+            <div className="grid gap-1 py-3 sm:grid-cols-[9rem_1fr]"><dt className="text-muted-foreground">Fingerprint</dt><dd className="font-mono text-xs text-foreground">{text(wallet.public_key_fingerprint, 'not available')}</dd></div>
+          </dl>
+          <div className="mt-4 flex items-start gap-3 rounded-xl bg-amber-50 p-3 text-amber-950"><ShieldCheck className="mt-0.5 size-4 shrink-0" /><p className="text-xs leading-5">{text(security.message, 'Private keys and recovery seeds are not exposed in the Dashboard.')}</p></div>
+        </div>
+        <div className="border-t border-border bg-primary/[0.035] p-5 sm:p-6 xl:border-l xl:border-t-0">
+          <div className="flex items-start justify-between gap-3"><div><h2 className="text-xl font-bold tracking-[-0.025em] text-foreground">Continue with Resident Steward</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">{handoff?.welcome ?? 'Ask about the observed node state and the next reviewed setup step.'}</p></div><span className={cn('rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.1em]', handoff?.ready ? 'border-emerald-700/25 bg-emerald-50 text-emerald-800' : 'border-amber-700/25 bg-amber-50 text-amber-900')}>{handoff?.ready ? 'Ready' : 'Not running'}</span></div>
+          <div className="mt-4 flex flex-wrap gap-2">{handoff?.suggested_questions.map((question) => <button key={question} type="button" className="min-h-11 rounded-lg border border-border bg-white px-3 py-2 text-left text-xs font-medium text-foreground hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={() => void submit(question)} disabled={sending}>{question}</button>)}</div>
+          {reply ? <div className="mt-4 rounded-xl border border-primary/20 bg-white p-4" aria-live="polite"><p className="whitespace-pre-wrap text-sm leading-6 text-foreground">{reply}</p></div> : null}
+          {chatError ? <div className="mt-4 rounded-xl border border-rose-700/25 bg-rose-50 p-3 text-xs leading-5 text-rose-900" role="alert">{chatError}</div> : null}
+          <form className="mt-4" onSubmit={(event) => { event.preventDefault(); void submit() }}>
+            <label htmlFor="steward-message" className="text-xs font-semibold text-foreground">Message</label>
+            <textarea id="steward-message" value={message} onChange={(event) => setMessage(event.target.value)} rows={3} maxLength={16_384} placeholder="What should I configure next?" className="mt-2 w-full resize-y rounded-xl border border-input bg-white px-3 py-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20" />
+            <div className="mt-2 flex items-center justify-between gap-3"><p className="text-[11px] text-muted-foreground">Prompt protocol {text(record(handoff?.prompt).version, '1.0')} · changes still require review</p><Button type="submit" disabled={!message.trim() || sending || !handoff?.ready}>{sending ? 'Thinking…' : 'Ask Steward'}<ArrowUpRight className="size-4" /></Button></div>
+          </form>
+        </div>
+      </div>
+    </section>
+  )
 }
 
 type JourneyView = 'journey' | 'list'
@@ -339,7 +411,7 @@ function JourneyDetailSheet({ node, open, onOpenChange, onNavigate }: { node: Jo
   return <Sheet open={open} onOpenChange={onOpenChange}><SheetContent side={mobile ? 'bottom' : 'right'} className={cn('border-border bg-popover p-0 text-popover-foreground', mobile ? 'max-h-[82dvh] rounded-t-2xl' : 'w-[min(25rem,calc(100vw-1rem))]')}><SheetHeader className="border-b border-border/80 p-5"><div className="flex items-center gap-3"><span className={cn('grid size-10 place-items-center rounded-xl border', node ? nodeAccent[node.state] : 'border-border bg-secondary text-muted-foreground')}>{node ? <NodeStateIcon state={node.state} /> : <CircleDot className="size-5" />}</span><div className="min-w-0"><SheetTitle className="truncate text-lg">{node?.title ?? 'Journey detail'}</SheetTitle><SheetDescription>{node ? stateLabel[node.state] : 'Select a stage to inspect it.'}</SheetDescription></div></div></SheetHeader>{node ? <div className="space-y-5 overflow-y-auto p-5"><p className="text-sm leading-6 text-muted-foreground">{node.description}</p><div className="rounded-xl border border-border bg-secondary/50 p-4"><p className="font-mono text-[10px] font-medium uppercase tracking-[0.13em] text-muted-foreground">Current evidence</p><p className="mt-2 text-sm leading-6 text-foreground">{node.reason}</p></div>{node.dependencies.length ? <div><p className="font-mono text-[10px] font-medium uppercase tracking-[0.13em] text-muted-foreground">Requires</p><div className="mt-2 flex flex-wrap gap-2">{node.dependencies.map((dependency) => <span key={dependency} className="rounded-full border border-border bg-white px-2.5 py-1 text-xs text-muted-foreground">{dependency.replaceAll('_', ' ')}</span>)}</div></div> : null}{node.details && Object.keys(node.details).length ? <div><p className="font-mono text-[10px] font-medium uppercase tracking-[0.13em] text-muted-foreground">Details</p><dl className="mt-2 divide-y divide-border/70 rounded-xl border border-border bg-white">{Object.entries(node.details).slice(0, 6).map(([key, value]) => <div key={key} className="flex justify-between gap-4 px-3 py-2.5 text-xs"><dt className="text-muted-foreground">{key.replaceAll('_', ' ')}</dt><dd className="max-w-[12rem] truncate font-mono text-foreground">{typeof value === 'object' ? JSON.stringify(value) : String(value ?? '—')}</dd></div>)}</dl></div> : null}{route ? <Button className="min-h-11 w-full justify-between" onClick={() => { onOpenChange(false); onNavigate(route) }}>{node.action?.label ?? 'Continue'}<ArrowUpRight className="size-4" /></Button> : null}</div> : null}</SheetContent></Sheet>
 }
 
-export function JourneyPage({ graph, residentAgent, installationPlan, isLoading, error, onRefresh, onNavigate, onApplyInstallationPlan }: JourneyPageProps) {
+export function JourneyPage({ graph, residentAgent, installationPlan, isLoading, error, onRefresh, onNavigate, onApplyInstallationPlan, onStewardChat }: JourneyPageProps) {
   const [view, setView] = useState<JourneyView>('journey')
   const [selected, setSelected] = useState<JourneyNode>()
   const [detailOpen, setDetailOpen] = useState(false)
@@ -353,6 +425,7 @@ export function JourneyPage({ graph, residentAgent, installationPlan, isLoading,
     <div className="space-y-5">
       <header className="flex flex-col justify-between gap-4 border-b border-border/80 pb-5 sm:flex-row sm:items-end"><div><p className="font-mono text-[10px] font-medium uppercase tracking-[0.16em] text-primary">Operational map</p><h1 className="mt-2 text-3xl font-bold tracking-[-0.05em] text-foreground sm:text-4xl">Your node journey</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Follow the path from an initialized Hypervisor to a useful, discoverable AI service. Every stage is computed from live node state.</p></div><div className="flex flex-wrap items-center gap-2"><Button variant="outline" className="min-h-11" onClick={onRefresh}><RefreshCw className={cn('size-4', isLoading && 'animate-spin')} />Refresh</Button><div className="flex min-h-11 rounded-lg border border-border bg-white p-1" role="group" aria-label="Journey view"><button type="button" className={cn('min-h-9 rounded-md px-3 text-xs font-semibold', view === 'journey' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')} onClick={() => setView('journey')}>Journey</button><button type="button" className={cn('min-h-9 rounded-md px-3 text-xs font-semibold', view === 'list' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')} onClick={() => setView('list')}>List</button></div></div></header>
       <JourneyNextMobile graph={graph} onNavigate={onNavigate} />
+      <InstallationHandoffPanel plan={installationPlan} onStewardChat={onStewardChat} />
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]"> <div className="min-w-0">{view === 'list' ? <JourneyList graph={graph} onSelect={selectNode} onNavigate={onNavigate} /> : <><div className="hidden md:block"><JourneyGraphDesktop graph={graph} onSelect={selectNode} onNavigate={onNavigate} /></div><div className="space-y-3 md:hidden">{mobileGroups.map((group) => <JourneyGroup key={group.id} label={group.label} nodes={group.nodes} byId={byId} open={Boolean(openGroups[group.id])} onToggle={() => setOpenGroups((current) => ({ ...current, [group.id]: !current[group.id] }))} onSelect={selectNode} onNavigate={onNavigate} />)}</div></>}</div><JourneyRail graph={graph} residentAgent={residentAgent} installationPlan={installationPlan} onNavigate={onNavigate} onApplyInstallationPlan={onApplyInstallationPlan} /></div>
       <JourneyDetailSheet node={selected} open={detailOpen} onOpenChange={setDetailOpen} onNavigate={onNavigate} />
     </div>

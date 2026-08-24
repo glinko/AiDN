@@ -98,6 +98,7 @@ from aidn_hypervisor.state import (
     RuntimeSnapshot,
     TaskSnapshot,
 )
+from aidn_hypervisor.steward_prompt import build_safe_steward_context, compose_steward_prompt
 from aidn_hypervisor.task_execution_service import TaskExecutionService
 from aidn_hypervisor.task_lifecycle_service import TaskLifecycleService
 from aidn_hypervisor.task_usage_accounting_service import TaskUsageAccountingService
@@ -697,6 +698,30 @@ class HypervisorService:
 
     def invoke_resident_inference(self, prompt: str, **parameters) -> dict:
         return self._resident_inference_adapter.infer(prompt, **parameters)
+
+    def resident_steward_chat(self, message: str, **parameters) -> dict:
+        """Invoke the local Steward with versioned rules and secret-free state."""
+
+        context = build_safe_steward_context(
+            installation_plan=self.installation_plan(),
+            node_identity=self.node_identity(),
+            wallet_state=self.owner_wallet_state(),
+            inference_state=self.resident_inference_status(),
+        )
+        invocation = compose_steward_prompt(message, context)
+        result = self._resident_inference_adapter.infer(
+            invocation["rendered_prompt"],
+            **parameters,
+        )
+        return {
+            **result,
+            "prompt": {
+                "id": invocation["prompt_id"],
+                "version": invocation["prompt_version"],
+            },
+            "context": context,
+            "suggested_questions": invocation["suggested_questions"],
+        }
 
     def prepare_resident_model(self, **kwargs) -> dict:
         """Download and verify a Steward artifact without starting inference."""
@@ -2175,7 +2200,54 @@ class HypervisorService:
             bundles=bundle_items,
             endpoints=endpoint_items,
         )
-        return {**plan, "workflow": workflow}
+        wallet = self.owner_wallet_state()
+        public_key = str(wallet.get("public_key") or "")
+        completion_report = {
+            "generated_at": workflow.get("checked_at"),
+            "node": {
+                "node_id": self.node_id,
+                "operator_id": self.operator_id,
+                "base_url": self.base_url,
+            },
+            "wallet": {
+                "configured": bool(wallet.get("configured")),
+                "wallet_id": wallet.get("wallet_id"),
+                "public_key": public_key or None,
+                "public_key_fingerprint": (
+                    f"sha256:{hashlib.sha256(public_key.encode('utf-8')).hexdigest()[:16]}"
+                    if public_key
+                    else None
+                ),
+                "private_key": "NOT_EXPOSED",
+            },
+            "installation": {
+                "mode": plan.get("mode"),
+                "provider": plan.get("provider"),
+                "model_id": (plan.get("model") or {}).get("id") if isinstance(plan.get("model"), dict) else None,
+                "workflow_status": workflow.get("status"),
+            },
+            "security": {
+                "secret_material_included": False,
+                "message": "Private keys and recovery seeds are never returned by the Dashboard API.",
+            },
+        }
+        steward_context = build_safe_steward_context(
+            installation_plan={**plan, "workflow": workflow},
+            node_identity=self.node_identity(),
+            wallet_state=wallet,
+            inference_state=self.resident_inference_status(),
+        )
+        return {
+            **plan,
+            "workflow": workflow,
+            "completion_report": completion_report,
+            "steward_handoff": {
+                "ready": str(self.resident_inference_status().get("state") or "").upper() == "RUNNING",
+                "welcome": "I am your local Resident Steward. I can explain the observed node state and guide the next reviewed setup step.",
+                "suggested_questions": compose_steward_prompt("Summarize the next safe step.", steward_context)["suggested_questions"],
+                "prompt": {"id": "aidn-resident-steward", "version": "1.0"},
+            },
+        }
 
     def apply_installation_plan(
         self,

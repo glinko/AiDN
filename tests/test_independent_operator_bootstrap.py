@@ -82,14 +82,19 @@ def test_release_operator_bootstrap_uses_safe_defaults_and_user_systemd() -> Non
     assert "--setup-endpoint ACTION" in script
     assert "--setup-handoff TARGET" in script
     assert "Installation mode (manual/ai_assisted)" in script
-    assert "AI-assisted provider (skip/ollama/llama.cpp/vllm)" in script
-    assert "AI-assisted endpoint step (skip/draft/start)" in script
+    assert "AI-assisted provider (skip/ollama/llama.cpp/vllm)" not in script
+    assert "Recommended assisted setup" in script
+    assert "Install with these recommended settings?" in script
+    assert "setup_provider='llama.cpp'" in script
+    assert 'setup_model_id="$(detect_assisted_model_id)"' in script
+    assert "AI-assisted endpoint step (skip/draft/start)" not in script
     assert "prompt_choice()" in script
-    assert "prompt_model_choice()" in script
+    assert "prompt_model_choice()" not in script
+    assert "detect_assisted_model_id()" in script
     assert "Qwen/Qwen3-0.6B-GGUF:Q8_0" in script
     assert "Qwen/Qwen3-4B-GGUF:Q4_K_M" in script
     assert "Qwen/Qwen3-14B-GGUF:Q4_K_M" in script
-    assert "VRAM ~7–10 GB" in script
+    assert "nvidia-smi --query-gpu=memory.total" in script
     assert "Введите номер" in script
     assert "start_model_prefetch" in script
     assert "model_prefetch_progress" in script

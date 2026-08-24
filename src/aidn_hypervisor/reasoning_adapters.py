@@ -33,6 +33,7 @@ class ReasoningAdapterError(ValueError):
 @dataclass(frozen=True)
 class ReasoningInvocation:
     prompt: str
+    system_prompt: str | None = None
     timeout_seconds: float = 90.0
     stream: bool = False
     parameters: dict[str, Any] | None = None
@@ -42,6 +43,10 @@ class ReasoningInvocation:
         if not text or len(text) > 131_072:
             raise ReasoningAdapterError("prompt must contain 1..131072 characters", details={"code": "REASONING_PROMPT_INVALID"})
         object.__setattr__(self, "prompt", text)
+        system_prompt = str(self.system_prompt or "").strip() or None
+        if system_prompt is not None and len(system_prompt) > 32_768:
+            raise ReasoningAdapterError("system prompt exceeds 32768 characters", details={"code": "REASONING_PROMPT_INVALID"})
+        object.__setattr__(self, "system_prompt", system_prompt)
         object.__setattr__(self, "timeout_seconds", max(0.1, min(3600.0, float(self.timeout_seconds))))
         object.__setattr__(self, "parameters", dict(self.parameters or {}))
 
@@ -92,12 +97,19 @@ class ReasoningAdapterRegistry:
         path = parsed.path.rstrip("/")
         if path.endswith("/completion"):
             url = endpoint
-            payload = {"prompt": invocation.prompt, "stream": invocation.stream, **dict(invocation.parameters or {})}
+            prompt = invocation.prompt
+            if invocation.system_prompt:
+                prompt = f"<SYSTEM>\n{invocation.system_prompt}\n</SYSTEM>\n<USER>\n{prompt}\n</USER>"
+            payload = {"prompt": prompt, "stream": invocation.stream, **dict(invocation.parameters or {})}
         else:
             url = f"{endpoint}/v1/chat/completions"
+            messages = []
+            if invocation.system_prompt:
+                messages.append({"role": "system", "content": invocation.system_prompt})
+            messages.append({"role": "user", "content": invocation.prompt})
             payload = {
                 "model": provider.model_id or "resident-steward",
-                "messages": [{"role": "user", "content": invocation.prompt}],
+                "messages": messages,
                 "stream": invocation.stream,
                 **dict(invocation.parameters or {}),
             }

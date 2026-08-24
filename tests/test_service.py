@@ -655,9 +655,13 @@ def test_service_prepares_ai_assisted_installation_review_from_configured_plan(
     assert prepared["status"] == "PROVIDER_REVIEW_REQUIRED"
     assert prepared["next_action"] == "approve_provider_installation"
     assert prepared["application"]["provider"]["plugin_id"] == "llama.cpp"
-    workflow = service.installation_plan()["workflow"]
+    projection = service.installation_plan()
+    workflow = projection["workflow"]
     assert workflow["next_action"]["id"] == "approve_provider_installation"
     assert workflow["stages"][0]["state"] == "REVIEW_REQUIRED"
+    assert projection["completion_report"]["wallet"]["private_key"] == "NOT_EXPOSED"
+    assert projection["completion_report"]["security"]["secret_material_included"] is False
+    assert projection["steward_handoff"]["prompt"] == {"id": "aidn-resident-steward", "version": "1.0"}
     assert any(
         event.event_type == "installation.plan.review_prepared"
         for event in service.event_journal()

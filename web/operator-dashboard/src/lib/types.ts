@@ -430,6 +430,19 @@ const installationPlanSchema = z.object({
   authority: unknownRecord.default({}),
   application: unknownRecord.nullable().optional(),
   workflow: installationWorkflowSchema.nullable().optional(),
+  completion_report: z.object({
+    generated_at: z.string().nullable().optional(),
+    node: unknownRecord.default({}),
+    wallet: unknownRecord.default({}),
+    installation: unknownRecord.default({}),
+    security: unknownRecord.default({}),
+  }).passthrough().nullable().optional(),
+  steward_handoff: z.object({
+    ready: z.boolean().catch(false),
+    welcome: stringValue,
+    suggested_questions: z.array(z.string()).catch([]),
+    prompt: unknownRecord.default({}),
+  }).passthrough().nullable().optional(),
 }).passthrough()
 
 const journalEventSchema = z.object({
