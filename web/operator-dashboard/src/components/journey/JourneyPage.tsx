@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity,
   ArrowUpRight,
@@ -165,11 +165,21 @@ const nodeAccent: Record<JourneyNode['state'], string> = {
   error: 'border-rose-700/30 bg-rose-50 text-rose-800',
 }
 
-const desktopRows = [
-  ['wallet', 'provider', 'model', 'bundle'],
-  ['endpoint', 'validation', 'discovery', 'serve_requests'],
-  ['earnings', 'resources', 'policies', 'security'],
-  ['monitoring', 'plugins', 'backups', 'analytics'],
+type JourneyDesktopPlacement = {
+  id: string
+  colStart: number
+  colSpan?: number
+}
+
+const desktopRows: JourneyDesktopPlacement[][] = [
+  [{ id: 'hypervisor', colStart: 2, colSpan: 2 }],
+  [{ id: 'wallet', colStart: 1 }, { id: 'provider', colStart: 3 }],
+  [{ id: 'resources', colStart: 1 }, { id: 'model', colStart: 3 }, { id: 'plugins', colStart: 4 }],
+  [{ id: 'security', colStart: 1 }, { id: 'bundle', colStart: 3 }, { id: 'policies', colStart: 4 }],
+  [{ id: 'monitoring', colStart: 1 }, { id: 'endpoint', colStart: 3 }],
+  [{ id: 'backups', colStart: 1 }, { id: 'validation', colStart: 2 }],
+  [{ id: 'earnings', colStart: 2 }, { id: 'discovery', colStart: 3 }, { id: 'serve_requests', colStart: 4 }],
+  [{ id: 'analytics', colStart: 4 }],
 ]
 
 const mobileGroups = [
@@ -202,12 +212,13 @@ function JourneyStatus({ state }: { state: JourneyNode['state'] }) {
   )
 }
 
-function JourneyNodeCard({ node, onSelect, onNavigate }: { node: JourneyNode; onSelect: (node: JourneyNode) => void; onNavigate: (screen: DashboardScreen) => void }) {
+function JourneyNodeCard({ node, onSelect, onNavigate, nodeRef }: { node: JourneyNode; onSelect: (node: JourneyNode) => void; onNavigate: (screen: DashboardScreen) => void; nodeRef?: (element: HTMLElement | null) => void }) {
   const Icon = iconByNode[node.id] ?? CircleDot
   const route = routeFor(node)
   return (
     <article
-      className={cn('group relative flex min-h-[194px] flex-col rounded-2xl border bg-white/90 p-4 text-left transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-primary/60 hover:shadow-[0_14px_30px_rgba(32,70,88,0.12)]', node.state === 'ready' ? 'border-emerald-700/25' : 'border-border')}
+      ref={nodeRef}
+      className={cn('group relative flex h-full min-h-[212px] min-w-0 flex-col rounded-2xl border bg-white/90 p-4 text-left transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-primary/60 hover:shadow-[0_14px_30px_rgba(32,70,88,0.12)]', node.state === 'ready' ? 'border-emerald-700/25' : 'border-border')}
       aria-label={`${node.title}: ${stateLabel[node.state]}`}
     >
       <button
@@ -233,11 +244,12 @@ function JourneyNodeCard({ node, onSelect, onNavigate }: { node: JourneyNode; on
         </div>
         <div className="mt-auto pt-4"><JourneyStatus state={node.state} /></div>
       </button>
-      <div className="mt-3 flex items-center justify-between gap-2 border-t border-border/80 pt-3">
-        <button type="button" className="min-h-11 text-left text-[11px] font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={() => onSelect(node)}>
-          {node.dependencies.length ? `${node.dependencies.length} prerequisite${node.dependencies.length === 1 ? '' : 's'}` : 'Inspect status'}
+      <div className="mt-3 grid min-w-0 gap-2 border-t border-border/80 pt-3">
+        <button type="button" className="flex min-h-8 min-w-0 items-center justify-between gap-2 text-left text-[11px] font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary" onClick={() => onSelect(node)}>
+          <span className="min-w-0 truncate">{node.dependencies.length ? `${node.dependencies.length} prerequisite${node.dependencies.length === 1 ? '' : 's'}` : 'Inspect status'}</span>
+          <ChevronRight className="size-3.5 shrink-0" aria-hidden="true" />
         </button>
-        {route ? <Button variant="ghost" size="sm" className="min-h-11 gap-1 px-2 text-primary hover:bg-primary/8" onClick={() => onNavigate(route)}>{node.action?.label ?? 'Open'}<ArrowUpRight className="size-3.5" /></Button> : null}
+        {route ? <Button variant="ghost" size="sm" className="min-h-10 w-full min-w-0 justify-between gap-2 px-2 text-primary hover:bg-primary/8" onClick={() => onNavigate(route)}><span className="min-w-0 truncate">{node.action?.label ?? 'Open'}</span><ArrowUpRight className="size-3.5 shrink-0" /></Button> : null}
       </div>
     </article>
   )
@@ -245,29 +257,83 @@ function JourneyNodeCard({ node, onSelect, onNavigate }: { node: JourneyNode; on
 
 function JourneyGraphDesktop({ graph, onSelect, onNavigate }: { graph: JourneyGraph; onSelect: (node: JourneyNode) => void; onNavigate: (screen: DashboardScreen) => void }) {
   const byId = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph.nodes])
+  const graphRef = useRef<HTMLDivElement>(null)
+  const nodeRefs = useRef(new Map<string, HTMLElement>())
+  const [edgeGeometry, setEdgeGeometry] = useState<Array<{ edge: JourneyGraph['edges'][number]; path: string; key: string; delay: string }>>([])
+  const [edgeLayerSize, setEdgeLayerSize] = useState({ width: 0, height: 0 })
+
+  useLayoutEffect(() => {
+    const canvas = graphRef.current
+    if (!canvas) return
+    let frame = 0
+    const measure = () => {
+      const bounds = canvas.getBoundingClientRect()
+      const nextGeometry = graph.edges.flatMap((edge, index) => {
+        const from = nodeRefs.current.get(edge.from)?.getBoundingClientRect()
+        const to = nodeRefs.current.get(edge.to)?.getBoundingClientRect()
+        if (!from || !to || bounds.width <= 0 || bounds.height <= 0) return []
+        const startX = from.left + from.width / 2 - bounds.left
+        const startY = from.bottom - bounds.top
+        const endX = to.left + to.width / 2 - bounds.left
+        const endY = to.top - bounds.top
+        const controlY = startY + Math.max(18, (endY - startY) * 0.48)
+        return [{
+          edge,
+          key: `${edge.from}-${edge.to}-${index}`,
+          delay: `${index * 0.18}s`,
+          path: `M ${startX.toFixed(1)} ${startY.toFixed(1)} C ${startX.toFixed(1)} ${controlY.toFixed(1)}, ${endX.toFixed(1)} ${controlY.toFixed(1)}, ${endX.toFixed(1)} ${endY.toFixed(1)}`,
+        }]
+      })
+      setEdgeLayerSize({ width: bounds.width, height: bounds.height })
+      setEdgeGeometry(nextGeometry)
+    }
+    const scheduleMeasure = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(measure)
+    }
+    scheduleMeasure()
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(scheduleMeasure)
+    observer?.observe(canvas)
+    nodeRefs.current.forEach((element) => observer?.observe(element))
+    window.addEventListener('resize', scheduleMeasure)
+    return () => {
+      cancelAnimationFrame(frame)
+      observer?.disconnect()
+      window.removeEventListener('resize', scheduleMeasure)
+    }
+  }, [graph.edges, graph.nodes])
+
   const renderNode = (id: string) => {
     const node = byId.get(id)
-    return node ? <JourneyNodeCard key={id} node={node} onSelect={onSelect} onNavigate={onNavigate} /> : null
+    return node ? <JourneyNodeCard key={id} node={node} onSelect={onSelect} onNavigate={onNavigate} nodeRef={(element) => { if (element) nodeRefs.current.set(id, element); else nodeRefs.current.delete(id) }} /> : null
   }
   return (
-    <section className="relative overflow-hidden rounded-2xl border border-border bg-white/60 p-4 sm:p-6" aria-label="Node journey graph">
-      <div className="pointer-events-none absolute inset-0 opacity-60" aria-hidden="true">
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full text-primary/35">
-          <path d="M50 11V19M13 19H87M13 19V25M37 19V25M63 19V25M87 19V25M13 49V54M37 49V54M63 49V54M87 49V54M13 78V84M50 78V84M87 78V84" fill="none" stroke="currentColor" strokeDasharray="1.4 1.5" strokeWidth="0.35" vectorEffect="non-scaling-stroke" />
-          <circle cx="50" cy="19" r="0.9" fill="currentColor" />
-        </svg>
-      </div>
-      <div className="relative z-10 mx-auto max-w-[920px]">
-        <div className="mx-auto max-w-[300px] rounded-2xl border border-primary/35 bg-white px-5 py-4 text-center shadow-[0_12px_32px_rgba(10,127,131,0.10)]">
-          <div className="mx-auto grid size-11 place-items-center rounded-xl border border-primary/25 bg-primary/8 text-primary"><Boxes className="size-5" /></div>
-          <p className="mt-3 font-mono text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Hypervisor</p>
-          <p className="mt-1 text-lg font-bold tracking-[-0.03em] text-foreground">{graph.hypervisor.node_id || 'Your AiDN Node'}</p>
-          <p className="mt-1 text-xs text-muted-foreground">{graph.hypervisor.network_ready ? 'Node is online and network-aware' : 'Node is online; network evidence pending'}</p>
+    <section className="relative overflow-x-auto rounded-2xl border border-border bg-white/65 p-4 sm:p-6" aria-label="Node journey dependency graph">
+      <div className="relative z-10 flex flex-wrap items-end justify-between gap-3 border-b border-border/80 pb-4">
+        <div>
+          <p className="font-mono text-[10px] font-medium uppercase tracking-[0.16em] text-primary">Dependency map</p>
+          <h2 className="mt-1 text-base font-bold tracking-[-0.025em] text-foreground">From node identity to served requests</h2>
+          <p className="mt-1 max-w-2xl text-xs leading-5 text-muted-foreground">Every dotted route is a live prerequisite from the Hypervisor read model. Follow the main path down the center; side branches show operational support.</p>
         </div>
-        <div className="mt-8 space-y-7">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground" aria-label="Dependency map legend">
+          <span className="inline-flex items-center gap-2"><span className="journey-legend-line" aria-hidden="true" />Required</span>
+          <span className="inline-flex items-center gap-2"><span className="journey-legend-line journey-legend-line-optional" aria-hidden="true" />Optional</span>
+        </div>
+      </div>
+      <div ref={graphRef} className="relative z-0 mt-5 min-w-[760px] pb-2">
+        {edgeLayerSize.width > 0 ? <svg className="pointer-events-none absolute inset-0 z-0 h-full w-full overflow-visible" viewBox={`0 0 ${edgeLayerSize.width} ${edgeLayerSize.height}`} preserveAspectRatio="none" aria-hidden="true">
+          {edgeGeometry.map(({ edge, path, key, delay }) => {
+            const optional = edge.type === 'optional'
+            return <g key={key} className={optional ? 'journey-edge-group journey-edge-group-optional' : 'journey-edge-group'}>
+              <path d={path} pathLength="1" className="journey-edge" />
+              <path d={path} pathLength="1" className="journey-edge-flow" style={{ animationDelay: delay }} />
+            </g>
+          })}
+        </svg> : null}
+        <div className="relative z-10 mx-auto grid max-w-[980px] grid-cols-4 gap-x-4 gap-y-7">
           {desktopRows.map((row, rowIndex) => (
-            <div key={rowIndex} className={cn('grid gap-3', row.length === 3 ? 'grid-cols-2 lg:grid-cols-3' : 'grid-cols-2 lg:grid-cols-4')}>
-              {row.map(renderNode)}
+            <div key={rowIndex} className="col-span-4 grid min-w-0 grid-cols-4 gap-x-4">
+              {row.map(({ id, colStart, colSpan = 1 }) => <div key={id} className="min-w-0" style={{ gridColumn: `${colStart} / span ${colSpan}` }}>{renderNode(id)}</div>)}
             </div>
           ))}
         </div>
@@ -370,7 +436,7 @@ function JourneyRail({ graph, residentAgent, installationPlan, onNavigate, onApp
       <section className="rounded-2xl border border-primary/20 bg-primary/[0.045] p-4" aria-label="Resident Node Steward status">
         <div className="flex items-start justify-between gap-3">
           <div><p className="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-primary">RFC-0075</p><h2 className="mt-1 text-sm font-bold text-foreground">Resident Steward</h2></div>
-          <span className={cn('rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.1em]', residentAgent?.enabled ? 'border-emerald-700/25 bg-emerald-50 text-emerald-800' : 'border-slate-300 bg-slate-50 text-slate-600')}>{residentAgent?.enabled ? residentAgent.state : 'Disabled'}</span>
+          <span className={cn('rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.1em]', residentAgent?.enabled ? 'border-emerald-700/25 bg-emerald-50 text-emerald-800' : 'border-slate-300 bg-slate-50 text-muted-foreground')}>{residentAgent?.enabled ? residentAgent.state : 'Disabled'}</span>
         </div>
         <p className="mt-2 text-xs leading-5 text-muted-foreground">CPU-first local control agent. It can advance the reviewed private setup through policy-bound MCP actions; resource admission remains authoritative.</p>
         <dl className="mt-3 space-y-2 text-xs"><div className="flex justify-between gap-3"><dt className="text-muted-foreground">Profile</dt><dd className="font-mono font-medium text-foreground">{residentAgent?.execution.profile ?? 'CPU_RESIDENT'}</dd></div><div className="flex justify-between gap-3"><dt className="text-muted-foreground">Model</dt><dd className="max-w-[11rem] truncate font-mono text-foreground">{residentAgent?.model.llama_cpp_reference ?? 'Qwen2.5-0.5B:Q4_K_M'}</dd></div><div className="flex justify-between gap-3"><dt className="text-muted-foreground">Events seen</dt><dd className="font-mono text-foreground">{residentAgent?.event_ingestion.events_seen ?? 0}</dd></div></dl>
@@ -426,7 +492,7 @@ export function JourneyPage({ graph, residentAgent, installationPlan, isLoading,
       <header className="flex flex-col justify-between gap-4 border-b border-border/80 pb-5 sm:flex-row sm:items-end"><div><p className="font-mono text-[10px] font-medium uppercase tracking-[0.16em] text-primary">Operational map</p><h1 className="mt-2 text-3xl font-bold tracking-[-0.05em] text-foreground sm:text-4xl">Your node journey</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">Follow the path from an initialized Hypervisor to a useful, discoverable AI service. Every stage is computed from live node state.</p></div><div className="flex flex-wrap items-center gap-2"><Button variant="outline" className="min-h-11" onClick={onRefresh}><RefreshCw className={cn('size-4', isLoading && 'animate-spin')} />Refresh</Button><div className="flex min-h-11 rounded-lg border border-border bg-white p-1" role="group" aria-label="Journey view"><button type="button" className={cn('min-h-9 rounded-md px-3 text-xs font-semibold', view === 'journey' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')} onClick={() => setView('journey')}>Journey</button><button type="button" className={cn('min-h-9 rounded-md px-3 text-xs font-semibold', view === 'list' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground')} onClick={() => setView('list')}>List</button></div></div></header>
       <JourneyNextMobile graph={graph} onNavigate={onNavigate} />
       <InstallationHandoffPanel plan={installationPlan} onStewardChat={onStewardChat} />
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]"> <div className="min-w-0">{view === 'list' ? <JourneyList graph={graph} onSelect={selectNode} onNavigate={onNavigate} /> : <><div className="hidden md:block"><JourneyGraphDesktop graph={graph} onSelect={selectNode} onNavigate={onNavigate} /></div><div className="space-y-3 md:hidden">{mobileGroups.map((group) => <JourneyGroup key={group.id} label={group.label} nodes={group.nodes} byId={byId} open={Boolean(openGroups[group.id])} onToggle={() => setOpenGroups((current) => ({ ...current, [group.id]: !current[group.id] }))} onSelect={selectNode} onNavigate={onNavigate} />)}</div></>}</div><JourneyRail graph={graph} residentAgent={residentAgent} installationPlan={installationPlan} onNavigate={onNavigate} onApplyInstallationPlan={onApplyInstallationPlan} /></div>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]"> <div className="min-w-0">{view === 'list' ? <JourneyList graph={graph} onSelect={selectNode} onNavigate={onNavigate} /> : <><div className="hidden lg:block overflow-x-auto"><JourneyGraphDesktop graph={graph} onSelect={selectNode} onNavigate={onNavigate} /></div><div className="space-y-3 lg:hidden">{mobileGroups.map((group) => <JourneyGroup key={group.id} label={group.label} nodes={group.nodes} byId={byId} open={Boolean(openGroups[group.id])} onToggle={() => setOpenGroups((current) => ({ ...current, [group.id]: !current[group.id] }))} onSelect={selectNode} onNavigate={onNavigate} />)}</div></>}</div><JourneyRail graph={graph} residentAgent={residentAgent} installationPlan={installationPlan} onNavigate={onNavigate} onApplyInstallationPlan={onApplyInstallationPlan} /></div>
       <JourneyDetailSheet node={selected} open={detailOpen} onOpenChange={setDetailOpen} onNavigate={onNavigate} />
     </div>
   )

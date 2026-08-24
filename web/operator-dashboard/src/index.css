@@ -172,6 +172,56 @@ button {
   text-transform: uppercase;
 }
 
+.journey-edge {
+  fill: none;
+  stroke: var(--brand-cyan);
+  stroke-dasharray: 6 7;
+  stroke-linecap: round;
+  stroke-width: 1.35;
+  opacity: 0.58;
+  vector-effect: non-scaling-stroke;
+}
+
+.journey-edge-flow {
+  fill: none;
+  stroke: var(--brand-cyan);
+  stroke-dasharray: 0.035 0.965;
+  stroke-linecap: round;
+  stroke-width: 2.6;
+  opacity: 0.88;
+  vector-effect: non-scaling-stroke;
+  animation: journey-edge-flow 3.8s linear infinite, journey-edge-pulse 3.8s ease-in-out infinite;
+}
+
+.journey-edge-group-optional .journey-edge {
+  stroke: var(--muted-foreground);
+  opacity: 0.4;
+}
+
+.journey-edge-group-optional .journey-edge-flow {
+  stroke: var(--muted-foreground);
+  opacity: 0.62;
+}
+
+.journey-legend-line {
+  width: 1.4rem;
+  border-top: 2px dashed var(--brand-cyan);
+}
+
+.journey-legend-line-optional {
+  border-color: var(--muted-foreground);
+}
+
+@keyframes journey-edge-flow {
+  to { stroke-dashoffset: -1; }
+}
+
+@keyframes journey-edge-pulse {
+  0%, 100% { opacity: 0.16; }
+  22%, 48% { opacity: 0.92; }
+  64% { opacity: 0.2; }
+}
+
 ::selection {
   background: rgba(10, 127, 131, 0.2);
   color: var(--foreground);
