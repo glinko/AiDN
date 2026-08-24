@@ -369,6 +369,9 @@ class LlamaCppPlugin(ProviderPlugin):
         for source_key, target_key in request_map.items():
             if source_key in task.payload:
                 request_payload[target_key] = task.payload[source_key]
+        stop = task.payload.get("stop")
+        if isinstance(stop, (list, tuple)):
+            request_payload["stop"] = [str(item) for item in stop if str(item).strip()]
         # CPU-resident models can legitimately spend longer than the short
         # health/discovery timeout generating a response.  Keep transport
         # timeout separate from the provider probe timeout and allow the

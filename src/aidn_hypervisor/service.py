@@ -709,9 +709,16 @@ class HypervisorService:
             inference_state=self.resident_inference_status(),
         )
         invocation = compose_steward_prompt(message, context)
+        # Keep the default Dashboard interaction bounded on CPU-only nodes.
+        # Operators can still override this through the explicit parameters
+        # object, while protocol stop markers prevent the model from echoing
+        # the prompt envelope into the visible answer.
+        inference_parameters = dict(parameters)
+        inference_parameters.setdefault("max_tokens", 64)
+        inference_parameters.setdefault("stop", ["</STEWARD_RESPONSE>", "</SYSTEM>"])
         result = self._resident_inference_adapter.infer(
             invocation["rendered_prompt"],
-            **parameters,
+            **inference_parameters,
         )
         return {
             **result,
