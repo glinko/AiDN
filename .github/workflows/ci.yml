@@ -68,10 +68,62 @@ jobs:
       - name: Run non-integration tests
         run: uv run pytest -q -m "not integration" --disable-warnings --cov-fail-under=70
 
+  operator-surfaces:
+    name: Operator surfaces and installer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "11.16.0"
+      - name: Check Ubuntu shell entrypoints
+        shell: bash
+        run: |
+          while IFS= read -r -d '' script; do
+            bash -n "$script"
+          done < <(find tools -type f -name '*.sh' -print0)
+      - name: Install Dashboard dependencies
+        working-directory: web/operator-dashboard
+        run: pnpm install --frozen-lockfile
+      - name: Check and build Dashboard
+        working-directory: web/operator-dashboard
+        run: |
+          pnpm lint
+          pnpm build
+      - name: Install Website dependencies
+        working-directory: web/website
+        run: pnpm install --frozen-lockfile
+      - name: Check and build Website
+        working-directory: web/website
+        run: |
+          pnpm lint
+          pnpm build
+
+  faucet:
+    name: Faucet tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install Faucet dependencies
+        working-directory: services/aidn-faucet
+        run: uv sync --frozen
+      - name: Run Faucet tests
+        working-directory: services/aidn-faucet
+        run: uv run --with pytest --with httpx pytest -q -c pyproject.toml tests
+
   package:
     name: Build and install distribution
     runs-on: ubuntu-latest
-    needs: [lint, test]
+    needs: [lint, test, operator-surfaces, faucet]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

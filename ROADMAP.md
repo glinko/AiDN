@@ -2,7 +2,7 @@
 
 Last updated: `2026-08-23`
 
-Last repository audit: `main@0df44a4` (`2026-08-23`)
+Last repository audit: `main@b667c97` (`2026-08-23`)
 
 This is the main public roadmap for the repository.
 
@@ -31,30 +31,15 @@ release evidence, this roadmap uses the following meanings:
 | Public website | WEB-0001 React application, content, responsive design, demo Network/Explorer/Faucet flows, and a successful production frontend build | The deployed Caddy route still returns `503` for `/api/site/v1/*`; Website Backend, indexer, live Explorer, Faucet facade, release feed, SEO and public deployment acceptance are open |
 | Faucet | External Treasury service, signed Wallet proof, creator policy/releases, SQLite durability, exact-envelope idempotency, verified-finality adapter, admin/MCP boundaries, and focused tests | Internet-facing Website facade, rate limiting/abuse controls, CAPTCHA hook policy, production secrets, funded Treasury activation, monitoring, backup and end-to-end public claim evidence |
 | Consensus/network | Controlled CometBFT/ABCI, strict operation coverage, State Sync, multi-RPC finality and LAN acceptance | G4 public RPC/P2P and bootstrap diversity, G6 independently operated validator evidence, and G7 published release evidence |
-| CI/release | Python lint, hermetic tests, package build and optional live-provider conformance jobs exist; the current Steward slice has focused green coverage | The latest recorded GitHub run for predecessor `main@08ac516` was red with 17 Ubuntu failures, so the current `0df44a4` commit still needs a fresh pushed CI run before release. Then add required Website/Dashboard builds, Faucet tests, installer shell checks, release-gate tooling and deployment manifests |
+| CI/release | Python lint, hermetic tests, package build and optional live-provider conformance are green on `main@b667c97`; required Dashboard/Website builds, Faucet tests and installer shell checks are now part of the main workflow | Add release-gate tooling, immutable deployment manifests and exact-release acceptance evidence |
 
-The focused audit run completed `43` Steward/lifecycle tests and found three
-Windows-only installation-plan failures caused by `os.fchmod`; the same call is
-valid on the supported Ubuntu target but the host-side test suite is not
-portable yet. The external Faucet suite passed `37/37`, and the public Website
-production build passed. These checks are evidence for the table above, not a
-substitute for the full CI and live acceptance matrix.
-
-The latest recorded GitHub Actions run for predecessor `main@08ac516` is a
-release blocker:
-[`CI 32606802810`](https://github.com/glinko/AiDN/actions/runs/32606802810)
-reports `4758 passed, 17 failed, 5 skipped, 9 deselected`. The failures include
-stale exact-shape expectations after Resource Broker fit evidence was extended,
-event-order assertions that now observe reconciliation events, and other
-regressions; Ruff also reports formatting/import/line-length debt concentrated
-in the recent Resource Broker and Steward slices. The distribution job was
-therefore skipped.
-
-Post-change local validation for `main@0df44a4` is narrower but green: the
-installation, Hypervisor service, and MCP suites pass `151` tests, Ruff passes
-for all touched Python files, and the Dashboard typecheck and production build
-complete successfully. This is not a substitute for a fresh Ubuntu CI run;
-the commit has not been pushed from this worktree.
+The full Ubuntu workflow for `main@b667c97` is green:
+[`CI 32685521716`](https://github.com/glinko/AiDN/actions/runs/32685521716)
+passed Ruff, the hermetic non-integration suite with its coverage gate, and the
+source/wheel build plus out-of-checkout installation verification. The earlier
+17-failure snapshot is retained in GitHub history but is no longer a current
+release blocker. Live host acceptance and exact-release evidence remain
+separate gates.
 
 ### Release Target Separation
 
@@ -74,7 +59,7 @@ finality.
 
 ### Ordered P0 Critical Path
 
-1. [~] **Restore `main` to green.** Fix the 17 Ubuntu test regressions, run the
+1. [x] **Restore `main` to green.** Fix the 17 Ubuntu test regressions, run the
    complete non-integration suite with the configured coverage gate, clear Ruff
    on `src` and `tests`, and require the distribution build to pass before
    adding another feature slice. Preserve the added Resource Broker evidence
@@ -165,9 +150,10 @@ finality.
   persisted installation-plan hash, and can submit only an exact operator-
   approved Provider plan to the existing privileged broker. It cannot create
   approval, bypass admission, or publish an Endpoint.
-- [ ] Run the complete Ubuntu CI matrix and package build for this exact commit.
-  Local focused tests and Ruff are green; Windows pytest teardown currently
-  leaves completed test workers alive, so it is not accepted as release proof.
+- [x] Run the complete Ubuntu CI matrix and package build for `main@b667c97`.
+  Ruff, the hermetic suite, coverage gate, source/wheel build and isolated wheel
+  installation all pass in CI 32685521716. Live Ubuntu installation acceptance
+  remains a separate gate.
 
 ### Public Provider Alpha Exit Criteria
 
