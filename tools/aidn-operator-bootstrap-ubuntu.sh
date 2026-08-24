@@ -1831,7 +1831,8 @@ fi
   "$wallet_bootstrap_public_key" "$dashboard_pairing_status" "$agent_onboarding_status" \
   "$setup_mode" "$setup_provider" "$setup_model_id" "$setup_model_source" \
   "$setup_model_expected_sha256" "$setup_model_expected_bytes" \
-  "$setup_endpoint_action" "$setup_handoff" "$setup_plan_path" <<'PY'
+  "$setup_endpoint_action" "$setup_handoff" "$setup_plan_path" \
+  "$checkout_backup_path" <<'PY'
 import json
 import os
 import sys
@@ -1880,6 +1881,7 @@ import sys
     setup_endpoint_action,
     setup_handoff,
     setup_plan_path,
+    checkout_backup_path,
 ) = sys.argv[1:]
 from aidn_hypervisor.installation_onboarding import (
     InstallationOnboardingPlan,

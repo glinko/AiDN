@@ -159,6 +159,8 @@ def test_release_operator_bootstrap_uses_safe_defaults_and_user_systemd() -> Non
     assert "clean_generated_dashboard_assets" in script
     assert "preserved local changes" in script
     assert '"checkout_backup"' in script
+    assert '"$checkout_backup_path" <<\'PY\'' in script
+    assert "    checkout_backup_path,\n) = sys.argv[1:]" in script
     assert "aidn-operator-wrapper.sh" in script
     assert "master-key-file" in script
     assert "ln -sfn" in script
