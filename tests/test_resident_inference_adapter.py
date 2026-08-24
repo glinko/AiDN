@@ -241,6 +241,28 @@ def test_inference_timeout_releases_request_lease(tmp_path: Path, monkeypatch: p
     adapter.stop()
 
 
+def test_provider_invoke_error_is_returned_as_stable_adapter_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    adapter, resources, _runtimes, model = _adapter(tmp_path)
+    plugin = adapter._plugin_resolver("fake-managed")
+
+    def fail_invoke(_task, _runtime):
+        raise RuntimeError("provider socket timed out")
+
+    monkeypatch.setattr(plugin, "invoke", fail_invoke)
+    adapter.prepare(model_path=str(model), provider_type="fake", plugin_id="fake-managed")
+    adapter.start()
+
+    with pytest.raises(ResidentInferenceError) as error:
+        adapter.infer("hello")
+
+    assert error.value.details["code"] == "INFERENCE_PROVIDER_ERROR"
+    assert "provider socket timed out" in error.value.details["message"]
+    assert resources.summary()["reserved"]["ram_mb"] == 1024
+    adapter.stop()
+
+
 def test_completed_reviewed_model_job_prepares_but_does_not_autostart(tmp_path: Path) -> None:
     source = tmp_path / "model.gguf"
     source.write_bytes(b"model")

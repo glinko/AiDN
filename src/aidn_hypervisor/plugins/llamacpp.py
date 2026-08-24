@@ -369,11 +369,32 @@ class LlamaCppPlugin(ProviderPlugin):
         for source_key, target_key in request_map.items():
             if source_key in task.payload:
                 request_payload[target_key] = task.payload[source_key]
-        response = self._request_json(
-            "POST",
-            f"{self._endpoint(runtime_handle)}/completion",
-            request_payload,
-        )
+        # CPU-resident models can legitimately spend longer than the short
+        # health/discovery timeout generating a response.  Keep transport
+        # timeout separate from the provider probe timeout and allow the
+        # runtime to override it when a managed bundle supplies one.
+        timeout_seconds = runtime_handle.metadata.get("timeout_seconds", 90)
+        try:
+            timeout_seconds = max(1.0, min(3600.0, float(timeout_seconds)))
+        except (TypeError, ValueError):
+            timeout_seconds = 90.0
+        try:
+            response = self._request_json(
+                "POST",
+                f"{self._endpoint(runtime_handle)}/completion",
+                request_payload,
+                timeout_seconds=timeout_seconds,
+            )
+        except TypeError as error:
+            # Keep transitional/external plugin test doubles compatible with
+            # the older helper signature while the provider contract rolls out.
+            if "timeout_seconds" not in str(error):
+                raise
+            response = self._request_json(
+                "POST",
+                f"{self._endpoint(runtime_handle)}/completion",
+                request_payload,
+            )
         result = {
             "ok": True,
             "task_type": task.task_type,
@@ -454,7 +475,14 @@ class LlamaCppPlugin(ProviderPlugin):
             raise ValueError("llama.cpp runtime metadata is missing model_id")
         return model_id
 
-    def _request_json(self, method: str, url: str, payload: dict | None = None) -> dict:
+    def _request_json(
+        self,
+        method: str,
+        url: str,
+        payload: dict | None = None,
+        *,
+        timeout_seconds: float = 5,
+    ) -> dict:
         body = None
         headers = {}
         if payload is not None:
@@ -462,9 +490,9 @@ class LlamaCppPlugin(ProviderPlugin):
             headers["Content-Type"] = "application/json"
         req = request.Request(url=url, method=method, data=body, headers=headers)
         try:
-            with request.urlopen(req, timeout=5) as response:
+            with request.urlopen(req, timeout=timeout_seconds) as response:
                 return json.loads(response.read().decode("utf-8"))
-        except error.URLError as exc:
+        except (error.URLError, TimeoutError) as exc:
             raise RuntimeError(str(exc)) from exc
 
     def _usage_from_response(self, response: dict) -> dict:

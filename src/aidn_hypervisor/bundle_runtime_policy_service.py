@@ -546,6 +546,15 @@ class BundleRuntimePolicyService:
             ]
             changed = process_state_changed or lifecycle_state_changed
             for runtime in candidates:
+                # The Resident Steward is a managed process owned by
+                # ResidentInferenceAdapter, not by the bundle inventory.  It
+                # deliberately has a synthetic ``resident-steward:*`` bundle
+                # id, so the generic bundle health reconciler cannot resolve a
+                # plugin for it and would incorrectly mark a healthy process
+                # as FAILED.  The resident adapter performs its own bounded
+                # provider probe at start and tracks subsequent process exits.
+                if str((runtime.metadata or {}).get("resident_adapter", "")).lower() == "true":
+                    continue
                 # A provider cooldown is an intentional circuit-breaker state,
                 # not a stale health probe.  Keep it visible until the
                 # cooldown expires or an explicit retry/reset clears it.

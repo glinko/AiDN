@@ -818,7 +818,18 @@ class ResidentInferenceAdapter:
             raise ResidentInferenceError("resident provider cannot invoke inference", details={"code": "INFERENCE_PROVIDER_INVOKE_UNSUPPORTED"})
         timeout = None if timeout_seconds is None else max(0.1, min(3600.0, float(timeout_seconds)))
         if timeout is None:
-            return invoke(task, runtime)
+            try:
+                return invoke(task, runtime)
+            except ResidentInferenceError:
+                raise
+            except Exception as error:
+                raise ResidentInferenceError(
+                    "resident provider invocation failed",
+                    details={
+                        "code": "INFERENCE_PROVIDER_ERROR",
+                        "message": str(error)[:512] or error.__class__.__name__,
+                    },
+                ) from error
         executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="aidn-steward-infer")
         future = executor.submit(invoke, task, runtime)
         try:
@@ -828,6 +839,20 @@ class ResidentInferenceAdapter:
             raise ResidentInferenceError(
                 "resident inference request timed out",
                 details={"code": "INFERENCE_REQUEST_TIMEOUT", "timeout_seconds": timeout},
+            ) from error
+        except ResidentInferenceError:
+            raise
+        except Exception as error:
+            # Provider transports are an external boundary.  Convert their
+            # socket/HTTP failures into the stable adapter error so Dashboard
+            # callers receive an actionable 4xx payload instead of an opaque
+            # FastAPI 500 traceback.
+            raise ResidentInferenceError(
+                "resident provider invocation failed",
+                details={
+                    "code": "INFERENCE_PROVIDER_ERROR",
+                    "message": str(error)[:512] or error.__class__.__name__,
+                },
             ) from error
         finally:
             executor.shutdown(wait=False, cancel_futures=True)

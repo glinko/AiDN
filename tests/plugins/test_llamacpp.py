@@ -33,7 +33,14 @@ class StubLlamaCppPlugin(LlamaCppPlugin):
         self.raise_error = raise_error
         self.calls: list[tuple[str, str, dict | None]] = []
 
-    def _request_json(self, method: str, url: str, payload: dict | None = None) -> dict:
+    def _request_json(
+        self,
+        method: str,
+        url: str,
+        payload: dict | None = None,
+        *,
+        timeout_seconds: float = 5,
+    ) -> dict:
         self.calls.append((method, url, payload))
         if self.raise_error is not None:
             raise self.raise_error
