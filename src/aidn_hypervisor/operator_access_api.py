@@ -130,6 +130,13 @@ class ModelInstallOperationRequest(BaseModel):
     model_id: str = Field(min_length=1, max_length=512)
     source_url: str = Field(min_length=1, max_length=2048)
     requested_by: str = Field(default="operator-dashboard", min_length=1, max_length=128)
+    expected_sha256: str | None = Field(
+        default=None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-fA-F]{64}$",
+    )
+    expected_bytes: int | None = Field(default=None, gt=0)
     runtime_parameter_policy: dict[str, Any] = Field(default_factory=dict, max_length=16)
     resident_adapter_requested: bool = False
     resident_execution_profile: str | None = Field(default=None, max_length=32)

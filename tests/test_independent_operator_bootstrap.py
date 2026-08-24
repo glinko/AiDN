@@ -1,3 +1,4 @@
+import ast
 import shutil
 import subprocess
 from pathlib import Path
@@ -100,6 +101,28 @@ def test_release_operator_bootstrap_uses_safe_defaults_and_user_systemd() -> Non
     assert "model_prefetch_progress" in script
     assert "AIDN_PREFETCH_MAX_BYTES" in script
     assert ".aidn-prefetch.json" in script
+    assert "available_disk_bytes()" in script
+    assert "expected_sha256" in script
+    assert "expected_bytes" in script
+    assert "integrity_mode" in script
+    assert "temporary.replace(target)" in script
+    assert "pinned artifact SHA-256 mismatch" in script
+    assert "pinned artifact size mismatch" in script
+    assert "@23749fefcc72300e3a2ad315e1317431b06b590a" in script
+    assert "@daeb8e2d528a760970442092f6bf1e55c3b659eb" in script
+    assert "@bc640142c66e1fdd12af0bd68f40445458f3869b" in script
+    assert "@7c41481f57cb95916b40956ab2f0b139b296d974" in script
+    assert "@530227a7d994db8eca5ab5ced2fb692b614357fd" in script
+    for digest in (
+        "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031",
+        "d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5",
+        "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+        "d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785",
+        "500a8806e85ee9c83f3ae08420295592451379b4f8cf2d0f41c15dffeb6b81f0",
+    ):
+        assert digest in script
+    for size in ("639446688", "1282439264", "2497280256", "5027783488", "9001752960"):
+        assert f"'{size}'" in script
     assert "[MODEL CACHE PREFETCH]" in script
     assert "installation-plan.json" in script
     assert "AIDN_INSTALLATION_SETUP_MODE" in script
@@ -123,6 +146,24 @@ def test_release_operator_bootstrap_uses_safe_defaults_and_user_systemd() -> Non
     assert "aidn-operator-wrapper.sh" in script
     assert "master-key-file" in script
     assert "ln -sfn" in script
+
+
+def test_release_operator_bootstrap_prefetch_worker_is_valid_python_and_verifies_before_replace() -> None:
+    script = Path("tools/aidn-operator-bootstrap-ubuntu.sh").read_text(encoding="utf-8")
+    worker_marker = 'nohup "$prefetch_python" - '
+    worker_start = script.index("import hashlib\n", script.index(worker_marker))
+    worker_end = script.index("\nPY\n  model_prefetch_pid", worker_start)
+    worker = script[worker_start:worker_end]
+
+    ast.parse(worker)
+    assert worker.index("sha256 = digest.hexdigest()") < worker.index(
+        "temporary.replace(target)"
+    )
+    assert worker.index("temporary.replace(target)") < worker.index(
+        'write_state(\n        "completed"'
+    )
+    assert "sha256_file(target)" in worker
+    assert "shutil.disk_usage(temporary.parent).free" in worker
 
 
 def test_release_operator_bootstrap_generates_assisted_wrapper_with_nounset(

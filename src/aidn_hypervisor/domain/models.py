@@ -95,6 +95,8 @@ class ModelInstallRequest(BaseModel):
     model_id: str
     source_url: str
     requested_by: str
+    expected_sha256: str | None = Field(default=None, min_length=64, max_length=64, pattern=r"^[0-9a-fA-F]{64}$")
+    expected_bytes: int | None = Field(default=None, gt=0)
     runtime_parameter_policy: dict[str, object] = Field(default_factory=dict)
     resident_adapter_requested: bool = False
     resident_execution_profile: str | None = None

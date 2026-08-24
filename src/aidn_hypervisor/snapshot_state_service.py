@@ -573,7 +573,12 @@ class SnapshotStateService:
                     "resident_adapter_error",
                 ):
                     restored_job.pop(optional_field, None)
-            for optional_field in ("resident_adapter_id", "runtime_parameter_policy"):
+            for optional_field in (
+                "expected_sha256",
+                "expected_bytes",
+                "resident_adapter_id",
+                "runtime_parameter_policy",
+            ):
                 if restored_job.get(optional_field) is None:
                     restored_job.pop(optional_field, None)
             self._host._model_installs[job.install_id] = restored_job

@@ -1,3 +1,4 @@
+import hashlib
 import json
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -19,6 +20,7 @@ from aidn_hypervisor.endpoint_publications.store import EndpointPublicationStore
 from aidn_hypervisor.endpoints.models import CreateEndpointCommand
 from aidn_hypervisor.endpoints.service import EndpointService
 from aidn_hypervisor.endpoints.store import EndpointStore
+from aidn_hypervisor.model_install_service import ModelInstallService
 from aidn_hypervisor.model_store import FileModelStore
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
@@ -688,7 +690,9 @@ def test_service_queues_selected_model_as_a_second_explicit_setup_step(
             setup_mode="ai_assisted",
             provider="llama.cpp",
             model_id="org/model",
-            model_source="https://example.test/model.gguf",
+            model_source="hf://org/model@0123456789abcdef0123456789abcdef01234567/model.gguf",
+            model_expected_sha256="b" * 64,
+            model_expected_bytes=123,
             endpoint_action="draft",
         ),
     )
@@ -717,7 +721,12 @@ def test_service_queues_selected_model_as_a_second_explicit_setup_step(
 
     assert queued["status"] == "MODEL_INSTALL_QUEUED"
     assert queued["application"]["model"]["status"] == "QUEUED"
+    assert queued["application"]["model"]["expected_sha256"] == "b" * 64
+    assert queued["application"]["model"]["expected_bytes"] == 123
     assert queued["application"]["model"]["install_id"]
+    queued_job = service._model_installs[queued["application"]["model"]["install_id"]]
+    assert queued_job["expected_sha256"] == "b" * 64
+    assert queued_job["expected_bytes"] == 123
     assert queued["workflow"]["next_action"]["id"] == "process_model_install"
 
     def process_selected_model(*, install_id: str, limit: int | None = None) -> list[dict]:
@@ -3312,6 +3321,67 @@ def test_service_process_model_installs_materializes_artifact_and_marks_job_comp
     ]
 
 
+def test_service_verifies_expected_model_artifact_on_fallback(tmp_path) -> None:
+    source_artifact = tmp_path / "pinned.gguf"
+    source_bytes = b"pinned-model"
+    source_artifact.write_bytes(source_bytes)
+    expected_sha256 = hashlib.sha256(source_bytes).hexdigest()
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})),
+        bundles=[],
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+        model_store=FileModelStore(tmp_path / "models"),
+    )
+
+    install = service.request_model_install(
+        provider_type="fake-managed",
+        model_id="pinned.gguf",
+        source_url=source_artifact.as_uri(),
+        requested_by="operator-a",
+        expected_sha256=expected_sha256,
+        expected_bytes=len(source_bytes),
+    )
+
+    processed = service.process_model_installs()
+
+    assert processed[0]["status"] == "completed"
+    assert processed[0]["artifact_sha256"] == expected_sha256
+    assert processed[0]["expected_bytes"] == len(source_bytes)
+    assert Path(install["target_path"]).read_bytes() == source_bytes
+
+
+def test_service_rejects_expected_model_artifact_mismatch(tmp_path) -> None:
+    source_artifact = tmp_path / "tampered-pinned.gguf"
+    source_artifact.write_bytes(b"tampered-model")
+    service = HypervisorService(
+        queue=InMemoryTaskQueue(),
+        scheduler=Scheduler(),
+        resources=ResourceOrchestrator(NodeCapacity(cpu_cores=8.0, ram_mb=16384, vram_mb={"gpu0": 4096})),
+        bundles=[],
+        plugins=_registry(),
+        runtimes=ProviderProcessManager(),
+        model_store=FileModelStore(tmp_path / "models"),
+    )
+
+    install = service.request_model_install(
+        provider_type="fake-managed",
+        model_id="tampered-pinned.gguf",
+        source_url=source_artifact.as_uri(),
+        requested_by="operator-a",
+        expected_sha256=hashlib.sha256(b"expected-model").hexdigest(),
+        expected_bytes=len(b"expected-model"),
+    )
+
+    processed = service.process_model_installs()
+
+    assert processed[0]["status"] == "failed"
+    assert "SHA-256 mismatch" in processed[0]["last_error"] or "size mismatch" in processed[0]["last_error"]
+    assert not Path(install["target_path"]).exists()
+
+
 def test_service_adopts_completed_model_prefetch_without_redownloading(tmp_path) -> None:
     service = HypervisorService(
         queue=InMemoryTaskQueue(),
@@ -3340,7 +3410,9 @@ def test_service_adopts_completed_model_prefetch_without_redownloading(tmp_path)
                 "provider_type": "fake-managed",
                 "model_id": "prefetched.gguf",
                 "source_url": source.as_uri(),
-                "sha256": "prefetch-sha256",
+                "sha256": hashlib.sha256(b"prefetched").hexdigest(),
+                "expected_sha256": hashlib.sha256(b"prefetched").hexdigest(),
+                "expected_bytes": len(b"prefetched"),
             }
         ),
         encoding="utf-8",
@@ -3351,8 +3423,37 @@ def test_service_adopts_completed_model_prefetch_without_redownloading(tmp_path)
 
     assert processed[0]["status"] == "completed"
     assert processed[0]["prefetched"] is True
-    assert processed[0]["prefetch_sha256"] == "prefetch-sha256"
+    assert processed[0]["prefetch_sha256"] == hashlib.sha256(b"prefetched").hexdigest()
     assert target.read_text(encoding="utf-8") == "prefetched"
+
+
+def test_service_rejects_tampered_completed_model_prefetch(tmp_path) -> None:
+    target = tmp_path / "models" / "fake-managed" / "tampered.gguf"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("tampered", encoding="utf-8")
+    source_url = (tmp_path / "source.gguf").as_uri()
+    declared_sha256 = hashlib.sha256(b"expected").hexdigest()
+    Path(f"{target}.aidn-prefetch.json").write_text(
+        json.dumps(
+            {
+                "status": "completed",
+                "provider_type": "fake-managed",
+                "model_id": "tampered.gguf",
+                "source_url": source_url,
+                "sha256": declared_sha256,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert ModelInstallService._prefetch_state_for_job(
+        {
+            "provider_type": "fake-managed",
+            "model_id": "tampered.gguf",
+            "source_url": source_url,
+            "target_path": str(target),
+        }
+    ) == {}
 
 
 def test_service_targeted_model_processing_does_not_consume_other_queue_entries(

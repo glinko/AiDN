@@ -25,7 +25,7 @@ release evidence, this roadmap uses the following meanings:
 | Surface | Implemented on `main` | Still required for public use |
 | --- | --- | --- |
 | Hypervisor core | Provider runtimes, model/Bundle/Endpoint flows, Resource Broker, scheduler, runtime port allocation, events/Hooks, MCP, Journey, and lifecycle foundations | Production configuration profile, Internet exposure review, backup/restore drill, release packaging, and public smoke evidence |
-| Resident Steward | CPU-first model lifecycle, worker, event cursor, bounded context, Reasoning Router, escalation tasks, action guard/executor, policy UI, MCP, GPU-burst fallback, and a plan-bound assisted-installation executor | Real first-boot acceptance, model artifact distribution/checksum policy, recovery UX, and operational latency/resource measurements |
+| Resident Steward | CPU-first model lifecycle, worker, event cursor, bounded context, Reasoning Router, escalation tasks, action guard/executor, policy UI, MCP, GPU-burst fallback, and a plan-bound assisted-installation executor | Real first-boot acceptance, recovery UX, and operational latency/resource measurements |
 | Interactive installer | Required questions, `manual`/`ai_assisted` modes, structured owner-only plan, resumable handoff, and Provider -> model -> Bundle -> private Endpoint -> broker admission/readiness workflow | Ubuntu 22.04/24.04 fresh/rerun/recovery matrix and release evidence; public publication remains a separate operator/validation boundary |
 | Lifecycle | Dependency plans, Bundle/Endpoint transitions, local removal, tombstones, Runtime Reset, operator API, Bundle/Provider actions, and Runtime Reset UI | Complete CLI/MCP lifecycle surface, Validation/Node lifecycle, configuration and identity-preserving reset, decommission, Factory Reset, ArtifactGC, and destructive-host acceptance |
 | Public website | WEB-0001 React application, content, responsive design, demo Network/Explorer/Faucet flows, and a successful production frontend build | The deployed Caddy route still returns `503` for `/api/site/v1/*`; Website Backend, indexer, live Explorer, Faucet facade, release feed, SEO and public deployment acceptance are open |
@@ -656,6 +656,10 @@ reviewed Provider, model source, private Endpoint action, and handoff target.
   keeping provider installation, model downloads, resource admission, and
   publication explicitly review/policy gated.
 - [x] Add bounded model-source validation and structured completion output.
+- [x] Pin the built-in Assisted Qwen3 catalog to immutable revisions, exact
+  byte counts, and SHA-256 digests. The installer now performs a disk-space
+  preflight and verifies a downloaded or reused target before atomic cache
+  promotion; custom sources retain bounded computed-only integrity.
 - [x] Document the CLI flow in
   [interactive Hypervisor installation](./docs/development/interactive-hypervisor-installation.md).
 - [x] Add the read-only Dashboard installation-plan surface and a narrow

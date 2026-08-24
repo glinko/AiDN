@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -25,6 +26,8 @@ class ModelInstallService:
         model_id: str,
         source_url: str,
         requested_by: str,
+        expected_sha256: str | None = None,
+        expected_bytes: int | None = None,
         runtime_parameter_policy: dict | None = None,
         resident_adapter_requested: bool = False,
         resident_execution_profile: str | None = None,
@@ -38,6 +41,11 @@ class ModelInstallService:
             provider_type=provider_type,
             model_id=model_id,
             source_url=source_url,
+        )
+        expected_sha256, expected_bytes = self._normalize_expected_artifact_metadata(
+            expected_sha256,
+            expected_bytes,
+            source_kind=source.get("source_kind", "artifact"),
         )
         install_id = str(uuid4())
         target_path = str(
@@ -72,6 +80,13 @@ class ModelInstallService:
         for key in ("source_kind", "provider_model_reference", "resolved_source_url"):
             if key in source:
                 job[key] = source[key]
+        if expected_sha256 is not None:
+            job.update(
+                {
+                    "expected_sha256": expected_sha256,
+                    "expected_bytes": expected_bytes,
+                }
+            )
         if runtime_parameter_policy:
             job["runtime_parameter_policy"] = {
                 key: value.model_dump(mode="json", by_alias=True)
@@ -139,6 +154,7 @@ class ModelInstallService:
                 },
             )
             self._host._persist_state()
+            artifact_verified = False
             try:
                 source_kind = job.get("source_kind", "artifact")
                 if source_kind == "provider_reference":
@@ -157,12 +173,26 @@ class ModelInstallService:
                             str(job.get("resolved_source_url", job["source_url"])),
                             str(job["target_path"]),
                         )
+                    expected_sha256 = str(job.get("expected_sha256") or "") or None
+                    expected_bytes = job.get("expected_bytes")
+                    if expected_sha256 is not None:
+                        job["artifact_sha256"] = self._verify_artifact(
+                            Path(str(job["target_path"])),
+                            expected_sha256=expected_sha256,
+                            expected_bytes=expected_bytes,
+                        )
+                        artifact_verified = True
                     if job.get("provider_type") == "ollama":
                         self._create_ollama_model(
                             model_id=str(job["model_id"]),
                             target_path=str(job["target_path"]),
                         )
             except Exception as error:
+                if not artifact_verified and job.get("expected_sha256"):
+                    try:
+                        Path(str(job["target_path"])).unlink(missing_ok=True)
+                    except OSError:
+                        pass
                 job["status"] = "failed"
                 job["last_error"] = str(error)
                 self._host.record_event(
@@ -241,8 +271,99 @@ class ModelInstallService:
                 pass
             return {}
         if status == "completed" and target.is_file():
+            declared_sha256 = str(marker.get("sha256") or "").lower()
+            if not re.fullmatch(r"[0-9a-f]{64}", declared_sha256):
+                return {}
+            try:
+                digest = hashlib.sha256()
+                with target.open("rb") as stream:
+                    while chunk := stream.read(1024 * 1024):
+                        digest.update(chunk)
+                actual_sha256 = digest.hexdigest()
+                expected_bytes = marker.get("expected_bytes")
+                target_size = target.stat().st_size
+            except (OSError, TypeError, ValueError):
+                return {}
+            if actual_sha256 != declared_sha256:
+                return {}
+            if expected_bytes is not None:
+                try:
+                    if target_size != int(expected_bytes):
+                        return {}
+                except (TypeError, ValueError):
+                    return {}
+            expected_sha256 = str(marker.get("expected_sha256") or "").lower()
+            if expected_sha256 and actual_sha256 != expected_sha256:
+                return {}
+            job_expected_sha256 = str(job.get("expected_sha256") or "").lower()
+            if job_expected_sha256 and expected_sha256 != job_expected_sha256:
+                return {}
+            job_expected_bytes = job.get("expected_bytes")
+            if job_expected_bytes is not None:
+                try:
+                    if int(marker.get("expected_bytes")) != int(job_expected_bytes):
+                        return {}
+                except (TypeError, ValueError):
+                    return {}
             return marker
         return {}
+
+    @staticmethod
+    def _normalize_expected_artifact_metadata(
+        expected_sha256: str | None,
+        expected_bytes: int | None,
+        *,
+        source_kind: str,
+    ) -> tuple[str | None, int | None]:
+        normalized_sha256 = str(expected_sha256 or "").strip().lower() or None
+        if normalized_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", normalized_sha256):
+            raise ValueError("expected_sha256 must be a 64-character hexadecimal digest")
+        normalized_bytes = expected_bytes
+        if normalized_bytes is not None:
+            if isinstance(normalized_bytes, bool):
+                raise ValueError("expected_bytes must be a positive integer")
+            try:
+                normalized_bytes = int(normalized_bytes)
+            except (TypeError, ValueError) as error:
+                raise ValueError("expected_bytes must be a positive integer") from error
+            if normalized_bytes <= 0:
+                raise ValueError("expected_bytes must be a positive integer")
+        if (normalized_sha256 is None) != (normalized_bytes is None):
+            raise ValueError("expected_sha256 and expected_bytes must be supplied together")
+        if source_kind == "provider_reference" and normalized_sha256 is not None:
+            raise ValueError("artifact integrity metadata is not valid for a provider reference")
+        return normalized_sha256, normalized_bytes
+
+    @staticmethod
+    def _verify_artifact(
+        target: Path,
+        *,
+        expected_sha256: str,
+        expected_bytes: int | None,
+    ) -> str:
+        if not target.is_file():
+            raise ValueError("model artifact is missing after materialization")
+        try:
+            actual_bytes = target.stat().st_size
+        except OSError as error:
+            raise ValueError(f"model artifact metadata is unavailable: {error}") from error
+        if expected_bytes is not None and actual_bytes != int(expected_bytes):
+            raise ValueError(
+                f"model artifact size mismatch: expected {expected_bytes} bytes, got {actual_bytes}"
+            )
+        digest = hashlib.sha256()
+        try:
+            with target.open("rb") as stream:
+                while chunk := stream.read(1024 * 1024):
+                    digest.update(chunk)
+        except OSError as error:
+            raise ValueError(f"model artifact could not be hashed: {error}") from error
+        actual_sha256 = digest.hexdigest()
+        if actual_sha256 != expected_sha256:
+            raise ValueError(
+                f"model artifact SHA-256 mismatch: expected {expected_sha256}, got {actual_sha256}"
+            )
+        return actual_sha256
 
     @staticmethod
     def _validate_model_id(model_id: str) -> str:
@@ -280,7 +401,16 @@ class ModelInstallService:
             hf_parts = [part for part in [parsed.netloc, *parsed.path.strip("/").split("/")] if part]
             if len(hf_parts) < 2:
                 raise ValueError("hf:// source must include a repository id")
-            repo = "/".join(hf_parts[:2])
+            owner, repository_ref = hf_parts[:2]
+            if "@" in owner or "@" in "/".join(hf_parts[2:]):
+                raise ValueError("hf:// source must not contain credentials or an @ character outside its revision")
+            repository = repository_ref
+            revision = "main"
+            if "@" in repository_ref:
+                repository, revision = repository_ref.rsplit("@", 1)
+                if not repository or not re.fullmatch(r"[0-9a-fA-F]{40}", revision):
+                    raise ValueError("hf:// source revision must be a 40-character hexadecimal commit")
+            repo = f"{owner}/{repository}"
             file_path = "/".join(hf_parts[2:])
             if provider == "vllm" and not file_path:
                 return {
@@ -292,7 +422,7 @@ class ModelInstallService:
                 raise ValueError("llama.cpp and Ollama require a concrete Hugging Face model file")
             return {
                 "source_url": source,
-                "resolved_source_url": f"https://huggingface.co/{repo}/resolve/main/{file_path}",
+                "resolved_source_url": f"https://huggingface.co/{repo}/resolve/{revision}/{file_path}",
             }
 
         if parsed.netloc.lower() in {"huggingface.co", "www.huggingface.co"}:

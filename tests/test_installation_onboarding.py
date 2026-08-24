@@ -58,6 +58,32 @@ def test_model_source_rejects_credentials_query_and_non_https() -> None:
         validate_model_source("http://example.test/model.gguf", provider="llama.cpp")
 
 
+def test_hf_model_source_accepts_an_immutable_revision() -> None:
+    source = "hf://org/model@0123456789abcdef0123456789abcdef01234567/model.gguf"
+    assert validate_model_source(source, provider="llama.cpp") == source
+    with pytest.raises(ValueError, match="40-character"):
+        validate_model_source("hf://org/model@main/model.gguf", provider="llama.cpp")
+
+
+def test_plan_persists_pinned_model_integrity_metadata(tmp_path: Path) -> None:
+    plan = InstallationOnboardingPlan(
+        setup_mode="ai_assisted",
+        provider="llama.cpp",
+        model_id="org/model",
+        model_source="hf://org/model@0123456789abcdef0123456789abcdef01234567/model.gguf",
+        model_expected_sha256="a" * 64,
+        model_expected_bytes=123,
+    )
+
+    payload = write_installation_plan(tmp_path / "installation-plan.json", plan)
+
+    assert payload["model"]["expected_sha256"] == "a" * 64
+    assert payload["model"]["expected_bytes"] == 123
+    projection = read_installation_plan(tmp_path / "installation-plan.json")
+    assert projection["model"]["expected_sha256"] == "a" * 64
+    assert projection["model"]["expected_bytes"] == 123
+
+
 def test_provider_and_model_dependency_is_validated() -> None:
     with pytest.raises(ValueError, match="without a provider"):
         InstallationOnboardingPlan(setup_mode="ai_assisted", model_id="org/model")

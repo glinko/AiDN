@@ -2083,6 +2083,8 @@ class HypervisorService:
         model_id: str,
         source_url: str,
         requested_by: str,
+        expected_sha256: str | None = None,
+        expected_bytes: int | None = None,
         runtime_parameter_policy: dict | None = None,
         resident_adapter_requested: bool = False,
         resident_execution_profile: str | None = None,
@@ -2094,6 +2096,8 @@ class HypervisorService:
             model_id=model_id,
             source_url=source_url,
             requested_by=requested_by,
+            expected_sha256=expected_sha256,
+            expected_bytes=expected_bytes,
             runtime_parameter_policy=runtime_parameter_policy,
             resident_adapter_requested=resident_adapter_requested,
             resident_execution_profile=resident_execution_profile,
@@ -2544,10 +2548,20 @@ class HypervisorService:
             model_id=model_id,
             source_url=source_url,
             requested_by=actor,
+            expected_sha256=model.get("expected_sha256"),
+            expected_bytes=model.get("expected_bytes"),
         )
         application["model"] = {
             "id": model_id,
             "source": source_url,
+            **(
+                {
+                    "expected_sha256": model.get("expected_sha256"),
+                    "expected_bytes": model.get("expected_bytes"),
+                }
+                if model.get("expected_sha256") is not None
+                else {}
+            ),
             "install_id": install["install_id"],
             "operation_id": operation_id,
             "idempotency_key": idempotency_key,

@@ -177,3 +177,14 @@ def test_hf_uri_resolves_namespace_repository_file() -> None:
     assert normalized["resolved_source_url"] == (
         "https://huggingface.co/org/model/resolve/main/qwen.gguf"
     )
+
+
+def test_pinned_hf_uri_resolves_immutable_repository_revision() -> None:
+    normalized = ModelInstallService._normalize_source(
+        provider_type="llama.cpp",
+        model_id="qwen.gguf",
+        source_url="hf://org/model@0123456789abcdef0123456789abcdef01234567/qwen.gguf",
+    )
+    assert normalized["resolved_source_url"] == (
+        "https://huggingface.co/org/model/resolve/0123456789abcdef0123456789abcdef01234567/qwen.gguf"
+    )

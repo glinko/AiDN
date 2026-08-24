@@ -177,6 +177,8 @@ class ModelInstallSnapshot(BaseModel):
     target_path: str
     requested_by: str
     status: str
+    expected_sha256: str | None = None
+    expected_bytes: int | None = None
     bundle_id: str | None = None
     last_error: str | None = None
     resident_adapter_requested: bool = False

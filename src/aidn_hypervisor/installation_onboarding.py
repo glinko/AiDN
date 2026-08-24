@@ -42,6 +42,7 @@ def _set_owner_only_permissions(fd: int) -> None:
     if fchmod is not None:
         fchmod(fd, 0o600)
 MODEL_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$")
+HF_REVISION_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
 def _clean(value: object) -> str:
@@ -65,13 +66,22 @@ def validate_model_source(value: str, *, provider: str) -> str:
     source = _clean(value)
     if not source:
         raise ValueError("setup model source is required when a model is selected")
-    if len(source) > 2048 or any(char in source for char in ("@", "?", "#")):
+    if len(source) > 2048 or any(char in source for char in ("?", "#")):
         raise ValueError("setup model source must be a bounded URL without credentials or query data")
     if source.startswith("hf://"):
         parts = [part for part in source[5:].strip("/").split("/") if part]
         if len(parts) < 2:
             raise ValueError("hf:// source must include an owner and repository")
+        repository = parts[1]
+        if "@" in repository:
+            repository_name, revision = repository.rsplit("@", 1)
+            if not repository_name or not HF_REVISION_PATTERN.fullmatch(revision):
+                raise ValueError("hf:// source revision must be a 40-character hexadecimal commit")
+        if any("@" in part for part in [parts[0], *parts[2:]]):
+            raise ValueError("hf:// source must not contain credentials or an @ character outside its revision")
         return source
+    if "@" in source:
+        raise ValueError("setup model source must be a URL without credentials")
     parsed = urlparse(source)
     if parsed.scheme != "https" or not parsed.hostname:
         raise ValueError("setup model source must be an HTTPS URL or hf:// reference")
@@ -92,6 +102,8 @@ class InstallationOnboardingPlan:
     provider: str = "skip"
     model_id: str = "skip"
     model_source: str | None = None
+    model_expected_sha256: str | None = None
+    model_expected_bytes: int | None = None
     endpoint_action: str = "skip"
     handoff: str = "dashboard"
     schema_version: int = 1
@@ -113,23 +125,46 @@ class InstallationOnboardingPlan:
             raise ValueError("setup handoff must be continue or dashboard")
         model_id = validate_model_id(self.model_id)
         model_source = _clean(self.model_source) or None
+        model_expected_sha256 = _clean(self.model_expected_sha256).lower() or None
+        if model_expected_sha256 is not None and not re.fullmatch(r"[0-9a-f]{64}", model_expected_sha256):
+            raise ValueError("model expected SHA-256 must be a 64-character hexadecimal digest")
+        model_expected_bytes = self.model_expected_bytes
+        if model_expected_bytes is not None:
+            if isinstance(model_expected_bytes, bool):
+                raise ValueError("model expected byte size must be a positive integer")
+            try:
+                model_expected_bytes = int(model_expected_bytes)
+            except (TypeError, ValueError) as error:
+                raise ValueError("model expected byte size must be a positive integer") from error
+            if model_expected_bytes <= 0:
+                raise ValueError("model expected byte size must be a positive integer")
+        if (model_expected_sha256 is None) != (model_expected_bytes is None):
+            raise ValueError("model expected SHA-256 and byte size must be supplied together")
         if provider == "skip":
-            if model_id != "skip" or model_source is not None:
+            if model_id != "skip" or model_source is not None or model_expected_sha256 is not None:
                 raise ValueError("a model cannot be selected without a provider")
             if endpoint_action != "skip":
                 raise ValueError("an endpoint action requires a provider and model")
         elif model_id == "skip":
-            if model_source is not None or endpoint_action != "skip":
+            if (
+                model_source is not None
+                or model_expected_sha256 is not None
+                or endpoint_action != "skip"
+            ):
                 raise ValueError("a model must be selected before endpoint setup")
         else:
             if model_source is not None:
                 model_source = validate_model_source(model_source, provider=provider)
+            if model_expected_sha256 is not None and model_source is None:
+                raise ValueError("model integrity metadata requires a model source")
             if endpoint_action != "skip" and model_source is None:
                 raise ValueError("endpoint setup requires a model source")
         object.__setattr__(self, "setup_mode", mode)
         object.__setattr__(self, "provider", provider)
         object.__setattr__(self, "model_id", model_id)
         object.__setattr__(self, "model_source", model_source)
+        object.__setattr__(self, "model_expected_sha256", model_expected_sha256)
+        object.__setattr__(self, "model_expected_bytes", model_expected_bytes)
         object.__setattr__(self, "endpoint_action", endpoint_action)
         object.__setattr__(self, "handoff", handoff)
 
@@ -150,16 +185,24 @@ class InstallationOnboardingPlan:
                 next_action = "review_ai_plan_in_dashboard"
             else:
                 next_action = "resident_steward_review"
+        model_payload: dict[str, object] = {
+            "id": self.model_id,
+            "source": self.model_source,
+        }
+        if self.model_expected_sha256 is not None:
+            model_payload.update(
+                {
+                    "expected_sha256": self.model_expected_sha256,
+                    "expected_bytes": self.model_expected_bytes,
+                }
+            )
         return {
             "schema_version": self.schema_version,
             "created_at": datetime.now(UTC).isoformat(),
             "mode": self.setup_mode,
             "ai_assisted": self.ai_assisted,
             "provider": self.provider,
-            "model": {
-                "id": self.model_id,
-                "source": self.model_source,
-            },
+            "model": model_payload,
             "endpoint": {"requested_action": self.endpoint_action},
             "handoff": self.handoff,
             "status": "READY_FOR_REVIEW" if self.ai_assisted else "MANUAL",
@@ -278,6 +321,8 @@ def read_installation_plan(
             provider=str(payload.get("provider") or "skip"),
             model_id=str(model.get("id") or "skip"),
             model_source=model.get("source"),
+            model_expected_sha256=model.get("expected_sha256"),
+            model_expected_bytes=model.get("expected_bytes"),
             endpoint_action=str(
                 (payload.get("endpoint") or {}).get("requested_action")
                 if isinstance(payload.get("endpoint"), dict)
@@ -788,6 +833,15 @@ def prepare_assisted_installation_review(
             "endpoint": "bundle_and_endpoint_lifecycle_required",
         },
     }
+    if model.get("expected_sha256") is not None:
+        application_model = application["model"]
+        if isinstance(application_model, dict):
+            application_model.update(
+                {
+                    "expected_sha256": model.get("expected_sha256"),
+                    "expected_bytes": model.get("expected_bytes"),
+                }
+            )
 
     if provider == "skip":
         status = "COMPLETED"

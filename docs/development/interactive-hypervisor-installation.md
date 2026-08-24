@@ -49,21 +49,44 @@ The built-in catalog currently contains Apache-2.0 Qwen3 GGUF choices:
 These are planning estimates for one active request and roughly 8K context;
 larger context windows, batching, and KV-cache growth require additional
 capacity. The operator can choose `Custom model` to enter another bounded
-model ID and public source. Once a concrete `llama.cpp` artifact is selected,
-the installer starts a bounded background cache prefetch immediately. This
-does not install a provider, register a model, start a runtime, or publish an
-Endpoint; those lifecycle actions remain explicit and reviewable.
+model ID and public source. Built-in entries resolve immutable Hugging Face
+revisions and are accepted only when both the exact byte count and SHA-256
+match the catalog below:
+
+| Model | Hugging Face revision | Exact bytes | SHA-256 |
+| --- | --- | ---: | --- |
+| Qwen3 0.6B Q8_0 | `23749fefcc72300e3a2ad315e1317431b06b590a` | `639446688` | `9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031` |
+| Qwen3 1.7B Q4_K_M | `daeb8e2d528a760970442092f6bf1e55c3b659eb` | `1282439264` | `d2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5` |
+| Qwen3 4B Q4_K_M | `bc640142c66e1fdd12af0bd68f40445458f3869b` | `2497280256` | `7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5` |
+| Qwen3 8B Q4_K_M | `7c41481f57cb95916b40956ab2f0b139b296d974` | `5027783488` | `d98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785` |
+| Qwen3 14B Q4_K_M | `530227a7d994db8eca5ab5ced2fb692b614357fd` | `9001752960` | `500a8806e85ee9c83f3ae08420295592451379b4f8cf2d0f41c15dffeb6b81f0` |
+
+Once a concrete `llama.cpp` artifact is selected, the installer performs a
+free-space preflight before starting the bounded background cache prefetch. It
+reserves the artifact size, any existing target being replaced, and a safety
+margin for the temporary file. A pinned artifact is never moved into the final
+cache path until its size and SHA-256 pass; the state marker records
+`integrity_mode: pinned`. Custom sources remain supported: they use the same
+atomic download and byte-limit path, but are marked `computed_only` unless the
+source exactly matches a built-in catalog entry. A custom Hugging Face source
+may include `@<40-hex-revision>` to avoid a moving `main` reference. This
+prefetch does not install a provider, register a model, start a runtime, or
+publish an Endpoint; those lifecycle actions remain explicit and reviewable.
 
 ### Background model prefetch
 
 The prefetch worker downloads only public HTTPS/Hugging Face artifacts and
 writes atomically to the selected node data directory. It keeps an owner-only
 state marker next to the final model path and updates `status`, byte counts,
-percent, PID, and SHA-256. The CLI renders a snapshot progress bar between
-questions so the input prompt is never overwritten by a competing writer.
+percent, PID, expected integrity metadata, and SHA-256. On rerun it re-hashes
+an existing completed target before reusing it, so a corrupted cache is never
+silently adopted. The CLI renders a snapshot progress bar between questions so
+the input prompt is never overwritten by a competing writer.
 When the later model-install action runs, the Hypervisor adopts a matching
 completed prefetch instead of downloading the same artifact a second time. A
-failed or stale prefetch safely falls back to the normal model-install worker.
+failed or stale prefetch safely falls back to the normal model-install worker;
+the installer carries pinned size/SHA-256 metadata into that job, so the
+fallback is also fail-closed before an artifact can become `completed`.
 The default prefetch ceiling is 64 GiB and can be changed for a controlled
 installation with `AIDN_PREFETCH_MAX_BYTES`.
 

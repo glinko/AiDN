@@ -64,8 +64,10 @@ are never printed.
 
 Finite-choice prompts are numbered: enter 1, 2, 3, and so on (or press Enter
 for the marked default). AI-assisted setup includes a reviewed Qwen3 GGUF
-model catalog with approximate download, VRAM, and RAM requirements; Custom
-model remains available for a public HTTPS or hf:// reference.
+model catalog with approximate download, VRAM, and RAM requirements. Built-in
+artifacts use immutable Hugging Face revisions and pinned size/SHA-256 checks;
+Custom model remains available for a public HTTPS or hf:// reference (optionally
+with @40-hex-revision).
 
 The first interactive question is the setup mode. Manual keeps the existing
 step-by-step flow. AI-assisted still asks and validates every required node
@@ -179,13 +181,33 @@ model_source_to_download_url() {
     local reference="${source#hf://}"
     local owner="${reference%%/*}"
     local remainder="${reference#*/}"
-    local repository="${remainder%%/*}"
+    local repository_ref="${remainder%%/*}"
+    local repository="$repository_ref"
+    local revision='main'
+    if [[ "$repository_ref" == *@* ]]; then
+      repository="${repository_ref%@*}"
+      revision="${repository_ref#*@}"
+    fi
     local file_path="${remainder#*/}"
     [[ -n "$owner" && -n "$repository" && "$file_path" != "$remainder" ]] || return 1
-    printf 'https://huggingface.co/%s/%s/resolve/main/%s' "$owner" "$repository" "$file_path"
+    [[ "$revision" == 'main' || "$revision" =~ ^[0-9a-fA-F]{40}$ ]] || return 1
+    printf 'https://huggingface.co/%s/%s/resolve/%s/%s' "$owner" "$repository" "$revision" "$file_path"
     return 0
   fi
   printf '%s' "$source"
+}
+
+available_disk_bytes() {
+  local path="$1"
+  local existing_path="$path"
+  while [[ ! -e "$existing_path" && "$existing_path" != '/' ]]; do
+    existing_path="${existing_path%/*}"
+    [[ -n "$existing_path" ]] || existing_path='/'
+  done
+  local available_kib
+  available_kib="$(df -Pk "$existing_path" 2>/dev/null | awk 'NR == 2 { print $4; exit }')"
+  [[ "$available_kib" =~ ^[0-9]+$ ]] || return 1
+  printf '%s' "$((available_kib * 1024))"
 }
 
 start_model_prefetch() {
@@ -193,15 +215,18 @@ start_model_prefetch() {
   local model_id="$2"
   local source="$3"
   [[ "$provider" == 'llama.cpp' && "$model_id" != 'skip' && -n "$source" ]] || return 0
+  model_prefetch_status='preparing'
 
   local download_url
   download_url="$(model_source_to_download_url "$source")" || {
+    model_prefetch_status='skipped_source'
     printf '  [model download] skipped: source could not be resolved\n' >&2
     return 0
   }
   local prefetch_python
   prefetch_python="$(command -v python3 || command -v python || true)"
   if [[ -z "$prefetch_python" ]]; then
+    model_prefetch_status='skipped_python'
     printf '  [model download] skipped: Python 3 is not available for the background worker\n' >&2
     return 0
   fi
@@ -217,11 +242,21 @@ start_model_prefetch() {
   if [[ ! "$max_bytes" =~ ^[0-9]+$ || "$max_bytes" -le 0 ]]; then
     max_bytes=68719476736
   fi
+  local expected_sha256=''
+  local expected_bytes=''
+  local catalog_source
+  catalog_source="$(model_source_for_id "$model_id" || true)"
+  if [[ -n "$catalog_source" && "$source" == "$catalog_source" ]]; then
+    expected_sha256="$(model_expected_sha256_for_id "$model_id" || true)"
+    expected_bytes="$(model_expected_size_bytes_for_id "$model_id" || true)"
+  fi
   if ! mkdir -p "$model_dir" "$data_dir/logs"; then
+    model_prefetch_status='skipped_unwritable'
     printf '  [model download] skipped: model cache directory is not writable\n' >&2
     return 0
   fi
   if ! chmod 700 "$data_dir" "$data_dir/models" "$model_dir" "$data_dir/logs"; then
+    model_prefetch_status='skipped_permissions'
     printf '  [model download] skipped: could not secure model cache permissions\n' >&2
     return 0
   fi
@@ -230,13 +265,44 @@ start_model_prefetch() {
   model_prefetch_target="$prefetch_target"
   model_prefetch_source="$source"
   model_prefetch_python="$prefetch_python"
+  model_prefetch_expected_sha256="$expected_sha256"
+  model_prefetch_expected_bytes="$expected_bytes"
+
+  if [[ -n "$expected_bytes" ]]; then
+    if (( expected_bytes > max_bytes )); then
+      model_prefetch_status='skipped_limit'
+      printf '  [model download] skipped: pinned artifact is larger than AIDN_PREFETCH_MAX_BYTES (%s bytes)\n' "$max_bytes" >&2
+      return 0
+    fi
+    local existing_target_bytes=0
+    if [[ -f "$prefetch_target" ]]; then
+      existing_target_bytes="$(stat -c '%s' "$prefetch_target" 2>/dev/null || printf '0')"
+      [[ "$existing_target_bytes" =~ ^[0-9]+$ ]] || existing_target_bytes=0
+    fi
+    local disk_safety_bytes=$((256 * 1024 * 1024))
+    local required_disk_bytes=$((expected_bytes + existing_target_bytes + disk_safety_bytes))
+    local free_disk_bytes
+    free_disk_bytes="$(available_disk_bytes "$model_dir" || true)"
+    if [[ ! "$free_disk_bytes" =~ ^[0-9]+$ ]]; then
+      model_prefetch_status='skipped_disk_unknown'
+      printf '  [model download] skipped: free disk space could not be measured\n' >&2
+      return 0
+    fi
+    if (( free_disk_bytes < required_disk_bytes )); then
+      model_prefetch_status='skipped_disk'
+      printf '  [model download] skipped: need %s bytes free, only %s available\n' "$required_disk_bytes" "$free_disk_bytes" >&2
+      return 0
+    fi
+  fi
 
   nohup "$prefetch_python" - "$download_url" "$source" "$provider" "$model_id" \
     "$temporary_path" "$prefetch_target" "$state_path" "$max_bytes" \
+    "$expected_sha256" "$expected_bytes" \
     >"$log_path" 2>&1 <<'PY' &
 import hashlib
 import json
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -252,11 +318,23 @@ from urllib.request import Request, urlopen
     target_path,
     state_path,
     max_bytes_raw,
+    expected_sha256_raw,
+    expected_bytes_raw,
 ) = sys.argv[1:]
 max_bytes = int(max_bytes_raw)
+expected_sha256 = expected_sha256_raw.lower() or None
+if expected_sha256 is not None and (
+    len(expected_sha256) != 64
+    or any(character not in "0123456789abcdef" for character in expected_sha256)
+):
+    raise ValueError("invalid expected SHA-256 value")
+expected_bytes = int(expected_bytes_raw) if expected_bytes_raw else None
+if expected_bytes is not None and expected_bytes <= 0:
+    raise ValueError("invalid expected artifact size")
 state_file = Path(state_path)
 target = Path(target_path)
 temporary = Path(temporary_path)
+safety_bytes = 256 * 1024 * 1024
 
 def write_state(status, **fields):
     payload = {
@@ -268,6 +346,9 @@ def write_state(status, **fields):
         "source_url": source_url,
         "resolved_source_url": download_url,
         "target_path": str(target),
+        "expected_sha256": expected_sha256,
+        "expected_bytes": expected_bytes,
+        "integrity_mode": "pinned" if expected_sha256 and expected_bytes else "computed_only",
         "updated_at": time.time(),
         **fields,
     }
@@ -288,27 +369,58 @@ def write_state(status, **fields):
             pass
         raise
 
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while True:
+            chunk = stream.read(1024 * 1024)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+def ensure_disk_space(required_bytes):
+    available = shutil.disk_usage(temporary.parent).free
+    if available < required_bytes:
+        raise ValueError(
+            f"insufficient free disk space (need {required_bytes} bytes, have {available})"
+        )
+
 try:
     if target.is_file() and state_file.is_file():
         try:
             existing = json.loads(state_file.read_text(encoding="utf-8"))
         except Exception:
             existing = {}
+        existing_expected_sha256 = existing.get("expected_sha256")
+        existing_expected_bytes = existing.get("expected_bytes")
         if (
             existing.get("status") == "completed"
             and existing.get("source_url") == source_url
             and existing.get("provider_type") == provider_type
             and existing.get("model_id") == model_id
+            and (existing_expected_sha256 or None) == expected_sha256
+            and (existing_expected_bytes or None) == expected_bytes
         ):
-            write_state(
-                "completed",
-                downloaded_bytes=target.stat().st_size,
-                total_bytes=target.stat().st_size,
-                percent=100,
-                sha256=existing.get("sha256"),
-                reused=True,
-            )
-            raise SystemExit(0)
+            target_size = target.stat().st_size
+            existing_sha256 = sha256_file(target)
+            if (
+                (expected_bytes is None or target_size == expected_bytes)
+                and (expected_sha256 is None or existing_sha256 == expected_sha256)
+                and (
+                    not existing.get("sha256")
+                    or existing.get("sha256") == existing_sha256
+                )
+            ):
+                write_state(
+                    "completed",
+                    downloaded_bytes=target_size,
+                    total_bytes=target_size,
+                    percent=100,
+                    sha256=existing_sha256,
+                    reused=True,
+                )
+                raise SystemExit(0)
 
     write_state("queued", downloaded_bytes=0, total_bytes=None, percent=None)
     request = Request(download_url, headers={"User-Agent": "AiDN-model-prefetch/1"})
@@ -320,6 +432,12 @@ try:
         total = int(raw_total) if raw_total and raw_total.isdigit() else None
         if total is not None and total > max_bytes:
             raise ValueError(f"model artifact exceeds prefetch limit ({max_bytes} bytes)")
+        if expected_bytes is not None and total is not None and total != expected_bytes:
+            raise ValueError(
+                f"pinned artifact size mismatch (expected {expected_bytes}, got {total})"
+            )
+        existing_target_bytes = target.stat().st_size if target.is_file() else 0
+        ensure_disk_space((total or 0) + existing_target_bytes + safety_bytes)
         write_state("running", downloaded_bytes=0, total_bytes=total, percent=0)
         while True:
             chunk = response.read(1024 * 1024)
@@ -328,8 +446,19 @@ try:
             downloaded += len(chunk)
             if downloaded > max_bytes:
                 raise ValueError(f"model artifact exceeds prefetch limit ({max_bytes} bytes)")
+            if expected_bytes is not None and downloaded > expected_bytes:
+                raise ValueError(
+                    f"pinned artifact size mismatch (expected {expected_bytes}, got more than that)"
+                )
             output.write(chunk)
             digest.update(chunk)
+            output.flush()
+            remaining_bytes = max(
+                0,
+                (expected_bytes if expected_bytes is not None else total or 0)
+                - downloaded,
+            )
+            ensure_disk_space(remaining_bytes + existing_target_bytes + safety_bytes)
             now = time.monotonic()
             if now >= next_update:
                 percent = int(downloaded * 100 / total) if total else None
@@ -342,13 +471,21 @@ try:
                 next_update = now + 0.5
     if downloaded <= 0:
         raise ValueError("model artifact download returned no bytes")
+    if expected_bytes is not None and downloaded != expected_bytes:
+        raise ValueError(
+            f"pinned artifact size mismatch (expected {expected_bytes}, got {downloaded})"
+        )
+    sha256 = digest.hexdigest()
+    if expected_sha256 is not None and sha256 != expected_sha256:
+        raise ValueError("pinned artifact SHA-256 mismatch")
     temporary.replace(target)
+    os.chmod(target, 0o600)
     write_state(
         "completed",
         downloaded_bytes=downloaded,
         total_bytes=downloaded if total is None else total,
         percent=100,
-        sha256=digest.hexdigest(),
+        sha256=sha256,
     )
 except Exception as error:
     try:
@@ -357,14 +494,15 @@ except Exception as error:
         pass
     write_state(
         "failed",
-        downloaded_bytes=0,
-        total_bytes=None,
+        downloaded_bytes=locals().get("downloaded", 0),
+        total_bytes=locals().get("total"),
         percent=None,
         error=str(error)[:512],
     )
     raise
 PY
   model_prefetch_pid=$!
+  model_prefetch_status='running'
   printf '  [model download] started in background for %s\n' "$model_id" >&2
   printf '  [model download] progress: %s\n' "$state_path" >&2
 }
@@ -465,15 +603,42 @@ prompt_yes_no() {
 model_source_for_id() {
   case "$1" in
     'Qwen/Qwen3-0.6B-GGUF:Q8_0')
-      printf '%s' 'hf://Qwen/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q8_0.gguf' ;;
+      printf '%s' 'hf://Qwen/Qwen3-0.6B-GGUF@23749fefcc72300e3a2ad315e1317431b06b590a/Qwen3-0.6B-Q8_0.gguf' ;;
     'Qwen/Qwen3-1.7B-GGUF:Q4_K_M')
-      printf '%s' 'hf://ggml-org/Qwen3-1.7B-GGUF/Qwen3-1.7B-Q4_K_M.gguf' ;;
+      printf '%s' 'hf://ggml-org/Qwen3-1.7B-GGUF@daeb8e2d528a760970442092f6bf1e55c3b659eb/Qwen3-1.7B-Q4_K_M.gguf' ;;
     'Qwen/Qwen3-4B-GGUF:Q4_K_M')
-      printf '%s' 'hf://Qwen/Qwen3-4B-GGUF/Qwen3-4B-Q4_K_M.gguf' ;;
+      printf '%s' 'hf://Qwen/Qwen3-4B-GGUF@bc640142c66e1fdd12af0bd68f40445458f3869b/Qwen3-4B-Q4_K_M.gguf' ;;
     'Qwen/Qwen3-8B-GGUF:Q4_K_M')
-      printf '%s' 'hf://Qwen/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf' ;;
+      printf '%s' 'hf://Qwen/Qwen3-8B-GGUF@7c41481f57cb95916b40956ab2f0b139b296d974/Qwen3-8B-Q4_K_M.gguf' ;;
     'Qwen/Qwen3-14B-GGUF:Q4_K_M')
-      printf '%s' 'hf://Qwen/Qwen3-14B-GGUF/Qwen3-14B-Q4_K_M.gguf' ;;
+      printf '%s' 'hf://Qwen/Qwen3-14B-GGUF@530227a7d994db8eca5ab5ced2fb692b614357fd/Qwen3-14B-Q4_K_M.gguf' ;;
+    *) return 1 ;;
+  esac
+}
+
+model_expected_sha256_for_id() {
+  case "$1" in
+    'Qwen/Qwen3-0.6B-GGUF:Q8_0')
+      printf '%s' '9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031' ;;
+    'Qwen/Qwen3-1.7B-GGUF:Q4_K_M')
+      printf '%s' 'd2387ca2dbfee2ffabce7120d3770dadca0b293052bc2f0e138fdc940d9bc7b5' ;;
+    'Qwen/Qwen3-4B-GGUF:Q4_K_M')
+      printf '%s' '7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5' ;;
+    'Qwen/Qwen3-8B-GGUF:Q4_K_M')
+      printf '%s' 'd98cdcbd03e17ce47681435b5150e34c1417f50b5c0019dd560e4882c5745785' ;;
+    'Qwen/Qwen3-14B-GGUF:Q4_K_M')
+      printf '%s' '500a8806e85ee9c83f3ae08420295592451379b4f8cf2d0f41c15dffeb6b81f0' ;;
+    *) return 1 ;;
+  esac
+}
+
+model_expected_size_bytes_for_id() {
+  case "$1" in
+    'Qwen/Qwen3-0.6B-GGUF:Q8_0') printf '%s' '639446688' ;;
+    'Qwen/Qwen3-1.7B-GGUF:Q4_K_M') printf '%s' '1282439264' ;;
+    'Qwen/Qwen3-4B-GGUF:Q4_K_M') printf '%s' '2497280256' ;;
+    'Qwen/Qwen3-8B-GGUF:Q4_K_M') printf '%s' '5027783488' ;;
+    'Qwen/Qwen3-14B-GGUF:Q4_K_M') printf '%s' '9001752960' ;;
     *) return 1 ;;
   esac
 }
@@ -510,11 +675,12 @@ valid_model_id() {
 valid_model_source() {
   local source="$1"
   [[ -n "$source" && ${#source} -le 2048 ]] || return 1
-  [[ "$source" != *"@"* && "$source" != *"?"* && "$source" != *"#"* ]] || return 1
+  [[ "$source" != *"?"* && "$source" != *"#"* ]] || return 1
   if [[ "$source" == hf://* ]]; then
-    [[ "$source" =~ ^hf://[^/]+/[^/]+(/[^[:space:]]+)?$ ]]
+    [[ "$source" =~ ^hf://[^/@[:space:]]+/[^/@[:space:]]+(@[0-9a-fA-F]{40})?(/[^[:space:]]+)?$ ]]
     return
   fi
+  [[ "$source" != *"@"* ]] || return 1
   [[ "$source" =~ ^https://[^[:space:]/]+(/[^[:space:]]*)?$ ]]
 }
 
@@ -559,6 +725,9 @@ model_prefetch_state_path=''
 model_prefetch_target=''
 model_prefetch_source=''
 model_prefetch_python=''
+model_prefetch_status='not_started'
+model_prefetch_expected_sha256=''
+model_prefetch_expected_bytes=''
 operator_id_supplied='false'
 enable_registry_supplied='false'
 consensus_mode_supplied='false'
@@ -975,7 +1144,7 @@ if [[ "$setup_mode" == 'ai_assisted' ]]; then
     fi
     if [[ "$setup_model_id" != 'skip' ]]; then
       valid_model_id "$setup_model_id" || die 'setup model ID contains unsupported characters'
-      valid_model_source "$setup_model_source" || die 'setup model source must be an HTTPS URL or hf://owner/repository reference without credentials or query data'
+      valid_model_source "$setup_model_source" || die 'setup model source must be an HTTPS URL or hf://owner/repository[@40-hex-revision] reference without credentials or query data'
       # Selecting a concrete llama.cpp artifact is the explicit operator
       # approval needed to warm the local model cache.  The provider, Bundle,
       # and Endpoint lifecycle remains separate and still requires review.
@@ -1492,6 +1661,15 @@ registry_state='disabled_until_mutual_peer_approval'
 if [[ "$enable_registry" == 'true' ]]; then
   registry_state='listener_enabled_waiting_for_mutual_peer_approval'
 fi
+setup_model_expected_sha256=''
+setup_model_expected_bytes=''
+if [[ "$setup_mode" == 'ai_assisted' && "$setup_model_id" != 'skip' && -n "$setup_model_source" ]]; then
+  expected_catalog_source="$(model_source_for_id "$setup_model_id" || true)"
+  if [[ -n "$expected_catalog_source" && "$setup_model_source" == "$expected_catalog_source" ]]; then
+    setup_model_expected_sha256="$(model_expected_sha256_for_id "$setup_model_id")"
+    setup_model_expected_bytes="$(model_expected_size_bytes_for_id "$setup_model_id")"
+  fi
+fi
 "$python_bin" - "$state_path" "$operator_id" "$peer_id" "$control_group_id" "$commit" \
   "$api_host" "$api_port" "$registry_state" "$service_name" "$identity_root" \
   "$registry_root" "$operator_public_key" "$ref" "$consensus_mode" \
@@ -1502,6 +1680,7 @@ fi
   "$wallet_action" "$wallet_bootstrap_status" "$wallet_bootstrap_id" \
   "$wallet_bootstrap_public_key" "$dashboard_pairing_status" "$agent_onboarding_status" \
   "$setup_mode" "$setup_provider" "$setup_model_id" "$setup_model_source" \
+  "$setup_model_expected_sha256" "$setup_model_expected_bytes" \
   "$setup_endpoint_action" "$setup_handoff" "$setup_plan_path" <<'PY'
 import json
 import os
@@ -1546,6 +1725,8 @@ import sys
     setup_provider,
     setup_model_id,
     setup_model_source,
+    setup_model_expected_sha256,
+    setup_model_expected_bytes,
     setup_endpoint_action,
     setup_handoff,
     setup_plan_path,
@@ -1559,6 +1740,8 @@ installation_plan = InstallationOnboardingPlan(
     provider=setup_provider,
     model_id=setup_model_id,
     model_source=setup_model_source or None,
+    model_expected_sha256=setup_model_expected_sha256 or None,
+    model_expected_bytes=int(setup_model_expected_bytes) if setup_model_expected_bytes else None,
     endpoint_action=setup_endpoint_action,
     handoff=setup_handoff,
 )
@@ -1681,6 +1864,15 @@ if [[ "$setup_mode" == 'ai_assisted' ]]; then
   printf '  provider intent   : %s\n' "$setup_provider" >&2
   printf '  model intent      : %s\n' "$setup_model_id" >&2
   [[ -n "$setup_model_source" ]] && printf '  model source      : %s\n' "$setup_model_source" >&2
+  if [[ -n "$setup_model_source" ]]; then
+    expected_catalog_source="$(model_source_for_id "$setup_model_id" || true)"
+    if [[ -n "$expected_catalog_source" && "$setup_model_source" == "$expected_catalog_source" ]]; then
+      printf '  artifact size     : %s bytes (pinned)\n' "$(model_expected_size_bytes_for_id "$setup_model_id")" >&2
+      printf '  artifact SHA-256  : %s\n' "$(model_expected_sha256_for_id "$setup_model_id")" >&2
+    else
+      printf '  artifact integrity: SHA-256 computed after download (custom source)\n' >&2
+    fi
+  fi
   printf '  endpoint intent   : %s\n' "$setup_endpoint_action" >&2
   printf '  handoff           : %s\n' "$setup_handoff" >&2
   printf '  steward           : CPU-first, bounded, review required\n' >&2
@@ -1693,6 +1885,9 @@ if [[ -n "$model_prefetch_state_path" ]]; then
   model_prefetch_progress
   printf '  target            : %s\n' "$model_prefetch_target" >&2
   printf '  state             : %s\n' "$model_prefetch_state_path" >&2
+  printf '  status            : %s\n' "$model_prefetch_status" >&2
+  printf '  expected size     : %s\n' "${model_prefetch_expected_bytes:-unknown}" >&2
+  printf '  expected SHA-256  : %s\n' "${model_prefetch_expected_sha256:-computed after download}" >&2
   printf '  background PID    : %s\n' "${model_prefetch_pid:-finished}" >&2
   printf '  note              : model registration and runtime activation remain explicit next steps\n' >&2
 fi
