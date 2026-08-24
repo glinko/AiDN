@@ -51,7 +51,7 @@ def test_cpu_resident_start_and_stop_are_lease_gated(tmp_path: Path) -> None:
     assert resources.lease_details() == []
 
     started = adapter.start()
-    assert started["state"] == "STARTING"
+    assert started["state"] == "RUNNING"
     assert started["execution"]["resource_lease"] == "steward:node-test:inference"
     assert resources.summary()["reserved"]["ram_mb"] == 1024
     assert len(runtimes.list_runtimes()) == 1
@@ -140,7 +140,7 @@ def test_gpu_burst_restarts_on_cpu_when_broker_reclaims_vram(tmp_path: Path) -> 
     resources.acquire_lease("operator-gpu", cpu=0, ram_mb=0, vram_mb=4096)
 
     status = adapter.refresh()
-    assert status["state"] == "STARTING"
+    assert status["state"] == "RUNNING"
     assert status["execution"]["effective_profile"] == "CPU_RESIDENT"
     assert status["execution"]["fallback_reason"]
     assert resources.summary()["reserved"]["vram_mb"] == 4096

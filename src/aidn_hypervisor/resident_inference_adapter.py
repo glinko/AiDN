@@ -476,7 +476,13 @@ class ResidentInferenceAdapter:
             self._effective_profile = effective_profile
             self._fallback_reason = fallback_reason
             self._last_error = None
-            self._state = "STARTING"
+            # _await_readiness completed successfully above, so expose the
+            # runtime as RUNNING immediately.  Leaving the adapter in
+            # STARTING after a successful provider probe made startup health
+            # checks and the Dashboard wait forever even though the child
+            # process was already ready to serve requests.
+            runtime.status = "running"
+            self._state = "RUNNING"
             payload = self._status_unlocked()
         self._changed(persist=persist)
         self._emit(

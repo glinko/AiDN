@@ -1821,7 +1821,30 @@ if [[ "$no_start" != 'true' ]]; then
   }
   if [[ "$steward_autostart" == 'true' ]]; then
     inference_status_json=''
-    inference_status_json="$(curl --fail --silent "http://$health_host:$api_port/operators/dashboard/steward/inference")" || {
+    inference_state=''
+    # The provider may need to map the model before its first health probe.
+    # Poll the canonical Dashboard status instead of treating STARTING as a
+    # hard failure at the first read after systemd restart.
+    for _ in $(seq 1 180); do
+      if inference_status_json="$(curl --fail --silent "http://$health_host:$api_port/operators/dashboard/steward/inference" 2>/dev/null)"; then
+        inference_state="$($python_bin - "$inference_status_json" <<'PY'
+import json
+import sys
+
+try:
+    print(str(json.loads(sys.argv[1]).get("state") or "").upper())
+except Exception:
+    print("")
+PY
+        )"
+        [[ "$inference_state" == 'RUNNING' ]] && break
+        if [[ "$inference_state" == 'FAILED' || "$inference_state" == 'RESOURCE_WAIT' ]]; then
+          break
+        fi
+      fi
+      sleep 1
+    done
+    [[ -n "$inference_status_json" ]] || {
       systemctl --user --no-pager --full status "$service_name" >&2 || true
       die "Resident Steward status could not be read after service start"
     }
