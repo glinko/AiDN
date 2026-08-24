@@ -1378,6 +1378,8 @@ api_port_q="$(shell_quote "$api_port")"
 setup_mode_q="$(shell_quote "$setup_mode")"
 setup_plan_path="$data_dir/installation-plan.json"
 setup_plan_q="$(shell_quote "$setup_plan_path")"
+operator_config_path="$data_dir/operator-config.toml"
+operator_config_q="$(shell_quote "$operator_config_path")"
 cat > "$wrapper" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1386,6 +1388,7 @@ data=$data_q
 registry_config=$registry_q
 python_bin=$python_q
 bind_host_path=$bind_host_q
+config_path=${operator_config_q:-$data_q/operator-config.toml}
 api_host=$api_host_q
 if [[ -f "\$bind_host_path" ]]; then
   configured_host="\$(tr -d '\r\n' < "\$bind_host_path")"
@@ -1400,6 +1403,8 @@ export AIDN_HYPERVISOR_API_HOST="\$api_host"
 export AIDN_HYPERVISOR_API_PORT=$api_port_q
 export AIDN_HYPERVISOR_BIND_HOST_PATH="\$bind_host_path"
 export AIDN_HYPERVISOR_RESTART_ON_BIND_CHANGE=true
+export AIDN_HYPERVISOR_RESTART_ON_CONFIG_CHANGE=true
+export AIDN_CONFIG_FILE="\$config_path"
 export AIDN_INSTALLATION_SETUP_MODE=$setup_mode_q
 export AIDN_INSTALLATION_PLAN_PATH=$setup_plan_q
 # The supported bootstrap uses browser pairing over the selected local or
@@ -1459,8 +1464,45 @@ if [[ "$enable_registry" == 'true' ]]; then
 export AIDN_REGISTRY_REPLICATION_CONFIG="$registry_config"
 EOF
 fi
-cat >> "$wrapper" <<EOF
-exec "\$python_bin" -m uvicorn aidn_hypervisor.main:build_app --factory --host "\$api_host" --port $api_port_q
+cat >> "$wrapper" <<'EOF'
+# Materialize the first profile from bootstrap defaults. Later restarts load
+# this operator-owned file after the fixed identity/secrets exports above, so
+# a Dashboard change is effective without giving the browser shell access.
+if [[ ! -f "$AIDN_CONFIG_FILE" ]]; then
+  "$python_bin" - "$AIDN_CONFIG_FILE" <<'PY'
+import os
+import sys
+from aidn_hypervisor.config import write_operator_config_from_environment
+
+write_operator_config_from_environment(sys.argv[1], os.environ)
+PY
+fi
+while IFS=$'\t' read -r -d '' key value; do
+  [[ -n "$key" ]] || continue
+  export "$key=$value"
+done < <("$python_bin" - "$AIDN_CONFIG_FILE" <<'PY'
+import sys
+from aidn_hypervisor.config import read_operator_config_values
+
+for key, value in sorted(read_operator_config_values(sys.argv[1]).items()):
+    print(f"{key}\t{value}", end="\0")
+PY
+)
+api_host="${AIDN_HYPERVISOR_API_HOST:-$api_host}"
+api_port="${AIDN_HYPERVISOR_API_PORT:-8766}"
+case "$api_host" in
+  127.0.0.1|0.0.0.0) ;;
+  *) echo "Invalid AIDN_HYPERVISOR_API_HOST in $AIDN_CONFIG_FILE" >&2; exit 64 ;;
+esac
+if [[ ! "$api_port" =~ ^[0-9]+$ ]] || (( api_port < 1 || api_port > 65535 )); then
+  echo "Invalid AIDN_HYPERVISOR_API_PORT in $AIDN_CONFIG_FILE" >&2
+  exit 64
+fi
+export AIDN_HYPERVISOR_API_HOST="$api_host"
+export AIDN_HYPERVISOR_API_PORT="$api_port"
+printf '%s\n' "$api_host" > "$bind_host_path"
+chmod 600 "$bind_host_path"
+exec "$python_bin" -m uvicorn aidn_hypervisor.main:build_app --factory --host "$api_host" --port "$api_port"
 EOF
 chmod 700 "$wrapper"
 
@@ -1487,11 +1529,25 @@ cat > "$operator_cli_wrapper" <<EOF
 set -euo pipefail
 export AIDN_HYPERVISOR_STATE_PATH=$(shell_quote "$data_dir/hypervisor-state.json")
 export AIDN_HYPERVISOR_BUNDLES_PATH=$(shell_quote "$data_dir/bundles.json")
+export AIDN_CONFIG_FILE=$(shell_quote "$operator_config_path")
 export AIDN_NODE_ID=$(shell_quote "$operator_id")
 export AIDN_OPERATOR_ID=$(shell_quote "$operator_id")
 export AIDN_MCP_REMOTE_ENABLED=true
 if [[ -z "\${AIDN_SECRET_MANAGER_MASTER_KEY:-}" ]]; then
   export AIDN_SECRET_MANAGER_MASTER_KEY="\$(tr -d '\r\n' < $(shell_quote "$registry_root/master-key.b64"))"
+fi
+if [[ -f "\$AIDN_CONFIG_FILE" ]]; then
+  while IFS=\$'\\t' read -r -d '' key value; do
+    [[ -n "\$key" ]] || continue
+    export "\$key=\$value"
+  done < <("$python_bin" - "\$AIDN_CONFIG_FILE" <<'PY'
+import sys
+from aidn_hypervisor.config import read_operator_config_values
+
+for key, value in sorted(read_operator_config_values(sys.argv[1]).items()):
+    print(f"{key}\\t{value}", end="\\0")
+PY
+  )
 fi
 common_args=(
   --secret-manager-path $(shell_quote "$registry_root/secrets.json")

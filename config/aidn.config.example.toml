@@ -3,14 +3,17 @@
 # Select this file from the service environment:
 #   AIDN_CONFIG_FILE=/etc/aidn/aidn.toml
 #
-# Values in the real process environment take precedence over this file.  An
-# explicit CLI/request value and applied dashboard state still take precedence
-# over both.  Copy this file to a host-only path before editing it; never put
-# tokens, private keys, or a Secret Manager master key in this repository.
+# Values in the real process environment take precedence over this file. The
+# supported Ubuntu bootstrap also creates a host-only operator-config.toml and
+# overlays it on its generated defaults before starting the service. Copy this
+# file to a host-only path before editing it; never put tokens, private keys,
+# or a Secret Manager master key in this repository.
 #
 # The [env] keys intentionally use the same AIDN_* names as aidn.env.example.
 # This is one schema with two deployment forms: systemd can use an EnvironmentFile
-# directly, while Python entry points can load this TOML profile.
+# directly, while Python entry points can load this TOML profile. The paired
+# Dashboard Settings editor uses the same [env] schema and never returns
+# secret-looking values to the browser.
 
 [env]
 

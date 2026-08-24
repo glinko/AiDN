@@ -99,6 +99,14 @@ class DashboardNetworkAccessService:
             "port": int(os.getenv("AIDN_HYPERVISOR_API_PORT", "8766")),
         }
 
+    @property
+    def apply_supported(self) -> bool:
+        return self._path is not None
+
+    @property
+    def restart_supported(self) -> bool:
+        return self._path is not None and self._restart_on_change
+
     def set_mode(self, mode: BindMode) -> dict[str, object]:
         if mode not in {"loopback", "lan"}:
             raise ValueError("Dashboard access mode must be loopback or lan")
@@ -119,6 +127,14 @@ class DashboardNetworkAccessService:
             }
         )
         return result
+
+    def schedule_restart(self) -> bool:
+        """Schedule the bootstrap-managed process restart after a config apply."""
+
+        with self._lock:
+            if self._restart_on_change:
+                self._schedule_restart()
+        return self._restart_scheduled
 
     def _write_host(self, host: str) -> None:
         assert self._path is not None

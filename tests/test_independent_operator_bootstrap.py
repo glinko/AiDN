@@ -67,6 +67,11 @@ def test_release_operator_bootstrap_uses_safe_defaults_and_user_systemd() -> Non
     assert "print(json.dumps(payload, sort_keys=True))" not in script
     assert "hypervisor-bind-host" in script
     assert "AIDN_HYPERVISOR_RESTART_ON_BIND_CHANGE=true" in script
+    assert "operator-config.toml" in script
+    assert "AIDN_CONFIG_FILE" in script
+    assert "write_operator_config_from_environment" in script
+    assert "read_operator_config_values" in script
+    assert "AIDN_HYPERVISOR_RESTART_ON_CONFIG_CHANGE=true" in script
     assert "AIDN_DASHBOARD_ACCESS_ALLOW_INSECURE_LAN=true" in script
     assert "127.0.0.1|0.0.0.0" in script
     assert "--enable-registry" in script

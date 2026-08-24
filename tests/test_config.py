@@ -1,8 +1,16 @@
+import os
 from pathlib import Path
 
 import pytest
 
-from aidn_hypervisor.config import OperatorConfigError, load_operator_config
+from aidn_hypervisor.config import (
+    OperatorConfigError,
+    config_sha256,
+    load_operator_config,
+    write_operator_config,
+    write_operator_config_from_environment,
+)
+from aidn_hypervisor.operator_config_service import OperatorConfigConflict, OperatorConfigService
 
 
 def _write(path: Path, body: str) -> Path:
@@ -73,3 +81,69 @@ def test_selected_config_must_exist(tmp_path: Path) -> None:
 
     with pytest.raises(OperatorConfigError, match="does not exist"):
         load_operator_config(path=missing, environ={})
+
+
+def test_operator_profile_is_secret_free_atomic_and_redacted(tmp_path: Path) -> None:
+    path = tmp_path / "operator-config.toml"
+    write_operator_config_from_environment(
+        path,
+        {
+            "AIDN_HYPERVISOR_API_PORT": "8766",
+            "AIDN_SECRET_MANAGER_MASTER_KEY": "do-not-write",
+            "AIDN_PROVIDER_URL": "https://provider.example.test/v1",
+        },
+    )
+    text = path.read_text(encoding="utf-8")
+    assert "do-not-write" not in text
+    assert "AIDN_HYPERVISOR_API_PORT" in text
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o077 == 0
+    assert config_sha256(path)
+
+
+def test_operator_profile_validation_preserves_protected_values_and_rejects_secrets(tmp_path: Path) -> None:
+    path = tmp_path / "operator-config.toml"
+    write_operator_config(
+        path,
+        {
+            "AIDN_HYPERVISOR_STATE_PATH": str(tmp_path / "state.json"),
+            "AIDN_HYPERVISOR_API_PORT": "8766",
+            "AIDN_SECRET_MANAGER_MASTER_KEY": "hidden",
+        },
+    )
+    service = OperatorConfigService(path=path, environ={})
+    payload = service.read_payload()
+    assert "hidden" not in payload["text"]
+    assert "AIDN_SECRET_MANAGER_MASTER_KEY" in payload["hidden_keys"]
+
+    changed = service.validate(
+        '[env]\nAIDN_HYPERVISOR_STATE_PATH = "/tmp/other.json"\nAIDN_HYPERVISOR_API_PORT = "9000"\n'
+    )
+    assert changed["valid"] is False
+    assert "protected" in changed["errors"][0]
+
+    secret = service.validate(
+        '[env]\nAIDN_SECRET_MANAGER_MASTER_KEY = "new-secret"\n'
+    )
+    assert secret["valid"] is False
+    assert "Secret Manager" in secret["errors"][0]
+
+
+def test_operator_profile_save_uses_optimistic_concurrency_and_schedules_apply(tmp_path: Path) -> None:
+    path = tmp_path / "operator-config.toml"
+    write_operator_config(path, {"AIDN_HYPERVISOR_API_PORT": "8766"})
+    restarts: list[bool] = []
+    service = OperatorConfigService(
+        path=path,
+        environ={},
+        restart_callback=lambda: restarts.append(True) or True,
+        restart_supported=True,
+    )
+    initial = service.read_payload()
+    edited = '[env]\nAIDN_HYPERVISOR_API_PORT = "9000"\n'
+    result = service.save(edited, expected_sha256=initial["sha256"], apply=True)
+    assert result["status"] == "accepted"
+    assert result["restart_scheduled"] is True
+    assert restarts == [True]
+    with pytest.raises(OperatorConfigConflict):
+        service.save(edited, expected_sha256=initial["sha256"])

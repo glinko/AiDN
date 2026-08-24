@@ -10,6 +10,7 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from aidn_hypervisor.config import write_operator_config
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.dashboard_network_access import DashboardNetworkAccessService
 from aidn_hypervisor.endpoints.models import EndpointManifest
@@ -17,6 +18,7 @@ from aidn_hypervisor.mcp.credentials import McpCredentialStore
 from aidn_hypervisor.mcp.enrollment import McpEnrollmentService
 from aidn_hypervisor.operator_access import DashboardAccessService
 from aidn_hypervisor.operator_access_api import build_operator_access_router
+from aidn_hypervisor.operator_config_service import OperatorConfigService
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.secrets import FileSecretManager
@@ -402,6 +404,69 @@ def test_dashboard_network_access_is_pair_bound_and_limited_to_loopback_or_lan(t
     assert changed.json()["restart_required"] is True
     assert (tmp_path / "hypervisor-bind-host").read_text(encoding="utf-8").strip() == "0.0.0.0"
     assert client.post("/operators/dashboard/access/operations/network", json={"mode": "public"}).status_code == 422
+
+
+def test_operator_config_editor_is_pair_bound_validated_and_concurrency_safe(tmp_path) -> None:
+    manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
+    credentials = McpCredentialStore(secret_manager=manager)
+    access = DashboardAccessService(store=credentials)
+    config_path = tmp_path / "operator-config.toml"
+    write_operator_config(config_path, {"AIDN_HYPERVISOR_API_PORT": "8766"})
+    restarts: list[bool] = []
+    config = OperatorConfigService(
+        path=config_path,
+        environ={},
+        restart_callback=lambda: restarts.append(True) or True,
+        restart_supported=True,
+    )
+    app = FastAPI()
+    app.include_router(
+        build_operator_access_router(
+            access_service=access,
+            credential_store=credentials,
+            allow_insecure_lan=True,
+            config_service=config,
+        )
+    )
+    client = TestClient(app)
+    client.headers.update(_BROWSER_HEADERS)
+
+    assert client.get("/operators/dashboard/access/config").status_code == 401
+    pairing = access.create_pairing(ttl_seconds=600)
+    assert client.post("/operators/dashboard/access/pair", json={"code": pairing.code}).status_code == 200
+
+    initial = client.get("/operators/dashboard/access/config")
+    assert initial.status_code == 200
+    assert initial.json()["format"] == "toml"
+    assert "AIDN_HYPERVISOR_API_PORT" in initial.json()["text"]
+    invalid = client.post(
+        "/operators/dashboard/access/config/validate",
+        json={"text": '[env]\nAIDN_HYPERVISOR_API_PORT = "not-a-port"\n'},
+    )
+    assert invalid.status_code == 200
+    assert invalid.json()["valid"] is False
+
+    edited = '[env]\nAIDN_HYPERVISOR_API_PORT = "9000"\n'
+    saved = client.put(
+        "/operators/dashboard/access/config",
+        json={"text": edited, "expected_sha256": initial.json()["sha256"]},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["changed_keys"] == ["AIDN_HYPERVISOR_API_PORT"]
+    applied = client.post(
+        "/operators/dashboard/access/config/apply",
+        json={"text": edited, "expected_sha256": saved.json()["sha256"]},
+    )
+    assert applied.status_code == 202
+    assert applied.json()["restart_scheduled"] is True
+    assert restarts == [True]
+
+    conflict = client.put(
+        "/operators/dashboard/access/config",
+        json={"text": edited, "expected_sha256": initial.json()["sha256"]},
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["error"]["code"] == "DASHBOARD_CONFIG_CONFLICT"
 
 
 def test_paired_operator_can_list_and_update_only_known_agent_permissions(tmp_path) -> None:

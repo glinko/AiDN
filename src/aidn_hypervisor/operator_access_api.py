@@ -49,6 +49,10 @@ from aidn_hypervisor.operator_cometbft_install import (
     install_cometbft_from_dashboard,
     reconnect_cometbft_from_dashboard,
 )
+from aidn_hypervisor.operator_config_service import (
+    OperatorConfigConflict,
+    OperatorConfigService,
+)
 from aidn_hypervisor.resource_probe import refresh_resource_probe_from_environment
 from aidn_hypervisor.wallet_identity import wallet_identity_registration_payload
 from aidn_hypervisor.wallet_reconciliation import reconcile_pending_wallet_transfers
@@ -204,6 +208,19 @@ class DashboardNetworkAccessRequest(BaseModel):
     mode: Literal["loopback", "lan"]
 
 
+class OperatorConfigValidateRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=131_072)
+
+
+class OperatorConfigWriteRequest(OperatorConfigValidateRequest):
+    expected_sha256: str | None = Field(
+        default=None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-fA-F]{64}$",
+    )
+
+
 class LocalAgentUseRequest(BaseModel):
     """A local-only inference permission; never part of endpoint publication."""
 
@@ -289,11 +306,13 @@ def build_operator_access_router(
     remote_endpoint_service: Any | None = None,
     validation_service: Any | None = None,
     network_access_service: DashboardNetworkAccessService | None = None,
+    config_service: OperatorConfigService | None = None,
     session_service: Any | None = None,
 ) -> APIRouter:
     """Build a browser-only credential management boundary."""
     router = APIRouter(prefix="/operators/dashboard/access")
     network_access = network_access_service or DashboardNetworkAccessService()
+    operator_config = config_service or OperatorConfigService()
 
     def session_expiry(request: Request) -> str | None:
         if access_service is None:
@@ -985,6 +1004,75 @@ def build_operator_access_router(
             return denied
         try:
             result = network_access.set_mode(payload.mode)
+        except (OSError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(
+            status_code=202 if result.get("restart_scheduled") else 200,
+            content=result,
+        )
+
+    @router.get("/config")
+    async def read_operator_config(request: Request) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        try:
+            return JSONResponse(content=operator_config.read_payload())
+        except (OSError, ValueError) as error:
+            return operation_error(error)
+
+    @router.post("/config/validate")
+    async def validate_operator_config(
+        payload: OperatorConfigValidateRequest,
+        request: Request,
+    ) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        return JSONResponse(content=operator_config.validate(payload.text))
+
+    @router.put("/config")
+    async def save_operator_config(
+        payload: OperatorConfigWriteRequest,
+        request: Request,
+    ) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        try:
+            result = operator_config.save(
+                payload.text,
+                expected_sha256=payload.expected_sha256,
+                apply=False,
+            )
+        except OperatorConfigConflict as error:
+            return JSONResponse(
+                status_code=409,
+                content={"error": {"code": "DASHBOARD_CONFIG_CONFLICT", "message": str(error)}},
+            )
+        except (OSError, ValueError) as error:
+            return operation_error(error)
+        return JSONResponse(content=result)
+
+    @router.post("/config/apply")
+    async def apply_operator_config(
+        payload: OperatorConfigWriteRequest,
+        request: Request,
+    ) -> Response:
+        denied = require_session(request)
+        if denied is not None:
+            return denied
+        try:
+            result = operator_config.save(
+                payload.text,
+                expected_sha256=payload.expected_sha256,
+                apply=True,
+            )
+        except OperatorConfigConflict as error:
+            return JSONResponse(
+                status_code=409,
+                content={"error": {"code": "DASHBOARD_CONFIG_CONFLICT", "message": str(error)}},
+            )
         except (OSError, ValueError) as error:
             return operation_error(error)
         return JSONResponse(

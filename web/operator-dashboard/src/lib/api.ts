@@ -66,6 +66,31 @@ export type DashboardNetworkAccess = {
   port: number
 }
 
+export type OperatorConfigPayload = {
+  status: 'configured' | 'missing' | 'unavailable' | string
+  path: string | null
+  format: 'toml' | string
+  text: string
+  sha256: string | null
+  hidden_keys: string[]
+  read_only_keys: string[]
+  restart_supported: boolean
+  restart_required?: boolean
+  restart_scheduled: boolean
+  changed_keys?: string[]
+  warnings?: string[]
+  last_modified: string | null
+}
+
+export type OperatorConfigValidation = {
+  valid: boolean
+  errors: string[]
+  warnings: string[]
+  changed_keys: string[]
+  restart_required: boolean
+  read_only_keys: string[]
+}
+
 export type DashboardAccessStatus = {
   enabled: boolean
   session: { active: boolean; expires_at: string | null }
@@ -352,6 +377,10 @@ export const dashboardApi = {
   hookDeliveries: (signal?: AbortSignal): Promise<HookDelivery[]> => readDashboard('/operators/hooks/deliveries?limit=32', z.array(hookDeliverySchema), signal),
   hookDeadLetters: (signal?: AbortSignal): Promise<HookDelivery[]> => readDashboard('/operators/hooks/dead-letters?limit=32', z.array(hookDeliverySchema), signal),
   accessStatus: (): Promise<DashboardAccessStatus> => writeDashboard('/operators/dashboard/access/status', { method: 'GET' }) as Promise<DashboardAccessStatus>,
+  operatorConfig: (): Promise<OperatorConfigPayload> => writeDashboard<OperatorConfigPayload>('/operators/dashboard/access/config', { method: 'GET' }) as Promise<OperatorConfigPayload>,
+  validateOperatorConfig: (text: string): Promise<OperatorConfigValidation> => writeDashboard<OperatorConfigValidation>('/operators/dashboard/access/config/validate', { method: 'POST', body: JSON.stringify({ text }) }) as Promise<OperatorConfigValidation>,
+  saveOperatorConfig: (text: string, expectedSha256: string | null): Promise<OperatorConfigPayload> => writeDashboard<OperatorConfigPayload>('/operators/dashboard/access/config', { method: 'PUT', body: JSON.stringify({ text, expected_sha256: expectedSha256 }) }) as Promise<OperatorConfigPayload>,
+  applyOperatorConfig: (text: string, expectedSha256: string | null): Promise<OperatorConfigPayload> => writeDashboard<OperatorConfigPayload>('/operators/dashboard/access/config/apply', { method: 'POST', body: JSON.stringify({ text, expected_sha256: expectedSha256 }) }) as Promise<OperatorConfigPayload>,
   updateDashboardNetworkAccess: (mode: DashboardNetworkAccess['mode']): Promise<DashboardNetworkAccess & { status: string }> => writeDashboard<DashboardNetworkAccess & { status: string }>('/operators/dashboard/access/operations/network', { method: 'POST', body: JSON.stringify({ mode }) }) as Promise<DashboardNetworkAccess & { status: string }>,
   cometbftAction: (action: 'start' | 'stop' | 'restart') => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/cometbft/${action}`, { method: 'POST' }),
   installCometbft: (payload: { mode: 'validator' | 'non_validator'; chain_id: string; version: string; moniker?: string; rpc_host: '127.0.0.1'; rpc_port: number; p2p_host: '127.0.0.1' | '0.0.0.0'; p2p_port: number; external_address: string; seeds: string; persistent_peers: string; abci_host: '127.0.0.1'; abci_port: number; acknowledge_network_scope: boolean }) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/cometbft/install', { method: 'POST', body: JSON.stringify(payload) }),

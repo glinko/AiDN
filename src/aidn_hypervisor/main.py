@@ -59,6 +59,7 @@ from aidn_hypervisor.operator_cometbft_install import (
     UnixSocketConsensusRuntimeExecutor,
     load_active_cometbft_configuration,
 )
+from aidn_hypervisor.operator_config_service import OperatorConfigService
 from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
 from aidn_hypervisor.plugins.ollama import OllamaPlugin
@@ -350,6 +351,19 @@ def build_app(
         else None
     )
     dashboard_network_access_service = DashboardNetworkAccessService()
+
+    def sync_dashboard_config(values: dict[str, str]) -> None:
+        configured_host = values.get("AIDN_HYPERVISOR_API_HOST")
+        if configured_host in {"127.0.0.1", "0.0.0.0"}:
+            dashboard_network_access_service.set_mode(
+                "lan" if configured_host == "0.0.0.0" else "loopback"
+            )
+
+    dashboard_config_service = OperatorConfigService(
+        restart_callback=dashboard_network_access_service.schedule_restart,
+        apply_callback=sync_dashboard_config,
+        restart_supported=dashboard_network_access_service.restart_supported,
+    )
     mcp_enrollment_service = (
         McpEnrollmentService(
             secret_manager=mcp_secret_manager,
@@ -362,6 +376,7 @@ def build_app(
     app.state.mcp_credential_store = mcp_credential_store
     app.state.dashboard_access_service = dashboard_access_service
     app.state.dashboard_network_access_service = dashboard_network_access_service
+    app.state.operator_config_service = dashboard_config_service
     app.state.mcp_enrollment_service = mcp_enrollment_service
     app.state.inference_gateway_enabled = mcp_credential_store is not None
     if mcp_remote_gateway.enabled:
@@ -388,6 +403,7 @@ def build_app(
             remote_endpoint_service=resolved_remote_endpoint_service,
             validation_service=resolved_validation_service,
             network_access_service=dashboard_network_access_service,
+            config_service=dashboard_config_service,
             session_service=resolved_session_service,
         )
     )

@@ -14,14 +14,48 @@ configuration schemas.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import re
+import tempfile
 import tomllib
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 CONFIG_FILE_ENV = "AIDN_CONFIG_FILE"
+DEFAULT_CONFIG_FILENAME = "operator-config.toml"
+MAX_CONFIG_BYTES = 128 * 1024
 _ALLOWED_PREFIXES = ("AIDN_", "VITE_")
+_DASHBOARD_ALLOWED_PREFIX = "AIDN_"
+_KEY_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]+$")
+_SECRET_MARKERS = (
+    "TOKEN",
+    "PRIVATE_KEY",
+    "MASTER_KEY",
+    "PASSWORD",
+    "CREDENTIAL",
+    "SIGNING_KEY",
+    "API_KEY",
+)
+_READ_ONLY_KEYS = frozenset(
+    {
+        CONFIG_FILE_ENV,
+        "AIDN_HYPERVISOR_STATE_PATH",
+        "AIDN_HYPERVISOR_BUNDLES_PATH",
+        "AIDN_HYPERVISOR_MODEL_STORE_PATH",
+        "AIDN_HYPERVISOR_BIND_HOST_PATH",
+        "AIDN_SECRET_MANAGER_PATH",
+        "AIDN_PROVIDER_RUNTIME_DISPATCHER",
+        "AIDN_PROVIDER_RUNTIME_BROKER_SOCKET",
+        "AIDN_REGISTRY_REPLICATION_CONFIG",
+        "AIDN_REMOTE_TRUST_ANCHOR_CONFIG",
+        "AIDN_COMETBFT_FINALITY_CONFIG",
+        "AIDN_PROTOCOL_AUTHORITY_POLICY_PATH",
+    }
+)
 
 
 class OperatorConfigError(ValueError):
@@ -52,6 +86,185 @@ def _format_value(value: object, *, key: str) -> str:
     )
 
 
+def is_secret_config_key(key: str) -> bool:
+    """Return whether a configuration key may contain a credential.
+
+    Secret material belongs in the encrypted Secret Manager.  A path to that
+    manager is safe to show, so it is deliberately not classified as secret.
+    The predicate is intentionally conservative for values that may be copied
+    into logs or a browser response.
+    """
+
+    if key == "AIDN_SECRET_MANAGER_PATH" or key.endswith("_PATH"):
+        return False
+    upper = key.upper()
+    return any(marker in upper for marker in _SECRET_MARKERS) or "SECRET" in upper
+
+
+def is_read_only_config_key(key: str) -> bool:
+    return key in _READ_ONLY_KEYS
+
+
+def resolve_operator_config_path(
+    path: str | Path | None = None,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> Path | None:
+    """Resolve the canonical profile path without creating it."""
+
+    values = os.environ if environ is None else environ
+    configured = path if path is not None else values.get(CONFIG_FILE_ENV)
+    if configured is not None and str(configured).strip():
+        return Path(str(configured)).expanduser()
+    state_path = values.get("AIDN_HYPERVISOR_STATE_PATH")
+    if state_path and str(state_path).strip():
+        return Path(str(state_path)).expanduser().with_name(DEFAULT_CONFIG_FILENAME)
+    return None
+
+
+def _validate_scalar_text(key: str, value: str) -> None:
+    if "\x00" in value or any(ord(character) < 32 and character not in "\t\r\n" for character in value):
+        raise OperatorConfigError(f"{key} contains a control character")
+    if "\t" in value or "\n" in value or "\r" in value:
+        raise OperatorConfigError(f"{key} must be a single-line value")
+    if key.endswith("_PORT") or key in {"AIDN_HYPERVISOR_API_PORT", "AIDN_MCP_REMOTE_PORT"}:
+        try:
+            port = int(value)
+        except ValueError as exc:
+            raise OperatorConfigError(f"{key} must be an integer port") from exc
+        if not 1 <= port <= 65535:
+            raise OperatorConfigError(f"{key} must be between 1 and 65535")
+    if "URL" in key or key.endswith("_ENDPOINT"):
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https", "tcp", "unix"} or not parsed.netloc and parsed.scheme != "unix":
+            raise OperatorConfigError(f"{key} must be an http, https, tcp, or unix URL")
+        if parsed.username or parsed.password:
+            raise OperatorConfigError(f"{key} must not contain embedded credentials")
+    if key == "AIDN_HYPERVISOR_API_HOST" and value not in {"127.0.0.1", "0.0.0.0"}:
+        raise OperatorConfigError("AIDN_HYPERVISOR_API_HOST must be 127.0.0.1 or 0.0.0.0")
+
+
+def _parse_document(document: object, *, dashboard: bool) -> dict[str, str]:
+    if not isinstance(document, dict):
+        raise OperatorConfigError("configuration document must be a TOML table")
+    raw_values = document.get("env")
+    if not isinstance(raw_values, dict):
+        raise OperatorConfigError("AIDN_CONFIG_FILE must contain an [env] table")
+
+    values: dict[str, str] = {}
+    for key, value in raw_values.items():
+        if not isinstance(key, str) or not _KEY_PATTERN.fullmatch(key):
+            raise OperatorConfigError(f"unsupported configuration key {key!r}")
+        if dashboard and not key.startswith(_DASHBOARD_ALLOWED_PREFIX):
+            raise OperatorConfigError(f"{key} is not an editable AIDN_* setting")
+        if not key.startswith(_ALLOWED_PREFIXES):
+            raise OperatorConfigError(
+                f"unsupported configuration key {key!r}; use an AIDN_* or VITE_* key"
+            )
+        if key == CONFIG_FILE_ENV:
+            raise OperatorConfigError("AIDN_CONFIG_FILE cannot be set inside the config file")
+        rendered = _format_value(value, key=key)
+        _validate_scalar_text(key, rendered)
+        values[key] = rendered
+    return values
+
+
+def _parse_text(text: str, *, dashboard: bool = False) -> dict[str, str]:
+    if not isinstance(text, str):
+        raise OperatorConfigError("configuration text must be a string")
+    encoded = text.encode("utf-8")
+    if len(encoded) > MAX_CONFIG_BYTES:
+        raise OperatorConfigError(f"configuration text exceeds {MAX_CONFIG_BYTES} bytes")
+    try:
+        document = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise OperatorConfigError(f"invalid TOML: {exc}") from exc
+    return _parse_document(document, dashboard=dashboard)
+
+
+def render_operator_config(values: Mapping[str, str], *, include_header: bool = True) -> str:
+    """Render a deterministic, shell-safe TOML profile.
+
+    Values are quoted as JSON strings.  TOML accepts JSON string escapes, and
+    keeping one representation avoids accidentally changing environment
+    semantics when a list-valued setting is edited in the Dashboard.
+    """
+
+    lines = []
+    if include_header:
+        lines.extend(
+            [
+                "# AiDN operator configuration profile",
+                "# Generated by the Dashboard. Secrets stay in Secret Manager.",
+                "# Edit only AIDN_* values; changes to protected paths are rejected.",
+                "",
+            ]
+        )
+    lines.append("[env]")
+    for key in sorted(values):
+        if not _KEY_PATTERN.fullmatch(key) or not key.startswith(_ALLOWED_PREFIXES):
+            raise OperatorConfigError(f"unsupported configuration key {key!r}")
+        _validate_scalar_text(key, str(values[key]))
+        lines.append(f"{key} = {json.dumps(str(values[key]), ensure_ascii=False)}")
+    return "\n".join(lines) + "\n"
+
+
+def config_sha256(path: str | Path) -> str | None:
+    target = Path(path)
+    try:
+        digest = hashlib.sha256()
+        with target.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except FileNotFoundError:
+        return None
+
+
+def write_operator_config(path: str | Path, values: Mapping[str, str]) -> Path:
+    """Atomically write a host-only profile and retain the previous revision."""
+
+    target = Path(path).expanduser()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    content = render_operator_config(values)
+    temporary: str | None = None
+    try:
+        if target.exists():
+            backup = target.with_name(f"{target.name}.bak")
+            backup.write_bytes(target.read_bytes())
+            os.chmod(backup, 0o600)
+        descriptor, temporary = tempfile.mkstemp(prefix=f".{target.name}-", dir=target.parent)
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, target)
+        return target
+    except BaseException:
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+        raise
+
+
+def write_operator_config_from_environment(
+    path: str | Path,
+    environ: Mapping[str, str] | None = None,
+) -> Path:
+    environment = os.environ if environ is None else environ
+    values = {
+        key: str(value)
+        for key, value in environment.items()
+        if key.startswith("AIDN_")
+        and key != CONFIG_FILE_ENV
+        and not is_secret_config_key(key)
+    }
+    return write_operator_config(path, values)
+
+
 def _read_values(path: Path) -> dict[str, str]:
     try:
         with path.open("rb") as stream:
@@ -61,20 +274,11 @@ def _read_values(path: Path) -> dict[str, str]:
     except tomllib.TOMLDecodeError as exc:
         raise OperatorConfigError(f"invalid TOML in AIDN_CONFIG_FILE {path}: {exc}") from exc
 
-    raw_values = document.get("env")
-    if not isinstance(raw_values, dict):
-        raise OperatorConfigError("AIDN_CONFIG_FILE must contain an [env] table")
+    return _parse_document(document, dashboard=False)
 
-    values: dict[str, str] = {}
-    for key, value in raw_values.items():
-        if not isinstance(key, str) or not key.startswith(_ALLOWED_PREFIXES):
-            raise OperatorConfigError(
-                f"unsupported configuration key {key!r}; use an AIDN_* or VITE_* key"
-            )
-        if key == CONFIG_FILE_ENV:
-            raise OperatorConfigError("AIDN_CONFIG_FILE cannot be set inside the config file")
-        values[key] = _format_value(value, key=key)
-    return values
+
+def read_operator_config_values(path: str | Path) -> dict[str, str]:
+    return _read_values(Path(path).expanduser())
 
 
 def load_operator_config(
@@ -129,8 +333,18 @@ def redact_environment(values: Mapping[str, str]) -> dict[str, str]:
 
 __all__ = [
     "CONFIG_FILE_ENV",
+    "DEFAULT_CONFIG_FILENAME",
+    "MAX_CONFIG_BYTES",
     "OperatorConfigError",
     "OperatorConfigLoadResult",
+    "config_sha256",
+    "is_read_only_config_key",
+    "is_secret_config_key",
     "load_operator_config",
+    "read_operator_config_values",
     "redact_environment",
+    "render_operator_config",
+    "resolve_operator_config_path",
+    "write_operator_config",
+    "write_operator_config_from_environment",
 ]

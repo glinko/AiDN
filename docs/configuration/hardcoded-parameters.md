@@ -36,6 +36,18 @@ that duplicate or change it explicitly. To see which source won, inspect the
 service environment and the dashboard's effective network/consensus evidence
 rather than relying on the template alone.
 
+### Dashboard-managed profile
+
+The supported Ubuntu operator bootstrap creates
+`<data-dir>/operator-config.toml` on the first service start and exports it as
+`AIDN_CONFIG_FILE`. After pairing the browser, **Settings → Operator profile**
+shows the current non-secret profile as editable TOML. `Validate` checks the
+document without writing it, `Save draft` writes an atomic revision and keeps a
+`.bak` copy, and `Apply & restart` asks the systemd-managed wrapper to restart
+and load the revision. The editor uses the file SHA-256 so a second operator
+cannot silently overwrite a newer edit. Secrets, private keys, and bootstrap
+identity paths remain outside the browser editor.
+
 ## What is configurable today
 
 | Area | Configuration surface | Important defaults / notes | Source of truth |
