@@ -1,4 +1,8 @@
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 
 def test_ubuntu_bootstrap_is_loopback_only_and_requires_explicit_peer_identity() -> None:
@@ -114,6 +118,47 @@ def test_release_operator_bootstrap_uses_safe_defaults_and_user_systemd() -> Non
     assert "aidn-operator-wrapper.sh" in script
     assert "master-key-file" in script
     assert "ln -sfn" in script
+
+
+def test_release_operator_bootstrap_generates_assisted_wrapper_with_nounset(
+    tmp_path: Path,
+) -> None:
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("bash is required to execute the Ubuntu wrapper-generation fragment")
+
+    script = Path("tools/aidn-operator-bootstrap-ubuntu.sh").read_text(encoding="utf-8")
+    marker = 'cat > "$wrapper" <<EOF\n'
+    start = script.index(marker)
+    end = script.index("\nEOF\n", start) + len("\nEOF")
+    fragment = script[start:end]
+    harness = f"""\
+set -euo pipefail
+shell_quote() {{ printf '%q' "$1"; }}
+wrapper=generated-wrapper.sh
+repo_q=/tmp/aidn
+data_q=/tmp/aidn-data
+registry_q=/tmp/registry.json
+python_q=/tmp/aidn/.venv/bin/python
+bind_host_q=/tmp/aidn-data/hypervisor-bind-host
+api_host_q=127.0.0.1
+api_port_q=8000
+setup_mode_q=ai_assisted
+setup_plan_q=/tmp/aidn-data/installation-plan.json
+operator_id=main
+runtime_broker_socket=/run/user/1000/aidn-provider-runtime.sock
+{fragment}
+test -s "$wrapper"
+"""
+    subprocess.run(
+        [bash, "-c", harness],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    wrapper = (tmp_path / "generated-wrapper.sh").read_text(encoding="utf-8")
+    assert 'if [[ "$AIDN_INSTALLATION_SETUP_MODE" == \'ai_assisted\' ]]; then' in wrapper
 
 
 def test_dashboard_build_tools_pin_and_verify_the_frontend_toolchain() -> None:

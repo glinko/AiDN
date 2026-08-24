@@ -1215,7 +1215,7 @@ export AIDN_RESOURCE_CAPACITY_PATH="\$data/resource-capacity.json"
 export AIDN_SECRET_MANAGER_PATH="\$data/registry-replication/secrets.json"
 export AIDN_SECRET_MANAGER_MASTER_KEY="\$(tr -d '\r\n' < "\$data/registry-replication/master-key.b64")"
 export AIDN_MCP_REMOTE_ENABLED=true
-if [[ "$AIDN_INSTALLATION_SETUP_MODE" == 'ai_assisted' ]]; then
+if [[ "\$AIDN_INSTALLATION_SETUP_MODE" == 'ai_assisted' ]]; then
   # This enables the Resident Steward control-plane boundary only.  The
   # current adapter is CPU-first and does not imply model download, tool
   # execution, or Endpoint publication.
