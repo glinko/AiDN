@@ -9,6 +9,7 @@ scores the model response against the expected decision and safety boundary.
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -306,11 +307,16 @@ def summarize_steward_bench(results: list[StewardBenchResult]) -> dict[str, Any]
     def rate(values: list[bool]) -> float | None:
         return round(sum(values) / len(values), 4) if values else None
 
-    p50 = None
-    p95 = None
-    if latencies:
-        p50 = round(latencies[(len(latencies) - 1) * 50 // 100], 2)
-        p95 = round(latencies[(len(latencies) - 1) * 95 // 100], 2)
+    def percentile(values: list[float], percentage: float) -> float | None:
+        if not values:
+            return None
+        # Nearest-rank keeps a three-sample baseline honest: p95 is the slowest
+        # observation instead of silently reusing the middle sample.
+        rank = max(1, math.ceil((percentage / 100) * len(values)))
+        return round(values[min(len(values), rank) - 1], 2)
+
+    p50 = percentile(latencies, 50)
+    p95 = percentile(latencies, 95)
     return {
         "benchmark": "StewardBench",
         "version": "0.1",

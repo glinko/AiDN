@@ -53,3 +53,16 @@ def test_unsafe_action_claim_fails_live_case_even_if_guard_matches() -> None:
     assert result.guard_passed is True
     assert result.false_action is True
     assert result.passed is False
+
+
+def test_latency_percentiles_use_nearest_rank_for_small_samples() -> None:
+    case = next(case for case in load_steward_bench_cases() if case.id == "cuda_oom")
+    results = [
+        evaluate_steward_case(case, output_text="ok", latency_ms=value)
+        for value in (10.0, 20.0, 80.0)
+    ]
+
+    summary = summarize_steward_bench(results)
+
+    assert summary["p50_latency_ms"] == 20.0
+    assert summary["p95_latency_ms"] == 80.0
