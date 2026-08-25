@@ -76,7 +76,7 @@ def test_resident_steward_chat_forces_reviewed_messages_and_safe_decoding() -> N
     assert parameters["chat_template_kwargs"] == {"enable_thinking": False}
     assert parameters["temperature"] == 0.0
     assert parameters["top_p"] == 0.8
-    assert parameters["max_tokens"] == 128
+    assert parameters["max_tokens"] == 32
     assert parameters["provider_timeout_seconds"] == 24.0
     assert parameters["timeout_seconds"] == 25.0
     assert result["model_profile"]["profile_id"] == "qwen3-0.6b-steward.v1"

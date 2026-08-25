@@ -92,3 +92,18 @@ def test_diagnostic_snapshot_is_bounded_allow_listed_and_compact() -> None:
     assert "runtime_start_failed" in invocation["messages"][1]["content"]
     assert "do-not-leak" not in invocation["messages"][1]["content"]
     assert len(invocation["messages"][0]["content"]) < 1200
+
+
+def test_steward_prompt_preserves_unicode_instead_of_token_heavy_escape_sequences() -> None:
+    context = build_safe_steward_context(
+        installation_plan={},
+        node_identity={"node_id": "main"},
+        wallet_state={},
+        inference_state={"state": "RUNNING"},
+    )
+
+    invocation = compose_steward_prompt("Что работает на ноде?", context)
+    user_content = invocation["messages"][1]["content"]
+
+    assert "Что работает на ноде?" in user_content
+    assert "\\u0427" not in user_content

@@ -308,7 +308,7 @@ def compose_steward_prompt(
 
 
 def _safe_json(value: object) -> str:
-    rendered = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    rendered = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return rendered.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 

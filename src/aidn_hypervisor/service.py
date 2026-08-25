@@ -958,8 +958,6 @@ class HypervisorService:
             fallback=fallback,
         )
         operator_text = validation.output_text
-        if response_mode == "model_augmented" and deterministic_summary not in operator_text:
-            operator_text = f"{deterministic_summary} {operator_text}".strip()
         return {
             **result,
             "output_text": operator_text,
