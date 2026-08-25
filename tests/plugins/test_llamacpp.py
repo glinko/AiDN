@@ -27,9 +27,17 @@ def _bundle(
 
 
 class StubLlamaCppPlugin(LlamaCppPlugin):
-    def __init__(self, *, health_payload=None, completion_payload=None, raise_error: Exception | None = None):
+    def __init__(
+        self,
+        *,
+        health_payload=None,
+        completion_payload=None,
+        chat_payload=None,
+        raise_error: Exception | None = None,
+    ):
         self.health_payload = health_payload
         self.completion_payload = completion_payload
+        self.chat_payload = chat_payload
         self.raise_error = raise_error
         self.calls: list[tuple[str, str, dict | None]] = []
 
@@ -48,6 +56,8 @@ class StubLlamaCppPlugin(LlamaCppPlugin):
             return self.health_payload or {"status": "ok"}
         if url.endswith("/completion"):
             return self.completion_payload or {"content": ""}
+        if url.endswith("/v1/chat/completions"):
+            return self.chat_payload or {"choices": [{"message": {"content": ""}}]}
         if url.endswith("/v1/models"):
             return {"data": [{"id": "qwen3.6"}]}
         raise AssertionError(f"unexpected url: {url}")
@@ -325,6 +335,58 @@ def test_llamacpp_plugin_invoke_posts_prompt_and_returns_normalized_payload() ->
     }
 
 
+def test_llamacpp_plugin_invoke_uses_chat_completions_for_role_separated_messages() -> None:
+    plugin = StubLlamaCppPlugin(
+        chat_payload={
+            "choices": [{"message": {"content": "The model is ready."}}],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 6},
+        }
+    )
+    runtime = RuntimeHandle(
+        runtime_id="rt-1",
+        command=["llama-server"],
+        status="running",
+        bundle_id="phi4-llamacpp",
+        metadata={"endpoint": "http://127.0.0.1:8080", "model_id": "C:/models/phi4.gguf"},
+    )
+    messages = [
+        {"role": "system", "content": "You are a safe local assistant."},
+        {"role": "user", "content": "What is working?"},
+    ]
+    task = TaskRequest(
+        task_type="llm_text.generate",
+        payload={
+            "prompt": "legacy fallback",
+            "messages": messages,
+            "temperature": 0.0,
+            "top_p": 0.8,
+            "max_tokens": 96,
+            "chat_template_kwargs": {"enable_thinking": False},
+        },
+    )
+
+    result = plugin.invoke(task, runtime)
+
+    assert plugin.calls == [
+        (
+            "POST",
+            "http://127.0.0.1:8080/v1/chat/completions",
+            {
+                "model": "C:/models/phi4.gguf",
+                "messages": messages,
+                "stream": False,
+                "temperature": 0.0,
+                "top_p": 0.8,
+                "max_tokens": 96,
+                "chat_template_kwargs": {"enable_thinking": False},
+            },
+        )
+    ]
+    assert result["output_text"] == "The model is ready."
+    assert result["usage"]["input_tokens"] == 11
+    assert result["usage"]["output_tokens"] == 6
+
+
 def test_llamacpp_plugin_invoke_requires_prompt_payload() -> None:
     plugin = StubLlamaCppPlugin()
     runtime = RuntimeHandle(
@@ -338,6 +400,27 @@ def test_llamacpp_plugin_invoke_requires_prompt_payload() -> None:
 
     with pytest.raises(ValueError, match="prompt"):
         plugin.invoke(task, runtime)
+
+
+def test_llamacpp_plugin_invoke_accepts_messages_without_legacy_prompt() -> None:
+    plugin = StubLlamaCppPlugin(chat_payload={"choices": [{"message": {"content": "chat-only"}}]})
+    runtime = RuntimeHandle(
+        runtime_id="rt-1",
+        command=["llama-server"],
+        status="running",
+        bundle_id="phi4-llamacpp",
+        metadata={"endpoint": "http://127.0.0.1:8080", "model_id": "C:/models/phi4.gguf"},
+    )
+
+    result = plugin.invoke(
+        TaskRequest(
+            task_type="llm_text.generate",
+            payload={"messages": [{"role": "user", "content": "Hi"}]},
+        ),
+        runtime,
+    )
+
+    assert result["output_text"] == "chat-only"
 
 
 def test_llamacpp_partial_usage_does_not_invent_unknown_tokens() -> None:

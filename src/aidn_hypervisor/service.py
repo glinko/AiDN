@@ -98,7 +98,21 @@ from aidn_hypervisor.state import (
     RuntimeSnapshot,
     TaskSnapshot,
 )
-from aidn_hypervisor.steward_prompt import build_safe_steward_context, compose_steward_prompt
+from aidn_hypervisor.steward_event_intelligence import (
+    StewardEventBatch,
+    StewardEventIntelligence,
+    compose_event_summary_messages,
+)
+from aidn_hypervisor.steward_prompt import (
+    STEWARD_PROMPT_ID,
+    STEWARD_PROMPT_VERSION,
+    build_safe_steward_context,
+    compose_steward_prompt,
+)
+from aidn_hypervisor.steward_safety import (
+    classify_steward_request,
+    validate_steward_output,
+)
 from aidn_hypervisor.task_execution_service import TaskExecutionService
 from aidn_hypervisor.task_lifecycle_service import TaskLifecycleService
 from aidn_hypervisor.task_usage_accounting_service import TaskUsageAccountingService
@@ -369,6 +383,10 @@ class HypervisorService:
             self._event_bus,
             on_change=self._persist_state,
         )
+        self._steward_event_intelligence = StewardEventIntelligence(
+            on_change=self._persist_state,
+        )
+        self._steward_event_intelligence.bind_event_bus(self._event_bus)
         self._hook_dispatcher = HookDispatcher(
             self._event_bus,
             self._event_store,
@@ -587,10 +605,61 @@ class HypervisorService:
     def resident_agent_status(self) -> dict:
         payload = self._resident_agent_service.status()
         payload["worker"] = self._resident_worker.status()
+        payload["event_intelligence"] = self._steward_event_intelligence.status()
         return payload
 
     def resident_agent_context(self) -> dict:
         return self._resident_agent_service.context_snapshot()
+
+    @property
+    def steward_event_intelligence(self) -> StewardEventIntelligence:
+        """Expose the bounded, advisory event intelligence pipeline."""
+
+        return self._steward_event_intelligence
+
+    def resident_event_intelligence_status(self) -> dict:
+        return self._steward_event_intelligence.status()
+
+    def resident_event_intelligence_process(self, *, use_local_model: bool = False) -> dict | None:
+        """Summarize one bounded event batch without changing authoritative state.
+
+        Local model use is opt-in because a deterministic summary is already
+        sufficient for the dashboard and must remain available while the
+        Resident runtime is stopped or unhealthy.
+        """
+
+        summarizer = None
+        if use_local_model:
+            status = self.resident_inference_status()
+            if str(status.get("state") or "").upper() == "RUNNING":
+                summarizer = self._summarize_resident_event_batch
+        return self._steward_event_intelligence.process_once(
+            summarizer=summarizer,
+        )
+
+    def _summarize_resident_event_batch(self, batch: StewardEventBatch) -> dict | None:
+        """Ask the local model for advisory prose, never for policy decisions."""
+
+        messages = compose_event_summary_messages(batch)
+        result = self._resident_inference_adapter.infer(
+            "Summarize the canonical event batch as JSON.",
+            messages=messages,
+            temperature=0.0,
+            top_p=0.8,
+            max_tokens=128,
+            chat_template_kwargs={"enable_thinking": False},
+            stop=["</SYSTEM>", "```"],
+        )
+        output = str(result.get("output_text") or "").strip()
+        if output.startswith("```"):
+            output = output.strip("`").strip()
+            if output.lower().startswith("json"):
+                output = output[4:].lstrip()
+        try:
+            value = json.loads(output)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return value if isinstance(value, dict) else None
 
     def resident_agent_decide(self, goal: str, **kwargs) -> dict:
         return self._resident_agent_service.decide(goal, **kwargs)
@@ -702,26 +771,97 @@ class HypervisorService:
     def resident_steward_chat(self, message: str, **parameters) -> dict:
         """Invoke the local Steward with versioned rules and secret-free state."""
 
+        event_intelligence = getattr(self, "_steward_event_intelligence", None)
+        advisory = (
+            event_intelligence.latest_advisory()
+            if event_intelligence is not None
+            else None
+        )
         context = build_safe_steward_context(
             installation_plan=self.installation_plan(),
             node_identity=self.node_identity(),
             wallet_state=self.owner_wallet_state(),
             inference_state=self.resident_inference_status(),
+            event_intelligence=advisory,
         )
         invocation = compose_steward_prompt(message, context)
+        guard = classify_steward_request(message)
+        fallback = (
+            "I cannot confirm that a state change occurred. The observed "
+            "Hypervisor state is authoritative; review the next listed step "
+            "before taking action."
+        )
+
+        # High-risk requests never reach the local model. This keeps a small
+        # or compromised model from turning a chat message into an action and
+        # makes the refusal deterministic across providers.
+        if guard.blocked:
+            status = self.resident_inference_status()
+            validation = validate_steward_output(
+                guard.response or fallback,
+                fallback=fallback,
+            )
+            return {
+                "ok": True,
+                "task_type": "llm_text.generate",
+                "model_id": status.get("model_path"),
+                "output_text": validation.output_text,
+                "usage": {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "fixed_request_count": 0,
+                    "measurement_kind": "deterministic_guard",
+                    "measurement_source": "steward_safety",
+                },
+                "safety": {
+                    "guard": guard.as_payload(),
+                    "validation": validation.as_payload(),
+                },
+                "prompt": {
+                    "id": invocation["prompt_id"],
+                    "version": invocation["prompt_version"],
+                },
+                "context": context,
+                "suggested_questions": invocation["suggested_questions"],
+            }
+
         # Keep the default Dashboard interaction bounded on CPU-only nodes.
         # Operators can still override this through the explicit parameters
-        # object, while protocol stop markers prevent the model from echoing
-        # the prompt envelope into the visible answer.
+        # object. The role-separated messages let instruction-tuned models
+        # apply their reviewed chat template instead of treating the context
+        # and operator text as one undifferentiated completion prompt.
         inference_parameters = dict(parameters)
-        inference_parameters.setdefault("max_tokens", 64)
+        # The prompt and role-separated messages are control-plane material;
+        # callers may tune decoding, but cannot replace the reviewed context
+        # with an arbitrary provider payload.
+        inference_parameters.pop("prompt", None)
+        inference_parameters.pop("messages", None)
+        inference_parameters.setdefault("temperature", 0.0)
+        inference_parameters.setdefault("top_p", 0.8)
+        inference_parameters.setdefault("max_tokens", 96)
+        chat_template_kwargs = inference_parameters.get("chat_template_kwargs")
+        chat_template_kwargs = (
+            dict(chat_template_kwargs) if isinstance(chat_template_kwargs, dict) else {}
+        )
+        chat_template_kwargs["enable_thinking"] = False
+        inference_parameters["chat_template_kwargs"] = chat_template_kwargs
+        inference_parameters["messages"] = invocation["messages"]
         inference_parameters.setdefault("stop", ["</STEWARD_RESPONSE>", "</SYSTEM>"])
         result = self._resident_inference_adapter.infer(
             invocation["rendered_prompt"],
             **inference_parameters,
         )
+        validation = validate_steward_output(
+            result.get("output_text"),
+            fallback=fallback,
+        )
         return {
             **result,
+            "output_text": validation.output_text,
+            "safety": {
+                "guard": guard.as_payload(),
+                "validation": validation.as_payload(),
+            },
             "prompt": {
                 "id": invocation["prompt_id"],
                 "version": invocation["prompt_version"],
@@ -2242,11 +2382,17 @@ class HypervisorService:
                 "message": "Private keys and recovery seeds are never returned by the Dashboard API.",
             },
         }
+        event_intelligence = getattr(self, "_steward_event_intelligence", None)
         steward_context = build_safe_steward_context(
             installation_plan={**plan, "workflow": workflow},
             node_identity=self.node_identity(),
             wallet_state=wallet,
             inference_state=self.resident_inference_status(),
+            event_intelligence=(
+                event_intelligence.latest_advisory()
+                if event_intelligence is not None
+                else None
+            ),
         )
         return {
             **plan,
@@ -2256,7 +2402,7 @@ class HypervisorService:
                 "ready": str(self.resident_inference_status().get("state") or "").upper() == "RUNNING",
                 "welcome": "I am your local Resident Steward. I can explain the observed node state and guide the next reviewed setup step.",
                 "suggested_questions": compose_steward_prompt("Summarize the next safe step.", steward_context)["suggested_questions"],
-                "prompt": {"id": "aidn-resident-steward", "version": "1.0"},
+                "prompt": {"id": STEWARD_PROMPT_ID, "version": STEWARD_PROMPT_VERSION},
             },
         }
 

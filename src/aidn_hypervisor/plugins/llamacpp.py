@@ -355,17 +355,37 @@ class LlamaCppPlugin(ProviderPlugin):
 
     def invoke(self, task, runtime_handle) -> dict:
         prompt = task.payload.get("prompt")
-        if not prompt:
+        messages = task.payload.get("messages")
+        if not prompt and not (isinstance(messages, list) and messages):
             raise ValueError("llama.cpp invocation requires a prompt payload")
 
-        request_payload = {"prompt": prompt, "stream": False}
-        request_map = {
-            "temperature": "temperature",
-            "top_p": "top_p",
-            "top_k": "top_k",
-            "repeat_penalty": "repeat_penalty",
-            "max_tokens": "n_predict",
-        }
+        chat_mode = isinstance(messages, list) and bool(messages)
+        if chat_mode:
+            request_payload = {
+                "model": self._model_id(runtime_handle),
+                "messages": messages,
+                "stream": False,
+            }
+            request_map = {
+                "temperature": "temperature",
+                "top_p": "top_p",
+                "max_tokens": "max_tokens",
+            }
+            chat_template_kwargs = task.payload.get("chat_template_kwargs")
+            request_payload["chat_template_kwargs"] = (
+                dict(chat_template_kwargs) if isinstance(chat_template_kwargs, dict) else {"enable_thinking": False}
+            )
+            endpoint = f"{self._endpoint(runtime_handle)}/v1/chat/completions"
+        else:
+            request_payload = {"prompt": prompt, "stream": False}
+            request_map = {
+                "temperature": "temperature",
+                "top_p": "top_p",
+                "top_k": "top_k",
+                "repeat_penalty": "repeat_penalty",
+                "max_tokens": "n_predict",
+            }
+            endpoint = f"{self._endpoint(runtime_handle)}/completion"
         for source_key, target_key in request_map.items():
             if source_key in task.payload:
                 request_payload[target_key] = task.payload[source_key]
@@ -384,7 +404,7 @@ class LlamaCppPlugin(ProviderPlugin):
         try:
             response = self._request_json(
                 "POST",
-                f"{self._endpoint(runtime_handle)}/completion",
+                endpoint,
                 request_payload,
                 timeout_seconds=timeout_seconds,
             )
@@ -395,14 +415,23 @@ class LlamaCppPlugin(ProviderPlugin):
                 raise
             response = self._request_json(
                 "POST",
-                f"{self._endpoint(runtime_handle)}/completion",
+                endpoint,
                 request_payload,
             )
+        output_text = response.get("content", "")
+        if not output_text and isinstance(response.get("choices"), list):
+            choices = response["choices"]
+            if choices and isinstance(choices[0], dict):
+                message = choices[0].get("message")
+                if isinstance(message, dict):
+                    output_text = message.get("content", "")
+                if not output_text:
+                    output_text = choices[0].get("text", "")
         result = {
             "ok": True,
             "task_type": task.task_type,
             "model_id": self._model_id(runtime_handle),
-            "output_text": response.get("content", ""),
+            "output_text": output_text,
             "raw": response,
         }
         result["usage"] = self._usage_from_response(response)
@@ -499,8 +528,12 @@ class LlamaCppPlugin(ProviderPlugin):
             raise RuntimeError(str(exc)) from exc
 
     def _usage_from_response(self, response: dict) -> dict:
+        usage = response.get("usage")
         input_tokens = response.get("tokens_evaluated")
         output_tokens = response.get("tokens_predicted")
+        if isinstance(usage, dict):
+            input_tokens = usage.get("prompt_tokens", usage.get("input_tokens", input_tokens))
+            output_tokens = usage.get("completion_tokens", usage.get("output_tokens", output_tokens))
         if isinstance(input_tokens, int) and isinstance(output_tokens, int):
             return {
                 "input_tokens": input_tokens,

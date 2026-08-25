@@ -1568,13 +1568,13 @@ export AIDN_UPDATE_REF=$(shell_quote "${ref:-main}")
 export AIDN_UPDATE_NODE_ROOT="\$data/tooling/node"
 export AIDN_UPDATE_TOOLING_DIR="\$data/tooling"
 export AIDN_UV_BIN=$(shell_quote "${uv_bin:-uv}")
-export AIDN_INSTALLATION_SETUP_MODE=$setup_mode_q
-export AIDN_INSTALLATION_PLAN_PATH=$setup_plan_q
+export AIDN_INSTALLATION_SETUP_MODE=${setup_mode_q:-manual}
+export AIDN_INSTALLATION_PLAN_PATH=${setup_plan_q:-}
 # The supported bootstrap uses browser pairing over the selected local or
 # trusted-LAN HTTP boundary. Provider runtimes remain loopback-only.
 export AIDN_DASHBOARD_ACCESS_ALLOW_INSECURE_LAN=true
-export AIDN_NODE_ID=$(shell_quote "$operator_id")
-export AIDN_OPERATOR_ID=$(shell_quote "$operator_id")
+export AIDN_NODE_ID=$(shell_quote "${operator_id:-main}")
+export AIDN_OPERATOR_ID=$(shell_quote "${operator_id:-main}")
 export AIDN_RESOURCE_PROBE_MODE=auto
 export AIDN_RESOURCE_CAPACITY_PATH="\$data/resource-capacity.json"
 export AIDN_SECRET_MANAGER_PATH="\$data/registry-replication/secrets.json"
@@ -1589,14 +1589,14 @@ if [[ "\$AIDN_INSTALLATION_SETUP_MODE" == 'ai_assisted' ]]; then
   export AIDN_STEWARD_MODEL_REPO='Qwen/Qwen2.5-0.5B-Instruct-GGUF'
   export AIDN_STEWARD_MODEL_QUANT=Q4_K_M
   export AIDN_STEWARD_RAM_BUDGET_MB=1024
-  export AIDN_STEWARD_PROVIDER_TYPE=$(shell_quote "$setup_provider")
-  export AIDN_STEWARD_PLUGIN_ID=$(shell_quote "$setup_provider")
-  export AIDN_STEWARD_AUTOSTART=$(shell_quote "$steward_autostart")
+  export AIDN_STEWARD_PROVIDER_TYPE=$(shell_quote "${setup_provider:-llama.cpp}")
+  export AIDN_STEWARD_PLUGIN_ID=$(shell_quote "${setup_provider:-llama.cpp}")
+  export AIDN_STEWARD_AUTOSTART=$(shell_quote "${steward_autostart:-false}")
   export AIDN_LLAMA_CPP_RUNTIME_ROOT="\$data/providers/llama.cpp"
-  if [[ "$steward_autostart" == 'true' ]]; then
-    export AIDN_STEWARD_MODEL_PATH=$steward_model_path_q
-    if [[ -n "$steward_model_sha256" ]]; then
-      export AIDN_STEWARD_MODEL_SHA256=$steward_model_sha256_q
+  if [[ "${steward_autostart:-false}" == 'true' ]]; then
+    export AIDN_STEWARD_MODEL_PATH=${steward_model_path_q:-}
+    if [[ -n "${steward_model_sha256:-}" ]]; then
+      export AIDN_STEWARD_MODEL_SHA256=${steward_model_sha256_q:-}
     fi
   fi
 else
@@ -1605,7 +1605,7 @@ else
 fi
 export AIDN_ENABLE_PROVIDER_RUNTIME_INSTALL=true
 export AIDN_PROVIDER_RUNTIME_DISPATCHER=/usr/libexec/aidn-provider-runtime/aidn-provider-runtime-ubuntu.sh
-export AIDN_PROVIDER_RUNTIME_BROKER_SOCKET=$runtime_broker_socket
+export AIDN_PROVIDER_RUNTIME_BROKER_SOCKET=${runtime_broker_socket:-}
 export PYTHONUNBUFFERED=1
 EOF
 if [[ "$consensus_mode" == 'validator' ]]; then
@@ -2179,6 +2179,9 @@ if [[ "$setup_mode" == 'ai_assisted' ]]; then
   else
     printf '  steward           : CPU-first, bounded, dashboard start available\n' >&2
   fi
+  # Assisted setup does not implicitly change a provider, model, or public
+  # Endpoint; each later lifecycle change remains an explicit reviewed action.
+  printf '  note              : no provider, model, or public Endpoint is changed implicitly\n' >&2
   printf '  note              : Bundle and public Endpoint changes remain operator-approved\n' >&2
 else
   printf '  next step         : continue configuration from the Dashboard or CLI\n' >&2

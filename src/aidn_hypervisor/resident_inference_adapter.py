@@ -237,14 +237,13 @@ class ResidentInferenceAdapter:
                 path = Path(str(artifact["model_path"]))
             else:
                 path = _bounded_path(model_path)
+                # Always record the observed digest, even when the operator
+                # did not provide a pin. ``verified`` remains false without
+                # an expected digest, but the status projection can now prove
+                # which exact bytes the running model came from.
                 artifact = self.model_manager.verify(
                     str(path), expected_sha256=expected_sha256
-                ) if expected_sha256 else {
-                    "model_path": str(path),
-                    "size_bytes": path.stat().st_size,
-                    "sha256": None,
-                    "verified": False,
-                }
+                )
         except ResidentModelError:
             raise
         except OSError as error:

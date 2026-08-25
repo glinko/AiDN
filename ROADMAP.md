@@ -1,6 +1,6 @@
 # AiDN Roadmap
 
-Last updated: `2026-08-23`
+Last updated: `2026-08-24`
 
 Last repository audit: `main@b667c97` (`2026-08-23`)
 
@@ -189,6 +189,43 @@ finality.
    true token streaming, benchmark-driven Reasoning Provider selection, signed
    wake adapters, external SecretStore and multi-node federation are not Public
    Provider Alpha blockers.
+
+### Resident Steward LLM Routing And Local Intelligence — 2026-08-24
+
+The expanded implementation and evaluation plan is in
+[Resident Steward LLM Routing And Local Intelligence Roadmap](./docs/development/steward-llm-routing-implementation-roadmap.md).
+
+- [~] Keep a small local model as the always-available, CPU-first event/log
+  summarizer and offline Steward fallback. A live baseline on controlled node
+  118 confirms that Qwen3 0.6B can extract simple observed state and the saved
+  installation next action, but it is not safe as the only policy boundary.
+- [x] Convert the live failures into a versioned evaluation suite covering
+  grounding, prompt injection, secret requests, false action claims, mutation
+  approval and multilingual behavior. Latency, memory and event/log scoring
+  remain the next Milestone 0/2 slice.
+- [x] Move the local Qwen path to the reviewed chat template, deterministic
+  generation defaults and deterministic pre/post guards. Severity, approval
+  and action-result truth remain authoritative code.
+- [x] Restore an observed SHA-256 digest in the resident artifact projection;
+  an unpinned artifact remains explicitly `verified: false`.
+- [x] Add the bounded canonical event-intelligence pipeline: secret/path
+  redaction, deterministic authentication/provider/resource classification,
+  duplicate grouping, evidence IDs, critical-event-preserving backpressure,
+  advisory summary validation/cache, metrics, and Dashboard read/process
+  endpoints. Local-model summarization is opt-in and never authoritative.
+- [ ] Add canonical Steward primary/fallback selection by Runtime Binding and
+  invoke it through the existing Reasoning Router. Do not create a second
+  provider/model catalogue or put credentials in route metadata.
+- [ ] Implement one shared `aidn-operator steward model` flow used by first
+  installation, later CLI changes and the Dashboard. Generate choices from
+  trusted Provider Plugin manifests, discover live models, smoke-test before
+  save and preserve the previous healthy route for rollback.
+- [ ] Prove local llama.cpp, attached Ollama, attached vLLM and an
+  OpenAI-compatible Provider against the same prompt, evidence, policy and
+  failure contracts.
+- [ ] Migrate existing `AIDN_STEWARD_MODEL_PATH` installations to canonical
+  bindings and run fresh-install, interrupted-rerun, restart, outage, fallback
+  and rollback acceptance on Ubuntu 22.04/24.04 and node 118.
 
 ### Audit Follow-Ups
 

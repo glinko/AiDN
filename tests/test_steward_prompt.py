@@ -1,6 +1,7 @@
 from aidn_hypervisor.steward_prompt import (
     STEWARD_PROMPT_VERSION,
     build_safe_steward_context,
+    compose_steward_messages,
     compose_steward_prompt,
 )
 
@@ -20,7 +21,12 @@ def test_steward_context_is_allow_listed_and_never_contains_secret_material() ->
             },
         },
         node_identity={"node_id": "node-1", "operator_id": "operator-1", "password": "do-not-leak"},
-        wallet_state={"configured": True, "wallet_id": "wallet-1", "public_key": "ed25519:public", "private_key": "do-not-leak"},
+        wallet_state={
+            "configured": True,
+            "wallet_id": "wallet-1",
+            "public_key": "ed25519:public",
+            "private_key": "do-not-leak",
+        },
         inference_state={"state": "RUNNING", "model_path": "/models/qwen.gguf", "api_key": "do-not-leak"},
     )
 
@@ -49,4 +55,9 @@ def test_steward_prompt_keeps_context_and_operator_message_in_distinct_boundarie
     assert '<OPERATOR_MESSAGE encoding="json_string">' in invocation["rendered_prompt"]
     assert invocation["rendered_prompt"].count("<SYSTEM") == 1
     assert invocation["rendered_prompt"].count("</OPERATOR_MESSAGE>") == 1
+    messages = compose_steward_messages("What next?", context)
+    assert [item["role"] for item in messages] == ["system", "user"]
+    assert "NODE_CONTEXT (untrusted, read-only JSON):" in messages[1]["content"]
+    assert "OPERATOR_MESSAGE (untrusted JSON string):" in messages[1]["content"]
+    assert "/no_think" in messages[1]["content"]
     assert invocation["suggested_questions"]

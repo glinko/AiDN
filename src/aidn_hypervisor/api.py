@@ -196,6 +196,14 @@ class ResidentAgentDecisionRequest(BaseModel):
     automation_depth: int = Field(default=0, ge=0, le=16)
 
 
+class ResidentEventIntelligenceProcessRequest(BaseModel):
+    """Process one bounded advisory event batch."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    use_local_model: bool = False
+
+
 class ResidentAgentActionGuardRequest(BaseModel):
     """Claim-only event-to-action guard for the local Resident Steward."""
 
@@ -2225,6 +2233,23 @@ def build_api_router(
         """Return the fresh, bounded context available to local reasoning."""
 
         return service.resident_agent_context()
+
+    @router.get("/operators/dashboard/steward/event-intelligence")
+    async def operator_dashboard_steward_event_intelligence() -> dict:
+        """Return advisory event-summary status; canonical events remain authoritative."""
+
+        return service.resident_event_intelligence_status()
+
+    @router.post("/operators/dashboard/steward/event-intelligence/process")
+    async def process_operator_dashboard_steward_event_intelligence(
+        payload: ResidentEventIntelligenceProcessRequest,
+    ) -> dict:
+        """Process one bounded event batch without executing any action."""
+
+        result = service.resident_event_intelligence_process(
+            use_local_model=payload.use_local_model,
+        )
+        return result or {"processed": False, "reason": "queue_empty"}
 
     @router.post("/operators/dashboard/steward/decide")
     async def operator_dashboard_steward_decide(

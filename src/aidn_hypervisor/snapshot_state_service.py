@@ -105,6 +105,11 @@ class SnapshotStateService:
         )
         hook_snapshot = self._host.hook_dispatcher.snapshot()
         resident_agent_snapshot = self._host.resident_agent.snapshot_state()
+        event_intelligence = getattr(self._host, "steward_event_intelligence", None)
+        if event_intelligence is not None and hasattr(event_intelligence, "snapshot_state"):
+            # Queue contents are intentionally ephemeral; the bounded summary
+            # cache and metrics survive restart as advisory evidence only.
+            resident_agent_snapshot["event_intelligence"] = event_intelligence.snapshot_state()
         resident_inference = getattr(self._host, "_resident_inference_adapter", None)
         if resident_inference is not None and hasattr(resident_inference, "snapshot_state"):
             # Keep the adapter configuration with the Resident snapshot.  A
@@ -419,6 +424,9 @@ class SnapshotStateService:
         resident_agent = getattr(self._host, "resident_agent", None)
         if resident_agent is not None:
             resident_agent.restore_state(snapshot.resident_agent)
+        event_intelligence = getattr(self._host, "steward_event_intelligence", None)
+        if event_intelligence is not None and hasattr(event_intelligence, "restore_state"):
+            event_intelligence.restore_state(snapshot.resident_agent.get("event_intelligence"))
         resident_inference = getattr(self._host, "_resident_inference_adapter", None)
         if resident_inference is not None and hasattr(resident_inference, "restore_state"):
             resident_inference.restore_state(snapshot.resident_agent.get("inference_adapter"))

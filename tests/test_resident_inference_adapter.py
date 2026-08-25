@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -48,6 +49,8 @@ def test_cpu_resident_start_and_stop_are_lease_gated(tmp_path: Path) -> None:
         plugin_id="fake-managed",
     )
     assert prepared["state"] == "READY_TO_START"
+    assert prepared["artifact"]["sha256"] == f"sha256:{hashlib.sha256(b'test-model').hexdigest()}"
+    assert prepared["artifact"]["verified"] is False
     assert resources.lease_details() == []
 
     started = adapter.start()

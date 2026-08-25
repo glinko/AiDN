@@ -114,6 +114,13 @@ class ResidentWorker:
             if callable(refresh):
                 inference = dict(refresh() or {})
 
+            # Event intelligence is advisory and deterministic by default. It
+            # keeps the bounded summary cache warm without ever making a
+            # local model or provider mutation part of the watchdog path.
+            process_events = getattr(self.service, "resident_event_intelligence_process", None)
+            if callable(process_events):
+                process_events(use_local_model=False)
+
             with self._lock:
                 self._last_inference = inference
                 self._last_success_at = _now()

@@ -43,6 +43,7 @@ from aidn_hypervisor.service import HypervisorService
 from aidn_hypervisor.sessions.service import SessionService
 from aidn_hypervisor.sessions.store import SessionStore
 from aidn_hypervisor.state import JournalEvent
+from aidn_hypervisor.steward_prompt import STEWARD_PROMPT_ID, STEWARD_PROMPT_VERSION
 from aidn_hypervisor.wallet_identity import wallet_identity_registration_payload
 
 
@@ -663,7 +664,10 @@ def test_service_prepares_ai_assisted_installation_review_from_configured_plan(
     assert workflow["stages"][0]["state"] == "REVIEW_REQUIRED"
     assert projection["completion_report"]["wallet"]["private_key"] == "NOT_EXPOSED"
     assert projection["completion_report"]["security"]["secret_material_included"] is False
-    assert projection["steward_handoff"]["prompt"] == {"id": "aidn-resident-steward", "version": "1.0"}
+    assert projection["steward_handoff"]["prompt"] == {
+        "id": STEWARD_PROMPT_ID,
+        "version": STEWARD_PROMPT_VERSION,
+    }
     assert any(
         event.event_type == "installation.plan.review_prepared"
         for event in service.event_journal()
