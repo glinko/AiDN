@@ -58,6 +58,7 @@ def test_validator_write_boundary_allows_local_resident_inference_lifecycle() ->
         "/operators/dashboard/steward/inference/model/verify",
         "/operators/dashboard/steward/inference/invoke",
         "/operators/dashboard/steward/chat",
+        "/operators/dashboard/steward/event-intelligence/process",
     )
     for path in allowed_paths:
         assert _is_validator_consensus_write_path(path, "POST") is True

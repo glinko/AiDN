@@ -609,11 +609,13 @@ def _is_validator_consensus_write_path(path: str, method: str | None = None) -> 
         ("operators", "dashboard", "steward", "inference", "model", "verify"),
         ("operators", "dashboard", "steward", "inference", "invoke"),
         ("operators", "dashboard", "steward", "chat"),
+        ("operators", "dashboard", "steward", "event-intelligence", "process"),
     } and (method is None or method == "POST"):
         # Resident Steward controls and inference stay on this node. They
         # update local policy/enablement, prepare or verify a local artifact,
         # reserve or release a Resource Broker lease, execute allow-listed
-        # local actions, and invoke the local runtime; none writes Ledger state.
+        # local actions, invoke the local runtime, or summarize bounded
+        # advisory events; none writes Ledger state.
         return True
     if (
         parts == ["operators", "dashboard", "access", "config", "validate"]
