@@ -38,7 +38,9 @@ class StewardModelProfile:
     max_output_tokens: int
     temperature: float
     top_p: float
-    enable_thinking: bool
+    # ``None`` means the model family has no reviewed thinking toggle.  Do not
+    # forward Qwen-specific chat-template kwargs to unrelated templates.
+    enable_thinking: bool | None
     status: str
     task_scope: tuple[str, ...]
     notes: str
@@ -48,12 +50,16 @@ class StewardModelProfile:
 
         # Thinking is intentionally not configurable through the operator chat
         # payload.  The Qwen3 profile is a dispatcher, not a long-form reasoner.
-        return {
+        parameters: dict[str, Any] = {
             "temperature": self.temperature,
             "top_p": self.top_p,
             "max_tokens": self.max_output_tokens,
-            "chat_template_kwargs": {"enable_thinking": self.enable_thinking},
         }
+        if self.enable_thinking is not None:
+            parameters["chat_template_kwargs"] = {
+                "enable_thinking": self.enable_thinking
+            }
+        return parameters
 
     def runtime_parameter_policy(self, provider_type: str | None = None) -> dict[str, Any]:
         """Return only supported canonical runtime overrides for this profile.
@@ -105,7 +111,7 @@ _PROFILES: dict[str, StewardModelProfile] = {
         display_name="Qwen3 0.6B Steward (recommended Q4)",
         provider_type="llama.cpp",
         execution_profile="CPU_RESIDENT",
-        model_repo="Qwen/Qwen3-0.6B-GGUF",
+        model_repo="unsloth/Qwen3-0.6B-GGUF",
         model_file="Qwen3-0.6B-Q4_K_M.gguf",
         quantization="Q4_K_M",
         context_length=4096,
@@ -155,14 +161,14 @@ _PROFILES: dict[str, StewardModelProfile] = {
         display_name="SmolLM2 1.7B Instruct (comparison candidate)",
         provider_type="llama.cpp",
         execution_profile="CPU_RESIDENT",
-        model_repo="HuggingFaceTB/SmolLM2-1.7B-Instruct",
-        model_file="SmolLM2-1.7B-Instruct-Q4_K_M.gguf",
+        model_repo="HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF",
+        model_file="smollm2-1.7b-instruct-q4_k_m.gguf",
         quantization="Q4_K_M",
         context_length=4096,
         max_output_tokens=192,
         temperature=0.0,
         top_p=0.8,
-        enable_thinking=False,
+        enable_thinking=None,
         status="candidate",
         task_scope=(
             "node_status",

@@ -158,7 +158,12 @@ def suggested_questions(context: Mapping[str, Any]) -> list[str]:
     return suggestions[:3]
 
 
-def compose_steward_prompt(user_message: str, context: Mapping[str, Any]) -> dict[str, Any]:
+def compose_steward_prompt(
+    user_message: str,
+    context: Mapping[str, Any],
+    *,
+    no_think_suffix: bool = True,
+) -> dict[str, Any]:
     message = str(user_message or "").strip()
     if not message or len(message) > MAX_USER_MESSAGE_CHARS:
         raise ValueError(f"message must contain 1..{MAX_USER_MESSAGE_CHARS} characters")
@@ -178,7 +183,11 @@ def compose_steward_prompt(user_message: str, context: Mapping[str, Any]) -> dic
         "context": dict(context),
         "user_message": message,
         "rendered_prompt": rendered,
-        "messages": compose_steward_messages(message, context),
+        "messages": compose_steward_messages(
+            message,
+            context,
+            no_think_suffix=no_think_suffix,
+        ),
         "suggested_questions": suggested_questions(context),
     }
 
@@ -188,7 +197,12 @@ def _safe_json(value: object) -> str:
     return rendered.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
-def compose_steward_messages(user_message: str, context: Mapping[str, Any]) -> list[dict[str, str]]:
+def compose_steward_messages(
+    user_message: str,
+    context: Mapping[str, Any],
+    *,
+    no_think_suffix: bool = True,
+) -> list[dict[str, str]]:
     """Return role-separated messages for instruction-tuned local models.
 
     The legacy XML envelope remains available through ``rendered_prompt`` for
@@ -202,6 +216,9 @@ def compose_steward_messages(user_message: str, context: Mapping[str, Any]) -> l
         raise ValueError(f"message must contain 1..{MAX_USER_MESSAGE_CHARS} characters")
     context_json = _safe_json(context)
     message_json = _safe_json(message)
+    response_instruction = "Return only the concise operator-facing answer."
+    if no_think_suffix:
+        response_instruction += " /no_think"
     return [
         {"role": "system", "content": STEWARD_SYSTEM_PROMPT.strip()},
         {
@@ -210,8 +227,7 @@ def compose_steward_messages(user_message: str, context: Mapping[str, Any]) -> l
                 "NODE_CONTEXT (untrusted, read-only JSON):\n"
                 f"{context_json}\n\n"
                 "OPERATOR_MESSAGE (untrusted JSON string):\n"
-                f"{message_json}\n\n"
-                "Return only the concise operator-facing answer. /no_think"
+                f"{message_json}\n\n{response_instruction}"
             ),
         },
     ]

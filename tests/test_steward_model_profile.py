@@ -12,7 +12,7 @@ def test_recommended_profile_is_qwen3_q4_cpu_no_think() -> None:
     profile = get_steward_model_profile()
 
     assert profile.profile_id == DEFAULT_STEWARD_MODEL_PROFILE_ID
-    assert profile.model_repo == "Qwen/Qwen3-0.6B-GGUF"
+    assert profile.model_repo == "unsloth/Qwen3-0.6B-GGUF"
     assert profile.quantization == "Q4_K_M"
     assert profile.provider_type == "llama.cpp"
     assert profile.execution_profile == "CPU_RESIDENT"
@@ -37,7 +37,11 @@ def test_profile_registry_exposes_baseline_and_comparison_candidate() -> None:
 
     assert "qwen3-0.6b-baseline-q8.v1" in profiles
     assert "smollm2-1.7b-instruct.v1" in profiles
-    assert profiles["smollm2-1.7b-instruct.v1"].status == "candidate"
+    smollm = profiles["smollm2-1.7b-instruct.v1"]
+    assert smollm.status == "candidate"
+    assert smollm.model_repo == "HuggingFaceTB/SmolLM2-1.7B-Instruct-GGUF"
+    assert smollm.enable_thinking is None
+    assert "chat_template_kwargs" not in smollm.chat_parameters()
 
 
 def test_unknown_profile_fails_closed(monkeypatch) -> None:

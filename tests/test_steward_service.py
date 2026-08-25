@@ -75,6 +75,24 @@ def test_resident_steward_chat_forces_reviewed_messages_and_safe_decoding() -> N
     assert result["safety"]["validation"]["accepted"] is True
 
 
+def test_resident_steward_chat_omits_qwen_thinking_controls_for_smollm(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("AIDN_STEWARD_MODEL_PROFILE", "smollm2-1.7b-instruct.v1")
+    service, adapter = _service_with_stub()
+
+    result = service.resident_steward_chat(
+        "What is working on my node right now?",
+        chat_template_kwargs={"enable_thinking": True},
+    )
+
+    assert len(adapter.calls) == 1
+    _prompt, parameters = adapter.calls[0]
+    assert not parameters["messages"][1]["content"].endswith("/no_think")
+    assert "chat_template_kwargs" not in parameters
+    assert result["model_profile"]["profile_id"] == "smollm2-1.7b-instruct.v1"
+
+
 def test_resident_steward_chat_does_not_invoke_model_for_secret_request() -> None:
     service, adapter = _service_with_stub()
 

@@ -645,14 +645,14 @@ class HypervisorService:
         """Ask the local model for advisory prose, never for policy decisions."""
 
         messages = compose_event_summary_messages(batch)
+        model_profile = get_steward_model_profile()
+        inference_parameters = steward_chat_parameters(model_profile.profile_id)
+        inference_parameters["max_tokens"] = 128
+        inference_parameters["messages"] = messages
+        inference_parameters["stop"] = ["</SYSTEM>", "```"]
         result = self._resident_inference_adapter.infer(
             "Summarize the canonical event batch as JSON.",
-            messages=messages,
-            temperature=0.0,
-            top_p=0.8,
-            max_tokens=128,
-            chat_template_kwargs={"enable_thinking": False},
-            stop=["</SYSTEM>", "```"],
+            **inference_parameters,
         )
         output = str(result.get("output_text") or "").strip()
         if output.startswith("```"):
@@ -789,7 +789,11 @@ class HypervisorService:
             inference_state=self.resident_inference_status(),
             event_intelligence=advisory,
         )
-        invocation = compose_steward_prompt(message, context)
+        invocation = compose_steward_prompt(
+            message,
+            context,
+            no_think_suffix=model_profile.enable_thinking is False,
+        )
         guard = classify_steward_request(message)
         fallback = (
             "I cannot confirm that a state change occurred. The observed "
@@ -849,8 +853,14 @@ class HypervisorService:
         chat_template_kwargs = (
             dict(chat_template_kwargs) if isinstance(chat_template_kwargs, dict) else {}
         )
-        chat_template_kwargs["enable_thinking"] = False
-        inference_parameters["chat_template_kwargs"] = chat_template_kwargs
+        if model_profile.enable_thinking is not None:
+            chat_template_kwargs["enable_thinking"] = model_profile.enable_thinking
+        else:
+            chat_template_kwargs.pop("enable_thinking", None)
+        if chat_template_kwargs:
+            inference_parameters["chat_template_kwargs"] = chat_template_kwargs
+        else:
+            inference_parameters.pop("chat_template_kwargs", None)
         inference_parameters["messages"] = invocation["messages"]
         inference_parameters.setdefault("stop", ["</STEWARD_RESPONSE>", "</SYSTEM>"])
         result = self._resident_inference_adapter.infer(
