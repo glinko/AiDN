@@ -200,7 +200,11 @@ class OperatorUpdateService:
         if result.returncode != 0:
             detail = stderr.strip() or stdout.strip() or f"exit code {result.returncode}"
             raise OperatorUpdateError(f"{command[0]} failed: {_short_error(detail)}")
-        return stdout.strip()
+        # Preserve leading whitespace in porcelain output.  Git uses the
+        # first two columns for the index/worktree status, so stripping the
+        # first character can turn an allowed generated-dashboard deletion
+        # into a false local-change rejection.
+        return stdout.rstrip()
 
     def _git(self, *arguments: str, timeout: int = 120) -> str:
         return self._run(("git", *arguments), timeout=timeout)
