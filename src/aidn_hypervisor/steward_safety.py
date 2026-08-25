@@ -7,7 +7,9 @@ small or confused model cannot turn a chat answer into an authoritative action.
 
 from __future__ import annotations
 
+import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -103,6 +105,144 @@ class StewardOutputValidation:
         }
 
 
+@dataclass(frozen=True)
+class StewardDecision:
+    """Deterministic read-only routing decision kept outside the local model."""
+
+    intent: str
+    tool: str | None
+    approval: str
+    escalate: bool
+
+    def as_payload(self) -> dict[str, Any]:
+        return {
+            "intent": self.intent,
+            "tool": {"name": self.tool, "arguments": {}} if self.tool else None,
+            "approval": self.approval,
+            "escalate": self.escalate,
+        }
+
+
+_EVENT_TO_TOOL = {
+    "runtime_start_failed": "resource.inspect_pressure",
+    "provider_exit": "provider.health_check",
+    "endpoint_timeout": "endpoint.inspect_health",
+    "endpoint_queue_overloaded": "endpoint.inspect_queue",
+    "resource_warning": "resource.inspect_storage",
+    "model_artifact_missing": "model.inspect_artifact",
+    "bundle_validation_failed": "bundle.inspect_validation",
+    "bundle_revalidation_required": "bundle.inspect_validation",
+    "wallet_unavailable": "wallet.inspect_status",
+    "peer_unavailable": "network.inspect_peer",
+    "endpoint_validation_failed": "validation.inspect_report",
+    "resource_lease_conflict": "resource.inspect_leases",
+    "model_download_failed": "model.inspect_download",
+    "model_checksum_failed": "model.verify_artifact",
+    "endpoint_publication_requested": "endpoint.publish",
+    "provider_installation_requested": "provider.install",
+    "installation_state": "installation.inspect_next_step",
+    "node_status": "node.inspect_status",
+}
+
+
+def _tool_from_message(message: str) -> str | None:
+    text = str(message or "").lower()
+    patterns = (
+        (("out of memory", "cuda oom", "vram"), "resource.inspect_pressure"),
+        (("provider crashed", "provider health"), "provider.health_check"),
+        (("endpoint", "timing out"), "endpoint.inspect_health"),
+        (("queue", "overload"), "endpoint.inspect_queue"),
+        (("disk", "storage"), "resource.inspect_storage"),
+        (("model file", "artifact missing"), "model.inspect_artifact"),
+        (("bundle", "validation"), "bundle.inspect_validation"),
+        (("wallet", "кошел"), "wallet.inspect_status"),
+        (("peer", "пир"), "network.inspect_peer"),
+        (("lease",), "resource.inspect_leases"),
+        (("download", "загруз"), "model.inspect_download"),
+        (("checksum",), "model.verify_artifact"),
+        (("next reviewed step", "следующ"), "installation.inspect_next_step"),
+        (("working on my node", "работает на моей ноде"), "node.inspect_status"),
+    )
+    for markers, tool in patterns:
+        if any(marker in text for marker in markers):
+            return tool
+    return None
+
+
+def build_steward_decision(
+    message: str,
+    *,
+    guard: StewardGuardDecision,
+    diagnostic_snapshot: Mapping[str, Any] | None = None,
+) -> StewardDecision:
+    """Select a reviewed inspection tool or escalation without model authority."""
+
+    snapshot = diagnostic_snapshot if isinstance(diagnostic_snapshot, Mapping) else {}
+    event_type = str(snapshot.get("event_type") or "").strip()
+    if guard.intent in {"secret_request", "prompt_injection"}:
+        return StewardDecision(guard.intent, None, "ESCALATE", True)
+    tool = _EVENT_TO_TOOL.get(event_type) or _tool_from_message(message)
+    if event_type == "operator_request" and bool(snapshot.get("data_loss")):
+        tool = "node.factory_reset"
+    if guard.requires_approval:
+        return StewardDecision(guard.intent, tool, "OPERATOR_CONFIRMATION", False)
+    if tool is None:
+        return StewardDecision(guard.intent, None, "ESCALATE", True)
+    return StewardDecision(guard.intent, tool, "NONE", False)
+
+
+def append_steward_decision(output_text: str, decision: StewardDecision) -> str:
+    """Attach one canonical machine-readable decision to safe operator prose."""
+
+    prose = str(output_text or "").strip()
+    rendered = json.dumps(
+        decision.as_payload(),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return f"{prose}\n{rendered}" if prose else rendered
+
+
+def deterministic_steward_summary(
+    message: str,
+    *,
+    decision: StewardDecision,
+    diagnostic_snapshot: Mapping[str, Any] | None = None,
+) -> str:
+    """Render a bounded evidence summary that remains useful without the SLM."""
+
+    snapshot = diagnostic_snapshot if isinstance(diagnostic_snapshot, Mapping) else {}
+    event_type = str(snapshot.get("event_type") or "").strip()
+    if event_type == "node_status" and re.search(r"[А-Яа-яЁё]", str(message or "")):
+        return "Нода работает; доступны наблюдаемые статусы сервисов и локальной модели."
+    english = {
+        "runtime_start_failed": "The runtime start evidence reports an out of memory condition. Inspect current resource pressure before another start attempt.",
+        "provider_exit": "The provider exited after being healthy. Inspect provider health and its bounded exit diagnostic.",
+        "endpoint_timeout": "The endpoint has recent timeout evidence. Inspect endpoint health and queue pressure.",
+        "endpoint_queue_overloaded": "The endpoint queue is overloaded. Inspect queued work and available concurrency.",
+        "resource_warning": "The node reports low disk space. Inspect storage pressure before downloads or installs.",
+        "model_artifact_missing": "The configured model artifact is missing. Inspect the reviewed model path and verification state.",
+        "bundle_validation_failed": "The bundle failed validation. Inspect the validation report before publication or use.",
+        "bundle_revalidation_required": "The bundle validation is stale. Inspect validation state before reuse.",
+        "wallet_unavailable": "The operator wallet is unavailable. Inspect wallet status; secret material is not exposed here.",
+        "peer_unavailable": "The peer is currently unavailable. Inspect peer reachability and last-seen evidence.",
+        "endpoint_validation_failed": "Endpoint validation failed. Inspect the validation report and failed checks.",
+        "resource_lease_conflict": "The model start conflicts with an active resource lease. Inspect leases and available capacity.",
+        "model_download_failed": "The model download failed. Inspect the download status and reviewed source evidence.",
+        "model_checksum_failed": "The model checksum does not match. Do not start it; inspect artifact verification evidence.",
+        "installation_state": "The assisted installation has a reviewed next step. Inspect it before any state change.",
+        "node_status": "The node status snapshot is available. Inspect observed service and inference state.",
+    }
+    if event_type in english:
+        return english[event_type]
+    if decision.escalate:
+        return "The available evidence does not identify a safe action. Escalate for operator review."
+    if re.search(r"[А-Яа-яЁё]", str(message or "")):
+        return "Доступны только наблюдаемые данные ноды; выбран следующий безопасный шаг для проверки."
+    return "Only observed node evidence is available; use the selected read-only inspection step."
+
+
 def classify_steward_request(message: str) -> StewardGuardDecision:
     """Classify high-risk Steward requests without asking the model."""
 
@@ -175,8 +315,12 @@ def validate_steward_output(output_text: str, *, fallback: str) -> StewardOutput
 
 
 __all__ = [
+    "StewardDecision",
     "StewardGuardDecision",
     "StewardOutputValidation",
+    "append_steward_decision",
+    "build_steward_decision",
     "classify_steward_request",
+    "deterministic_steward_summary",
     "validate_steward_output",
 ]

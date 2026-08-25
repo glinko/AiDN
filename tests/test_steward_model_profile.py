@@ -26,7 +26,7 @@ def test_runtime_policy_contains_only_supported_llama_parameters() -> None:
     policy = steward_runtime_parameter_policy(provider_type="llama.cpp")
 
     assert policy["context_length"] == {"value": 4096}
-    assert policy["max_tokens"] == {"value": 192}
+    assert policy["max_tokens"] == {"value": 128}
     assert policy["temperature"] == {"value": 0.0}
     assert policy["top_p"] == {"value": 0.8}
     assert "enable_thinking" not in policy

@@ -40,6 +40,7 @@ class StubLlamaCppPlugin(LlamaCppPlugin):
         self.chat_payload = chat_payload
         self.raise_error = raise_error
         self.calls: list[tuple[str, str, dict | None]] = []
+        self.timeouts: list[float] = []
 
     def _request_json(
         self,
@@ -50,6 +51,7 @@ class StubLlamaCppPlugin(LlamaCppPlugin):
         timeout_seconds: float = 5,
     ) -> dict:
         self.calls.append((method, url, payload))
+        self.timeouts.append(timeout_seconds)
         if self.raise_error is not None:
             raise self.raise_error
         if url.endswith("/health"):
@@ -421,6 +423,34 @@ def test_llamacpp_plugin_invoke_accepts_messages_without_legacy_prompt() -> None
     )
 
     assert result["output_text"] == "chat-only"
+
+
+def test_llamacpp_plugin_honors_bounded_per_request_transport_timeout() -> None:
+    plugin = StubLlamaCppPlugin(chat_payload={"choices": [{"message": {"content": "ok"}}]})
+    runtime = RuntimeHandle(
+        runtime_id="rt-1",
+        command=["llama-server"],
+        status="running",
+        bundle_id="phi4-llamacpp",
+        metadata={
+            "endpoint": "http://127.0.0.1:8080",
+            "model_id": "C:/models/phi4.gguf",
+            "timeout_seconds": 90,
+        },
+    )
+
+    plugin.invoke(
+        TaskRequest(
+            task_type="llm_text.generate",
+            payload={
+                "messages": [{"role": "user", "content": "Hi"}],
+                "provider_timeout_seconds": 24,
+            },
+        ),
+        runtime,
+    )
+
+    assert plugin.timeouts[-1] == 24.0
 
 
 def test_llamacpp_partial_usage_does_not_invent_unknown_tokens() -> None:

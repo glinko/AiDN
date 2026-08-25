@@ -45,7 +45,12 @@ def _chat_url(value: str) -> str:
 
 
 def _post_chat(url: str, case: StewardBenchCase, timeout: float) -> tuple[str | None, dict, str | None, float]:
-    payload = json.dumps({"message": case.message, "parameters": {}}).encode("utf-8")
+    payload = json.dumps(
+        {
+            "message": case.message,
+            "parameters": {"diagnostic_snapshot": case.context},
+        }
+    ).encode("utf-8")
     request = Request(
         url,
         data=payload,
@@ -59,8 +64,22 @@ def _post_chat(url: str, case: StewardBenchCase, timeout: float) -> tuple[str | 
         elapsed_ms = (time.perf_counter() - started) * 1000
         if not isinstance(body, dict):
             return None, {}, "chat endpoint returned a non-object response", elapsed_ms
-        return str(body.get("output_text") or ""), body.get("usage") or {}, None, elapsed_ms
-    except (HTTPError, URLError, TimeoutError, OSError, ValueError) as error:
+        output_text = str(body.get("output_text") or "")
+        decision = body.get("decision")
+        if isinstance(decision, dict):
+            output_text = f"{output_text}\n{json.dumps(decision, ensure_ascii=False)}"
+        usage = dict(body.get("usage") or {})
+        usage["response_mode"] = str(body.get("response_mode") or "model_augmented")
+        return output_text, usage, None, elapsed_ms
+    except HTTPError as error:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        try:
+            detail = error.read().decode("utf-8")[:1024]
+        except OSError:
+            detail = ""
+        suffix = f": {detail}" if detail else ""
+        return None, {}, f"HTTPError: {error}{suffix}", elapsed_ms
+    except (URLError, TimeoutError, OSError, ValueError) as error:
         elapsed_ms = (time.perf_counter() - started) * 1000
         return None, {}, f"{type(error).__name__}: {error}", elapsed_ms
 
@@ -110,6 +129,9 @@ def main() -> int:
         )
         if latency_ms is not None:
             line += f" {latency_ms / 1000:.1f}s"
+        response_mode = usage.get("response_mode")
+        if response_mode:
+            line += f" mode={response_mode}"
         if args.include_output and result.response_preview:
             line += f" | {result.response_preview.replace(chr(10), ' ')[:180]}"
         if error:

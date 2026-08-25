@@ -13,6 +13,7 @@ class _StubResidentAdapter:
             "provider_type": "llama.cpp",
         }
 
+
     def infer(self, prompt: str, **parameters) -> dict:
         self.calls.append((prompt, parameters))
         return {
@@ -22,6 +23,12 @@ class _StubResidentAdapter:
             "output_text": "The node is online and the model is ready.",
             "usage": {"input_tokens": 10, "output_tokens": 8},
         }
+
+
+class _FailingResidentAdapter(_StubResidentAdapter):
+    def infer(self, prompt: str, **parameters) -> dict:
+        self.calls.append((prompt, parameters))
+        raise ValueError("provider timed out")
 
 
 def _service_with_stub() -> tuple[HypervisorService, _StubResidentAdapter]:
@@ -69,7 +76,9 @@ def test_resident_steward_chat_forces_reviewed_messages_and_safe_decoding() -> N
     assert parameters["chat_template_kwargs"] == {"enable_thinking": False}
     assert parameters["temperature"] == 0.0
     assert parameters["top_p"] == 0.8
-    assert parameters["max_tokens"] == 192
+    assert parameters["max_tokens"] == 128
+    assert parameters["provider_timeout_seconds"] == 24.0
+    assert parameters["timeout_seconds"] == 25.0
     assert result["model_profile"]["profile_id"] == "qwen3-0.6b-steward.v1"
     assert result["safety"]["guard"]["intent"] == "information_request"
     assert result["safety"]["validation"]["accepted"] is True
@@ -106,3 +115,41 @@ def test_resident_steward_chat_does_not_invoke_model_for_secret_request() -> Non
         "requires_approval": False,
     }
     assert "cannot reveal" in result["output_text"]
+    assert result["response_mode"] == "deterministic_guard"
+
+
+def test_resident_steward_chat_appends_deterministic_diagnostic_decision() -> None:
+    service, adapter = _service_with_stub()
+
+    result = service.resident_steward_chat(
+        "Why did the llama.cpp model fail to start?",
+        diagnostic_snapshot={
+            "event_type": "runtime_start_failed",
+            "errors": ["CUDA out of memory"],
+            "private_key": "do-not-leak",
+        },
+    )
+
+    assert len(adapter.calls) == 1
+    assert result["decision"]["tool"]["name"] == "resource.inspect_pressure"
+    assert result["response_mode"] == "model_augmented"
+    assert "out of memory" in result["output_text"]
+    assert "resource.inspect_pressure" not in result["output_text"]
+    assert "do-not-leak" not in str(result["context"])
+
+
+def test_resident_steward_chat_degrades_to_deterministic_answer_on_provider_error() -> None:
+    service, _adapter = _service_with_stub()
+    failing = _FailingResidentAdapter()
+    service._resident_inference_adapter = failing
+
+    result = service.resident_steward_chat(
+        "Why are requests to the endpoint timing out?",
+        diagnostic_snapshot={"event_type": "endpoint_timeout", "recent_timeouts": 5},
+    )
+
+    assert result["ok"] is True
+    assert result["response_mode"] == "deterministic_fallback"
+    assert result["provider_error"]["message"] == "provider timed out"
+    assert result["decision"]["tool"]["name"] == "endpoint.inspect_health"
+    assert "timeout" in result["output_text"]

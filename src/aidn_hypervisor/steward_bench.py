@@ -105,6 +105,7 @@ class StewardBenchResult:
     latency_ms: float | None
     input_tokens: int | None
     output_tokens: int | None
+    response_mode: str | None
     response_preview: str | None = None
 
     @property
@@ -167,6 +168,7 @@ class StewardBenchResult:
             "latency_ms": self.latency_ms,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
+            "response_mode": self.response_mode,
             "passed": self.passed,
         }
 
@@ -269,6 +271,7 @@ def evaluate_steward_case(
     usage_data = usage if isinstance(usage, Mapping) else {}
     input_tokens = usage_data.get("input_tokens")
     output_tokens = usage_data.get("output_tokens")
+    response_mode = usage_data.get("response_mode")
     return StewardBenchResult(
         case_id=case.id,
         category=case.category,
@@ -290,6 +293,7 @@ def evaluate_steward_case(
         latency_ms=latency_ms,
         input_tokens=int(input_tokens) if isinstance(input_tokens, (int, float)) else None,
         output_tokens=int(output_tokens) if isinstance(output_tokens, (int, float)) else None,
+        response_mode=str(response_mode) if response_mode else None,
         response_preview=_redact_preview(output_text) if response_checked else None,
     )
 
@@ -300,6 +304,10 @@ def summarize_steward_bench(results: list[StewardBenchResult]) -> dict[str, Any]
     total = len(results)
     checked = [item for item in results if item.response_checked]
     structured = [item for item in checked if item.structured_output]
+    response_mode_counts: dict[str, int] = {}
+    for item in checked:
+        mode = item.response_mode or "unknown"
+        response_mode_counts[mode] = response_mode_counts.get(mode, 0) + 1
     latencies = sorted(
         item.latency_ms for item in checked if item.latency_ms is not None
     )
@@ -336,6 +344,7 @@ def summarize_steward_bench(results: list[StewardBenchResult]) -> dict[str, Any]
         "p95_latency_ms": p95,
         "input_tokens": sum(item.input_tokens or 0 for item in checked),
         "output_tokens": sum(item.output_tokens or 0 for item in checked),
+        "response_mode_counts": response_mode_counts,
     }
 
 

@@ -36,6 +36,7 @@ class StewardModelProfile:
     quantization: str
     context_length: int
     max_output_tokens: int
+    request_timeout_seconds: float
     temperature: float
     top_p: float
     # ``None`` means the model family has no reviewed thinking toggle.  Do not
@@ -96,6 +97,7 @@ class StewardModelProfile:
             "quantization": self.quantization,
             "context_length": self.context_length,
             "max_output_tokens": self.max_output_tokens,
+            "request_timeout_seconds": self.request_timeout_seconds,
             "temperature": self.temperature,
             "top_p": self.top_p,
             "thinking": self.enable_thinking,
@@ -115,7 +117,8 @@ _PROFILES: dict[str, StewardModelProfile] = {
         model_file="Qwen3-0.6B-Q4_K_M.gguf",
         quantization="Q4_K_M",
         context_length=4096,
-        max_output_tokens=192,
+        max_output_tokens=128,
+        request_timeout_seconds=24.0,
         temperature=0.0,
         top_p=0.8,
         enable_thinking=False,
@@ -142,7 +145,8 @@ _PROFILES: dict[str, StewardModelProfile] = {
         model_file="Qwen3-0.6B-Q8_0.gguf",
         quantization="Q8_0",
         context_length=4096,
-        max_output_tokens=192,
+        max_output_tokens=128,
+        request_timeout_seconds=24.0,
         temperature=0.0,
         top_p=0.8,
         enable_thinking=False,
@@ -165,7 +169,8 @@ _PROFILES: dict[str, StewardModelProfile] = {
         model_file="smollm2-1.7b-instruct-q4_k_m.gguf",
         quantization="Q4_K_M",
         context_length=4096,
-        max_output_tokens=192,
+        max_output_tokens=128,
+        request_timeout_seconds=24.0,
         temperature=0.0,
         top_p=0.8,
         enable_thinking=None,

@@ -397,6 +397,12 @@ class LlamaCppPlugin(ProviderPlugin):
         # timeout separate from the provider probe timeout and allow the
         # runtime to override it when a managed bundle supplies one.
         timeout_seconds = runtime_handle.metadata.get("timeout_seconds", 90)
+        request_timeout = task.payload.get("provider_timeout_seconds")
+        if request_timeout is not None:
+            try:
+                timeout_seconds = min(float(timeout_seconds), float(request_timeout))
+            except (TypeError, ValueError):
+                pass
         try:
             timeout_seconds = max(1.0, min(3600.0, float(timeout_seconds)))
         except (TypeError, ValueError):

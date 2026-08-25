@@ -1,5 +1,8 @@
 from aidn_hypervisor.steward_safety import (
+    append_steward_decision,
+    build_steward_decision,
     classify_steward_request,
+    deterministic_steward_summary,
     validate_steward_output,
 )
 
@@ -68,3 +71,39 @@ def test_output_validation_accepts_concise_observed_state() -> None:
 
     assert result.accepted is True
     assert result.output_text.startswith("The model is ready")
+
+
+def test_deterministic_decision_routes_diagnostic_without_model_authority() -> None:
+    message = "Why did the llama.cpp model fail to start?"
+    guard = classify_steward_request(message)
+    decision = build_steward_decision(
+        message,
+        guard=guard,
+        diagnostic_snapshot={"event_type": "runtime_start_failed"},
+    )
+    summary = deterministic_steward_summary(
+        message,
+        decision=decision,
+        diagnostic_snapshot={"event_type": "runtime_start_failed"},
+    )
+    output = append_steward_decision(summary, decision)
+
+    assert decision.tool == "resource.inspect_pressure"
+    assert decision.approval == "NONE"
+    assert decision.escalate is False
+    assert "out of memory" in output
+    assert '"name":"resource.inspect_pressure"' in output
+
+
+def test_unknown_diagnostic_escalates_without_inventing_a_tool() -> None:
+    message = "Something is wrong, but I cannot tell what."
+    guard = classify_steward_request(message)
+    decision = build_steward_decision(
+        message,
+        guard=guard,
+        diagnostic_snapshot={"event_type": "unknown"},
+    )
+
+    assert decision.tool is None
+    assert decision.approval == "ESCALATE"
+    assert decision.escalate is True

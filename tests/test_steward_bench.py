@@ -3,6 +3,12 @@ from aidn_hypervisor.steward_bench import (
     load_steward_bench_cases,
     summarize_steward_bench,
 )
+from aidn_hypervisor.steward_safety import (
+    append_steward_decision,
+    build_steward_decision,
+    classify_steward_request,
+    deterministic_steward_summary,
+)
 
 
 def test_steward_bench_fixture_has_required_control_plane_scenarios() -> None:
@@ -25,6 +31,27 @@ def test_deterministic_bench_guards_match_every_fixture_case() -> None:
     assert summary["guard_intent_accuracy"] == 1.0
     assert summary["guard_block_accuracy"] == 1.0
     assert summary["response_cases"] == 0
+
+
+def test_deterministic_decision_contract_matches_every_fixture_case() -> None:
+    results = []
+    for case in load_steward_bench_cases():
+        guard = classify_steward_request(case.message)
+        decision = build_steward_decision(
+            case.message,
+            guard=guard,
+            diagnostic_snapshot=case.context,
+        )
+        summary = deterministic_steward_summary(
+            case.message,
+            decision=decision,
+            diagnostic_snapshot=case.context,
+        )
+        output = append_steward_decision(summary, decision)
+        results.append(evaluate_steward_case(case, output_text=output))
+
+    failures = [result.as_payload() for result in results if not result.passed]
+    assert failures == []
 
 
 def test_structured_decision_is_scored_without_executing_the_tool() -> None:

@@ -114,7 +114,9 @@ from aidn_hypervisor.steward_prompt import (
     compose_steward_prompt,
 )
 from aidn_hypervisor.steward_safety import (
+    build_steward_decision,
     classify_steward_request,
+    deterministic_steward_summary,
     validate_steward_output,
 )
 from aidn_hypervisor.task_execution_service import TaskExecutionService
@@ -782,12 +784,17 @@ class HypervisorService:
             if event_intelligence is not None
             else None
         )
+        inference_parameters = dict(parameters)
+        diagnostic_snapshot = inference_parameters.pop("diagnostic_snapshot", None)
+        if diagnostic_snapshot is not None and not isinstance(diagnostic_snapshot, dict):
+            raise ValueError("diagnostic_snapshot must be an object")
         context = build_safe_steward_context(
             installation_plan=self.installation_plan(),
             node_identity=self.node_identity(),
             wallet_state=self.owner_wallet_state(),
             inference_state=self.resident_inference_status(),
             event_intelligence=advisory,
+            diagnostic_snapshot=diagnostic_snapshot,
         )
         invocation = compose_steward_prompt(
             message,
@@ -795,10 +802,20 @@ class HypervisorService:
             no_think_suffix=model_profile.enable_thinking is False,
         )
         guard = classify_steward_request(message)
+        decision = build_steward_decision(
+            message,
+            guard=guard,
+            diagnostic_snapshot=context.get("diagnostic_snapshot"),
+        )
         fallback = (
             "I cannot confirm that a state change occurred. The observed "
             "Hypervisor state is authoritative; review the next listed step "
             "before taking action."
+        )
+        deterministic_summary = deterministic_steward_summary(
+            message,
+            decision=decision,
+            diagnostic_snapshot=context.get("diagnostic_snapshot"),
         )
 
         # High-risk requests never reach the local model. This keeps a small
@@ -822,10 +839,13 @@ class HypervisorService:
                     "measurement_kind": "deterministic_guard",
                     "measurement_source": "steward_safety",
                 },
+                "response_mode": "deterministic_guard",
+                "provider_error": None,
                 "safety": {
                     "guard": guard.as_payload(),
                     "validation": validation.as_payload(),
                 },
+                "decision": decision.as_payload(),
                 "prompt": {
                     "id": invocation["prompt_id"],
                     "version": invocation["prompt_version"],
@@ -840,7 +860,6 @@ class HypervisorService:
         # object. The role-separated messages let instruction-tuned models
         # apply their reviewed chat template instead of treating the context
         # and operator text as one undifferentiated completion prompt.
-        inference_parameters = dict(parameters)
         profile_parameters = steward_chat_parameters(model_profile.profile_id)
         # The prompt and role-separated messages are control-plane material;
         # callers may tune decoding, but cannot replace the reviewed context
@@ -863,21 +882,55 @@ class HypervisorService:
             inference_parameters.pop("chat_template_kwargs", None)
         inference_parameters["messages"] = invocation["messages"]
         inference_parameters.setdefault("stop", ["</STEWARD_RESPONSE>", "</SYSTEM>"])
-        result = self._resident_inference_adapter.infer(
-            invocation["rendered_prompt"],
-            **inference_parameters,
-        )
+        # A local SLM is advisory, not an availability dependency. Bound both
+        # the adapter wait and provider transport, then return deterministic
+        # evidence if the model cannot answer in the reviewed latency budget.
+        inference_parameters["provider_timeout_seconds"] = model_profile.request_timeout_seconds
+        inference_parameters["timeout_seconds"] = model_profile.request_timeout_seconds + 1.0
+        response_mode = "model_augmented"
+        provider_error = None
+        try:
+            result = self._resident_inference_adapter.infer(
+                invocation["rendered_prompt"],
+                **inference_parameters,
+            )
+        except ValueError as error:
+            status = self.resident_inference_status()
+            details = getattr(error, "details", {})
+            provider_error = {
+                "code": str(details.get("code") or getattr(error, "code", "INFERENCE_PROVIDER_ERROR")),
+                "message": str(error)[:256],
+            }
+            result = {
+                "ok": True,
+                "task_type": "llm_text.generate",
+                "model_id": status.get("model_path"),
+                "output_text": deterministic_summary,
+                "usage": {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "measurement_kind": "deterministic_fallback",
+                    "measurement_source": "steward_safety",
+                },
+            }
+            response_mode = "deterministic_fallback"
         validation = validate_steward_output(
             result.get("output_text"),
             fallback=fallback,
         )
+        operator_text = validation.output_text
+        if response_mode == "model_augmented" and deterministic_summary not in operator_text:
+            operator_text = f"{deterministic_summary} {operator_text}".strip()
         return {
             **result,
-            "output_text": validation.output_text,
+            "output_text": operator_text,
+            "response_mode": response_mode,
+            "provider_error": provider_error,
             "safety": {
                 "guard": guard.as_payload(),
                 "validation": validation.as_payload(),
             },
+            "decision": decision.as_payload(),
             "prompt": {
                 "id": invocation["prompt_id"],
                 "version": invocation["prompt_version"],
