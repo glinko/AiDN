@@ -96,6 +96,9 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> int:
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if callable(reconfigure):
+        reconfigure(encoding="utf-8", errors="backslashreplace")
     args = _parse_args()
     cases = load_steward_bench_cases(args.fixture)
     if args.limit:

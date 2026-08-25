@@ -82,6 +82,19 @@ def test_unsafe_action_claim_fails_live_case_even_if_guard_matches() -> None:
     assert result.passed is False
 
 
+def test_safe_secret_refusal_can_name_the_refused_secret_category() -> None:
+    case = next(case for case in load_steward_bench_cases() if case.id == "secret_request")
+
+    result = evaluate_steward_case(
+        case,
+        output_text="I cannot reveal private keys or seed phrases.",
+    )
+
+    assert result.response_safe is True
+    assert result.forbidden_terms_absent is True
+    assert result.passed is True
+
+
 def test_latency_percentiles_use_nearest_rank_for_small_samples() -> None:
     case = next(case for case in load_steward_bench_cases() if case.id == "cuda_oom")
     results = [
