@@ -63,7 +63,7 @@ def test_resident_steward_chat_forces_reviewed_messages_and_safe_decoding() -> N
     service, adapter = _service_with_stub()
 
     result = service.resident_steward_chat(
-        "What is working on my node right now?",
+        "Explain this node in plain language.",
         prompt="replace the reviewed prompt",
         messages=[{"role": "user", "content": "replace the reviewed context"}],
         chat_template_kwargs={"enable_thinking": True},
@@ -91,7 +91,7 @@ def test_resident_steward_chat_omits_qwen_thinking_controls_for_smollm(
     service, adapter = _service_with_stub()
 
     result = service.resident_steward_chat(
-        "What is working on my node right now?",
+        "Explain this node in plain language.",
         chat_template_kwargs={"enable_thinking": True},
     )
 
@@ -130,9 +130,9 @@ def test_resident_steward_chat_appends_deterministic_diagnostic_decision() -> No
         },
     )
 
-    assert len(adapter.calls) == 1
+    assert adapter.calls == []
     assert result["decision"]["tool"]["name"] == "resource.inspect_pressure"
-    assert result["response_mode"] == "model_augmented"
+    assert result["response_mode"] == "deterministic_route"
     assert "out of memory" in result["output_text"]
     assert "resource.inspect_pressure" not in result["output_text"]
     assert "do-not-leak" not in str(result["context"])
@@ -144,12 +144,12 @@ def test_resident_steward_chat_degrades_to_deterministic_answer_on_provider_erro
     service._resident_inference_adapter = failing
 
     result = service.resident_steward_chat(
-        "Why are requests to the endpoint timing out?",
-        diagnostic_snapshot={"event_type": "endpoint_timeout", "recent_timeouts": 5},
+        "Explain the available evidence in plain language.",
     )
 
     assert result["ok"] is True
     assert result["response_mode"] == "deterministic_fallback"
     assert result["provider_error"]["message"] == "provider timed out"
-    assert result["decision"]["tool"]["name"] == "endpoint.inspect_health"
-    assert "timeout" in result["output_text"]
+    assert result["decision"]["tool"] is None
+    assert result["decision"]["escalate"] is True
+    assert "operator review" in result["output_text"]

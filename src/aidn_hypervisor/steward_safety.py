@@ -209,10 +209,18 @@ def deterministic_steward_summary(
     *,
     decision: StewardDecision,
     diagnostic_snapshot: Mapping[str, Any] | None = None,
+    context: Mapping[str, Any] | None = None,
 ) -> str:
     """Render a bounded evidence summary that remains useful without the SLM."""
 
     snapshot = diagnostic_snapshot if isinstance(diagnostic_snapshot, Mapping) else {}
+    safe_context = context if isinstance(context, Mapping) else {}
+    inference = safe_context.get("resident_inference")
+    inference = inference if isinstance(inference, Mapping) else {}
+    installation = safe_context.get("installation")
+    installation = installation if isinstance(installation, Mapping) else {}
+    next_action = installation.get("next_action")
+    next_action = next_action if isinstance(next_action, Mapping) else {}
     event_type = str(snapshot.get("event_type") or "").strip()
     if event_type == "node_status" and re.search(r"[А-Яа-яЁё]", str(message or "")):
         return "Нода работает; доступны наблюдаемые статусы сервисов и локальной модели."
@@ -236,6 +244,17 @@ def deterministic_steward_summary(
     }
     if event_type in english:
         return english[event_type]
+    if decision.tool == "node.inspect_status":
+        state = str(inference.get("state") or "unknown")
+        provider = str(inference.get("provider_type") or "unknown")
+        if re.search(r"[А-Яа-яЁё]", str(message or "")):
+            return f"Нода доступна. Локальная модель: {state}; провайдер: {provider}."
+        return f"The node is available. Local model: {state}; provider: {provider}."
+    if decision.tool == "installation.inspect_next_step":
+        action = str(next_action.get("label") or next_action.get("id") or "operator review")
+        if re.search(r"[А-Яа-яЁё]", str(message or "")):
+            return f"Следующий проверенный шаг установки: {action}."
+        return f"The next reviewed installation step is: {action}."
     if decision.escalate:
         return "The available evidence does not identify a safe action. Escalate for operator review."
     if re.search(r"[А-Яа-яЁё]", str(message or "")):
