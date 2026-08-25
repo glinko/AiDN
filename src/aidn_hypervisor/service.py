@@ -117,6 +117,7 @@ from aidn_hypervisor.steward_safety import (
     build_steward_decision,
     classify_steward_request,
     deterministic_steward_summary,
+    steward_output_matches_language,
     validate_steward_output,
 )
 from aidn_hypervisor.task_execution_service import TaskExecutionService
@@ -958,6 +959,12 @@ class HypervisorService:
             fallback=fallback,
         )
         operator_text = validation.output_text
+        if response_mode == "model_augmented" and not steward_output_matches_language(
+            message,
+            operator_text,
+        ):
+            operator_text = deterministic_summary
+            response_mode = "deterministic_language_fallback"
         return {
             **result,
             "output_text": operator_text,

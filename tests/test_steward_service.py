@@ -153,3 +153,13 @@ def test_resident_steward_chat_degrades_to_deterministic_answer_on_provider_erro
     assert result["decision"]["tool"] is None
     assert result["decision"]["escalate"] is True
     assert "operator review" in result["output_text"]
+
+
+def test_resident_steward_chat_rejects_english_model_answer_for_russian_request() -> None:
+    service, adapter = _service_with_stub()
+
+    result = service.resident_steward_chat("Объясни состояние простыми словами.")
+
+    assert len(adapter.calls) == 1
+    assert result["response_mode"] == "deterministic_language_fallback"
+    assert "недостаточно" in result["output_text"]

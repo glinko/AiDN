@@ -107,3 +107,4 @@ def test_steward_prompt_preserves_unicode_instead_of_token_heavy_escape_sequence
 
     assert "Что работает на ноде?" in user_content
     assert "\\u0427" not in user_content
+    assert "Reply in Russian" in user_content

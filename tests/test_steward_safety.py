@@ -3,6 +3,7 @@ from aidn_hypervisor.steward_safety import (
     build_steward_decision,
     classify_steward_request,
     deterministic_steward_summary,
+    steward_output_matches_language,
     validate_steward_output,
 )
 
@@ -107,3 +108,9 @@ def test_unknown_diagnostic_escalates_without_inventing_a_tool() -> None:
     assert decision.tool is None
     assert decision.approval == "ESCALATE"
     assert decision.escalate is True
+
+
+def test_russian_request_rejects_english_only_model_output() -> None:
+    assert steward_output_matches_language("Что работает?", "The node is running.") is False
+    assert steward_output_matches_language("Что работает?", "Нода работает.") is True
+    assert steward_output_matches_language("What works?", "The node is running.") is True

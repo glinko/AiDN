@@ -255,11 +255,22 @@ def deterministic_steward_summary(
         if re.search(r"[А-Яа-яЁё]", str(message or "")):
             return f"Следующий проверенный шаг установки: {action}."
         return f"The next reviewed installation step is: {action}."
+    if re.search(r"[А-Яа-яЁё]", str(message or "")):
+        if decision.escalate:
+            return "Доступных данных недостаточно для безопасного действия; нужна проверка оператора."
+        return "Доступны только наблюдаемые данные ноды; выбран следующий безопасный шаг для проверки."
     if decision.escalate:
         return "The available evidence does not identify a safe action. Escalate for operator review."
-    if re.search(r"[А-Яа-яЁё]", str(message or "")):
-        return "Доступны только наблюдаемые данные ноды; выбран следующий безопасный шаг для проверки."
     return "Only observed node evidence is available; use the selected read-only inspection step."
+
+
+def steward_output_matches_language(message: str, output_text: str) -> bool:
+    """Reject a non-Russian model answer when the operator wrote in Russian."""
+
+    russian_request = bool(re.search(r"[А-Яа-яЁё]", str(message or "")))
+    if not russian_request:
+        return True
+    return bool(re.search(r"[А-Яа-яЁё]", str(output_text or "")))
 
 
 def classify_steward_request(message: str) -> StewardGuardDecision:
@@ -341,5 +352,6 @@ __all__ = [
     "build_steward_decision",
     "classify_steward_request",
     "deterministic_steward_summary",
+    "steward_output_matches_language",
     "validate_steward_output",
 ]

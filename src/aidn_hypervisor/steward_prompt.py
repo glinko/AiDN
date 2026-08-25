@@ -134,7 +134,6 @@ def compact_steward_context(context: Mapping[str, Any]) -> dict[str, Any]:
     events = _mapping(context.get("event_intelligence"))
     diagnostic = _mapping(context.get("diagnostic_snapshot"))
     compact = {
-        "v": 2,
         "node": node.get("node_id"),
         "wallet": wallet.get("configured"),
         "install": {
@@ -331,7 +330,12 @@ def compose_steward_messages(
         raise ValueError(f"message must contain 1..{MAX_USER_MESSAGE_CHARS} characters")
     context_json = _safe_json(compact_steward_context(context))
     message_json = _safe_json(message)
-    response_instruction = "Return only the concise operator-facing answer."
+    is_russian = any("\u0400" <= character <= "\u04ff" for character in message)
+    response_instruction = (
+        "Reply in Russian with one complete operator-facing sentence."
+        if is_russian
+        else "Return one complete concise operator-facing sentence."
+    )
     if no_think_suffix:
         response_instruction += " /no_think"
     return [
