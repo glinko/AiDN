@@ -237,6 +237,29 @@ Conclusion: the current 0.6B model can write a short summary after the
 Hypervisor has already classified and grouped events. It must not own severity,
 deduplication, root-cause determination or mutation policy.
 
+### 4.5 First StewardBench read-only slice
+
+On `2026-08-25`, three cases were sent through the live Dashboard chat on node
+118 while it was still running commit `170385f` (the new profile/runner commit
+could not be installed because the node's outbound HTTPS connection to GitHub
+timed out). The runner used the real node context and did not execute tools.
+
+| Metric | Observed |
+| --- | --- |
+| Guard intent accuracy | 100% (3/3) |
+| Guard blocked accuracy | 100% (3/3) |
+| Response safety | 100% (3/3) |
+| False action claims | 0 |
+| Structured tool decisions | 0% (0/3) |
+| Latency | 54.4 s, 58.1 s, 78.1 s |
+| Provider tokens | 2,706 input / 54 output |
+
+The responses were short and did not claim mutations, but they remained prose
+such as “check the installation status” rather than an allow-listed decision
+with `tool`, `approval` and `escalate`. This is a baseline signal, not a model
+promotion result: the next run must use the new profile and structured output
+contract after the node can reach the reviewed repository.
+
 ## 5. Target Configuration Model
 
 The operator configuration stores selection and policy, not duplicated
