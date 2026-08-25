@@ -103,6 +103,10 @@ from aidn_hypervisor.steward_event_intelligence import (
     StewardEventIntelligence,
     compose_event_summary_messages,
 )
+from aidn_hypervisor.steward_model_profile import (
+    get_steward_model_profile,
+    steward_chat_parameters,
+)
 from aidn_hypervisor.steward_prompt import (
     STEWARD_PROMPT_ID,
     STEWARD_PROMPT_VERSION,
@@ -771,6 +775,7 @@ class HypervisorService:
     def resident_steward_chat(self, message: str, **parameters) -> dict:
         """Invoke the local Steward with versioned rules and secret-free state."""
 
+        model_profile = get_steward_model_profile()
         event_intelligence = getattr(self, "_steward_event_intelligence", None)
         advisory = (
             event_intelligence.latest_advisory()
@@ -821,6 +826,7 @@ class HypervisorService:
                     "id": invocation["prompt_id"],
                     "version": invocation["prompt_version"],
                 },
+                "model_profile": model_profile.as_payload(),
                 "context": context,
                 "suggested_questions": invocation["suggested_questions"],
             }
@@ -831,14 +837,14 @@ class HypervisorService:
         # apply their reviewed chat template instead of treating the context
         # and operator text as one undifferentiated completion prompt.
         inference_parameters = dict(parameters)
+        profile_parameters = steward_chat_parameters(model_profile.profile_id)
         # The prompt and role-separated messages are control-plane material;
         # callers may tune decoding, but cannot replace the reviewed context
         # with an arbitrary provider payload.
         inference_parameters.pop("prompt", None)
         inference_parameters.pop("messages", None)
-        inference_parameters.setdefault("temperature", 0.0)
-        inference_parameters.setdefault("top_p", 0.8)
-        inference_parameters.setdefault("max_tokens", 96)
+        for name, value in profile_parameters.items():
+            inference_parameters.setdefault(name, value)
         chat_template_kwargs = inference_parameters.get("chat_template_kwargs")
         chat_template_kwargs = (
             dict(chat_template_kwargs) if isinstance(chat_template_kwargs, dict) else {}
@@ -866,6 +872,7 @@ class HypervisorService:
                 "id": invocation["prompt_id"],
                 "version": invocation["prompt_version"],
             },
+            "model_profile": model_profile.as_payload(),
             "context": context,
             "suggested_questions": invocation["suggested_questions"],
         }

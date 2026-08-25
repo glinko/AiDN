@@ -98,6 +98,7 @@ from aidn_hypervisor.snapshot.deployment import (
     RemoteTrustAnchorRuntime,
     load_remote_trust_anchor_deployment_config,
 )
+from aidn_hypervisor.steward_model_profile import steward_runtime_parameter_policy
 from aidn_hypervisor.validation.custody_signing import (
     Ed25519ValidationReportCustodySigner,
 )
@@ -995,6 +996,7 @@ def _autostart_resident_steward(service: HypervisorService) -> None:
     ram_mb = _env_int("AIDN_STEWARD_RAM_BUDGET_MB", default=1024, minimum=128, maximum=1_048_576)
     vram_mb = _env_int("AIDN_STEWARD_VRAM_BUDGET_MB", default=0, minimum=0, maximum=1_048_576)
     expected_sha256 = os.getenv("AIDN_STEWARD_MODEL_SHA256", "").strip() or None
+    model_profile_id = os.getenv("AIDN_STEWARD_MODEL_PROFILE", "").strip() or None
 
     try:
         current = service.resident_inference_status()
@@ -1008,6 +1010,10 @@ def _autostart_resident_steward(service: HypervisorService) -> None:
                 vram_mb=vram_mb,
                 fallback_enabled=True,
                 expected_sha256=expected_sha256,
+                runtime_parameter_policy=steward_runtime_parameter_policy(
+                    profile_id=model_profile_id,
+                    provider_type=provider_type,
+                ),
                 readiness_timeout_seconds=60,
             )
         if str(current.get("state") or "").upper() != "RUNNING":

@@ -34,6 +34,8 @@ def test_autostart_prepares_and_starts_verified_artifact(monkeypatch, tmp_path) 
     assert len(service.prepare_calls) == 1
     assert service.prepare_calls[0]["model_path"] == str(artifact.resolve())
     assert service.prepare_calls[0]["expected_sha256"] == "a" * 64
+    assert service.prepare_calls[0]["runtime_parameter_policy"]["context_length"] == {"value": 4096}
+    assert service.prepare_calls[0]["runtime_parameter_policy"]["max_tokens"] == {"value": 192}
     assert service.start_calls == 1
 
 

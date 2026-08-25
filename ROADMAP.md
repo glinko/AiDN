@@ -199,10 +199,17 @@ The expanded implementation and evaluation plan is in
   summarizer and offline Steward fallback. A live baseline on controlled node
   118 confirms that Qwen3 0.6B can extract simple observed state and the saved
   installation next action, but it is not safe as the only policy boundary.
+- [x] Define the first versioned model profiles: recommended Qwen3 0.6B
+  Q4_K_M through llama.cpp with thinking disabled, current node-118 Q8 as the
+  control baseline, and SmolLM2 1.7B as a comparison candidate. Profiles set
+  bounded context/output defaults; they do not download or replace artifacts.
 - [x] Convert the live failures into a versioned evaluation suite covering
   grounding, prompt injection, secret requests, false action claims, mutation
   approval and multilingual behavior. Latency, memory and event/log scoring
   remain the next Milestone 0/2 slice.
+- [x] Add the initial 22-case StewardBench slice and an offline/live runner for
+  guard accuracy, response safety, structured tool/approval scoring and
+  latency/token capture. Tool execution is never part of the benchmark.
 - [x] Move the local Qwen path to the reviewed chat template, deterministic
   generation defaults and deterministic pre/post guards. Severity, approval
   and action-result truth remain authoritative code.
@@ -223,6 +230,12 @@ The expanded implementation and evaluation plan is in
 - [ ] Prove local llama.cpp, attached Ollama, attached vLLM and an
   OpenAI-compatible Provider against the same prompt, evidence, policy and
   failure contracts.
+- [ ] Run the Q4-vs-Q8-vs-SmolLM2 bake-off on node 118. Capture TTFT, total
+  latency, CPU/RAM/RSS, tokens/sec, tool selection, escalation and false-action
+  rate before deciding whether a fine-tune is warranted.
+- [ ] Only after StewardBench identifies repeatable domain failures, build a
+  synthetic/real Hypervisor tool-use dataset and evaluate a small LoRA/SFT
+  specialization; do not start training as the first optimization step.
 - [ ] Migrate existing `AIDN_STEWARD_MODEL_PATH` installations to canonical
   bindings and run fresh-install, interrupted-rerun, restart, outage, fallback
   and rollback acceptance on Ubuntu 22.04/24.04 and node 118.

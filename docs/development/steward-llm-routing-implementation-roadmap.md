@@ -501,6 +501,23 @@ The repository should contain secret-free fixtures for:
 Every fixture defines expected evidence IDs, forbidden claims, required policy
 flags and acceptable next actions. Exact prose is not the primary assertion.
 
+The first executable slice is now `StewardBench`:
+
+- `tests/fixtures/steward_bench_cases.json` contains 22 secret-free cases for
+  OOM, Provider and Endpoint failures, storage/model/integrity problems,
+  validation, wallet/peer/lease state, installation, mutation approval,
+  prompt injection, secrets, an unknown incident and Russian status text;
+- `src/aidn_hypervisor/steward_bench.py` scores the deterministic guard first,
+  then optionally scores a model response for safety, grounding terms and a
+  future structured `{intent, tool, approval, escalate}` decision;
+- `tools/run_steward_bench.py` runs the guard-only suite offline or sends the
+  same questions to a read-only Dashboard chat endpoint while recording
+  per-case latency and provider token counts. It never dispatches a tool.
+
+This deliberately starts with a small control-plane slice rather than model
+training. The target is a model that can classify, explain and escalate a
+bounded Hypervisor state; a prose-quality score is not a promotion gate.
+
 ### 9.2 Promotion gates
 
 | Metric | Required gate |
@@ -525,16 +542,21 @@ when the model cannot.
 
 The first comparison should include:
 
-1. current Qwen3 0.6B Q8 with the current completion path;
-2. current Qwen3 0.6B Q8 with chat template, no-think and deterministic guards;
-3. Qwen3 1.7B Q4_K_M, one runtime at a time, if node 118 resource admission
-   permits it;
-4. selected remote/provider models through the same fixtures;
-5. local fallback behavior with the primary provider unavailable.
+1. the recommended `qwen3-0.6b-steward.v1` profile: Qwen3 0.6B GGUF Q4_K_M,
+   llama.cpp, CPU resident, 4K context, 192-token output and thinking off;
+2. the controlled node 118 `qwen3-0.6b-baseline-q8.v1` artifact with the same
+   chat template, no-think setting and deterministic guards;
+3. `smollm2-1.7b-instruct.v1` as a comparison candidate, only after resource
+   admission and the Qwen baseline are measured;
+4. a future Steward-specific Qwen3 0.6B fine-tune, if the benchmark shows that
+   prompt/context improvements are insufficient;
+5. selected remote/provider models through the same fixtures and local
+   fallback behavior with the primary provider unavailable.
 
-The larger local model is adopted only if its accuracy improvement justifies
-memory and latency on a 4 GiB class node. Model size alone is not an acceptance
-criterion.
+The Q4 profile is a recommendation, not an automatic download or replacement
+of the working Q8 artifact. The larger local model is adopted only if its
+accuracy improvement justifies memory and latency on a 4 GiB class node. Model
+size alone is not an acceptance criterion.
 
 ## 10. Implementation Milestones
 
@@ -547,7 +569,10 @@ Deliverables:
 - [x] Record a first event/log triage experiment.
 - [x] Add the versioned evaluation fixture schema.
 - [x] Convert the manual questions above into repeatable deterministic tests.
-- [ ] Add latency, token, RSS and failure-result capture.
+- [~] Add latency, token, RSS and failure-result capture. The initial runner
+  captures live latency, provider token counts and request failures; RSS and
+  process-level sampling remain a node-118 follow-up.
+- [x] Add the initial StewardBench scenario slice and an offline/live runner.
 - [x] Add deterministic secret-shaped output checks for live responses.
 
 Exit criteria:
@@ -587,12 +612,15 @@ Exit criteria:
 Implementation status (2026-08-24): the first local slice is implemented in
 the working tree. `resident_steward_chat()` now sends role-separated messages
 to chat-capable llama.cpp runtimes with `temperature=0`, `top_p=0.8`, bounded
-output and thinking disabled. Prompt, secret, mutation and unobserved-action
-guards run outside the model. The evaluation fixture contains English and
-Russian status questions plus secret, mutation and injection cases. Targeted
-Steward and llama.cpp tests pass; the live node 118 chat endpoint also accepts
-the new OpenAI-compatible payload. The node itself has not been rewritten in
-this local-only step.
+output and thinking disabled. The versioned model-profile registry now keeps
+the Q4 recommendation, node-118 Q8 baseline and SmolLM2 candidate separate;
+the profile supplies the 4K context and bounded 192-token default to new
+autostarts without replacing an existing artifact. Prompt, secret, mutation
+and unobserved-action guards run outside the model. The evaluation fixture
+contains English and Russian status questions plus secret, mutation and
+injection cases. Targeted Steward, profile and benchmark tests pass; the live
+node 118 chat endpoint also accepts the new OpenAI-compatible payload. The
+node itself has not downloaded or replaced a model in this local-only step.
 
 ### Milestone 2 - Structured local event intelligence
 

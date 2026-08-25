@@ -69,6 +69,8 @@ def test_resident_steward_chat_forces_reviewed_messages_and_safe_decoding() -> N
     assert parameters["chat_template_kwargs"] == {"enable_thinking": False}
     assert parameters["temperature"] == 0.0
     assert parameters["top_p"] == 0.8
+    assert parameters["max_tokens"] == 192
+    assert result["model_profile"]["profile_id"] == "qwen3-0.6b-steward.v1"
     assert result["safety"]["guard"]["intent"] == "information_request"
     assert result["safety"]["validation"]["accepted"] is True
 
