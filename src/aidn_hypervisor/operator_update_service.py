@@ -81,11 +81,18 @@ class OperatorUpdateService:
             or DEFAULT_UPDATE_REPOSITORY
         ).strip()
         self._ref = (ref or os.getenv("AIDN_UPDATE_REF") or DEFAULT_UPDATE_REF).strip()
-        self._node_root = Path(
+        configured_node_root = Path(
             node_root
             or os.getenv("AIDN_UPDATE_NODE_ROOT")
             or self._state_path.parent / "tooling" / "node"
         ).expanduser()
+        # The pinned Node installer returns a versioned directory below the
+        # configured output root.  Older bootstrap wrappers exported that
+        # output root directly, so resolve the only matching child when the
+        # compatibility layout is present.  Ambiguous or incomplete layouts
+        # remain unchanged and are rejected by the build script with a clear
+        # error instead of guessing between runtimes.
+        self._node_root = self._resolve_node_root(configured_node_root)
         self._tooling_dir = Path(
             tooling_dir
             or os.getenv("AIDN_UPDATE_TOOLING_DIR")
@@ -104,6 +111,20 @@ class OperatorUpdateService:
             raise OperatorUpdateError("configured update ref contains an unsupported path segment")
         if not self._repository_url.startswith("https://"):
             raise OperatorUpdateError("software updates require an HTTPS repository")
+
+    @staticmethod
+    def _resolve_node_root(configured: Path) -> Path:
+        if (configured / "bin" / "node").is_file():
+            return configured
+        try:
+            candidates = sorted(
+                child
+                for child in configured.iterdir()
+                if child.is_dir() and (child / "bin" / "node").is_file()
+            )
+        except OSError:
+            return configured
+        return candidates[0] if len(candidates) == 1 else configured
 
     @property
     def state_path(self) -> Path:

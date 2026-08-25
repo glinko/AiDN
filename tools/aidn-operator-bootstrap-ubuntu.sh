@@ -1538,6 +1538,7 @@ operator_config_path="$data_dir/operator-config.toml"
 operator_config_q="$(shell_quote "$operator_config_path")"
 steward_model_path_q="$(shell_quote "$steward_model_path")"
 steward_model_sha256_q="$(shell_quote "$steward_model_sha256")"
+node_root_q="$(shell_quote "$node_root")"
 cat > "$wrapper" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1565,7 +1566,7 @@ export AIDN_HYPERVISOR_RESTART_ON_CONFIG_CHANGE=true
 export AIDN_CONFIG_FILE="\$config_path"
 export AIDN_UPDATE_REPOSITORY_URL='https://github.com/glinko/AiDN.git'
 export AIDN_UPDATE_REF=$(shell_quote "${ref:-main}")
-export AIDN_UPDATE_NODE_ROOT="\$data/tooling/node"
+export AIDN_UPDATE_NODE_ROOT=$node_root_q
 export AIDN_UPDATE_TOOLING_DIR="\$data/tooling"
 export AIDN_UV_BIN=$(shell_quote "${uv_bin:-uv}")
 export AIDN_INSTALLATION_SETUP_MODE=${setup_mode_q:-manual}
