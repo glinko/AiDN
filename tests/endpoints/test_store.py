@@ -45,11 +45,13 @@ def test_endpoint_store_round_trips_manifest_and_configuration_history(
         display_name="Operator STT",
         model_class="speech.stt",
         capabilities=["speech.stt"],
-        pricing=EndpointPricing(
-            billing_unit="second",
-            input_price=0.4,
-            output_price=0.0,
-        ),
+        pricing=EndpointPricing(rate_card={"components": [{
+            "component_id": "audio-input",
+            "dimension": "audio_input_milliseconds",
+            "unit_price_q_atoms": 400_000,
+            "unit_divisor": 1_000,
+            "accounting_mode": "observable",
+        }]}),
     )
     snapshot = EndpointConfigurationSnapshot(
         configuration_hash="cfg-a",

@@ -4,10 +4,10 @@ AiDN Session Protocol
 
 Status: Draft
 
-Version: 0.9
+Version: 1.0
 
-Revision note: Session Contract v2 explicitly binds Endpoint Payment and
-Consumer refund beneficiaries and supplies request-level evidence to RFC-0037.
+Revision note: paid request admission now uses the Endpoint's refillable minimum
+escrow deposit; an explicit Consumer top-up authorizes continued execution.
 
 Supersedes:
 
@@ -847,11 +847,34 @@ An extension SHALL:
 * preserve prior accepted terms;
 * take effect only after finalization.
 
+For a paid Endpoint, the immutable Session policy SHALL contain the minimum
+escrow deposit advertised by the operator. After each accepted invoice, the
+Endpoint SHALL reject another Request while the remaining available Deposit is
+below that minimum. The Consumer MAY restore the Deposit with an explicitly
+authorized extension. The minimum is a refill threshold and SHALL NOT be
+interpreted as a maximum request price.
+
+The node SHOULD derive the minimum from a high-usage request estimate under the
+published Rate Card and immutable Runtime limits. For an LLM this includes the
+accepted context window, maximum permitted output tokens, fixed request fees,
+and input/output token rates. The default safety margin is 20 percent.
+
+The Endpoint SHOULD also publish a recommended Deposit equal to five minimum
+Deposits. A Consumer MAY lock any larger amount. Requests may continue without
+replenishment while the remaining Deposit stays at or above the minimum; the
+recommended value is therefore a convenience working balance, not a new charge
+or authorization boundary.
+
 ---
 
 ## 46. No Automatic Unbounded Top-Up
 
 The Endpoint, Hypervisor or Runtime SHALL NOT debit arbitrary additional Q.
+
+No component SHALL debit the Consumer wallet during request execution. The
+maximum collectible amount is the collateral already locked in the Session
+Deposit. Session closure SHALL settle the final accepted invoice and return the
+unused remainder to the Consumer.
 
 A bounded automatic top-up MAY exist only when explicitly authorized in the Session Contract.
 

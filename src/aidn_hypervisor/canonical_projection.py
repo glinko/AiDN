@@ -1,7 +1,7 @@
 import hashlib
 import json
 
-from aidn_hypervisor.accounting.models import AccountingContract, AccountingUnitContract
+from aidn_hypervisor.accounting.models import AccountingContract
 from aidn_hypervisor.canonical_models import (
     CanonicalAdvertisementRecord,
     CanonicalCapabilityRecord,
@@ -14,6 +14,8 @@ from aidn_hypervisor.canonical_models import (
     CanonicalRegistryObjectRecord,
     CanonicalWalletIdentityRecord,
 )
+from aidn_hypervisor.endpoints.models import EndpointPricing
+from aidn_hypervisor.pricing import accounting_snapshot_units
 from aidn_hypervisor.runtime_parameter_policy import marketplace_parameter_policy
 
 _CAPABILITY_BY_WORKLOAD = {
@@ -119,7 +121,6 @@ def _accounting_contract_payload(contract: dict) -> dict:
         "billable_units": list(contract.get("billable_units", [])),
         "checkpoint_policy": contract["checkpoint_policy"],
         "maximum_unreported_usage": contract.get("maximum_unreported_usage"),
-        "maximum_request_charge": contract.get("maximum_request_charge"),
         "failure_pricing_policy": contract["failure_pricing_policy"],
     }
 
@@ -233,90 +234,18 @@ def _accounting_contract_for_publication(service, publication) -> dict:
         or "provider_report"
     )
     pricing = publication.pricing or {}
+    normalized_pricing = EndpointPricing.model_validate(pricing)
+    rate_card = normalized_pricing.rate_card
     session = publication.session or {}
-    pricing_version = (
-        f"pricing-{publication.endpoint_id}-{publication.configuration_hash[:8]}"
-    )
+    pricing_version = f"{rate_card.schema_version}:{rate_card.rate_card_hash}"
     contract_version = (
         f"acct-{publication.endpoint_id}-{publication.configuration_hash[:8]}"
     )
-    pricing_policy_reference = _stable_hash(
-        {
-            "endpoint_id": publication.endpoint_id,
-            "configuration_hash": publication.configuration_hash,
-            "pricing": pricing,
-        }
+    pricing_policy_reference = str(rate_card.rate_card_hash)
+    billable_units = accounting_snapshot_units(
+        rate_card,
+        default_measurement_source=str(measurement_source),
     )
-    billable_units: list[AccountingUnitContract] = []
-    if pricing.get("input_price") is not None:
-        billable_units.append(
-            AccountingUnitContract(
-                unit="input_tokens",
-                mode="provider_metered",
-                price=float(pricing["input_price"]),
-                measurement_source=str(measurement_source),
-                verification_method="provider_report",
-            )
-        )
-    if pricing.get("output_price") is not None:
-        billable_units.append(
-            AccountingUnitContract(
-                unit="output_tokens",
-                mode="provider_metered",
-                price=float(pricing["output_price"]),
-                measurement_source=str(measurement_source),
-                verification_method="provider_report",
-            )
-        )
-    if pricing.get("audio_input_second_price") is not None:
-        billable_units.append(
-            AccountingUnitContract(
-                unit="audio_input_seconds",
-                mode="observable",
-                price=float(pricing["audio_input_second_price"]),
-                measurement_source="provider_response.duration",
-                verification_method="provider_response",
-                unavailable_value_policy="ZERO_VARIABLE_COMPONENT",
-            )
-        )
-    if pricing.get("fixed_price") is not None:
-        billable_units.append(
-            AccountingUnitContract(
-                unit="request_fee",
-                mode="fixed_price",
-                price=float(pricing["fixed_price"]),
-                measurement_source="endpoint_policy",
-                verification_method="fixed_contract",
-            )
-        )
-    if float(session.get("idle_fee_per_minute", 0.0) or 0.0) > 0.0:
-        billable_units.append(
-            AccountingUnitContract(
-                unit="idle_minutes",
-                mode="observable",
-                price=float(session["idle_fee_per_minute"]),
-                measurement_source="session_activity",
-                verification_method="session_timeline",
-                rounding="per_minute",
-            )
-        )
-    fixed_price_only = (
-        pricing.get("fixed_price") is not None
-        and pricing.get("input_price") is None
-        and pricing.get("output_price") is None
-        and pricing.get("audio_input_second_price") is None
-        and float(session.get("idle_fee_per_minute", 0.0) or 0.0) == 0.0
-    )
-    maximum_request_charge = (
-        float(pricing["fixed_price"])
-        if fixed_price_only
-        else (
-            float(session["recommended_deposit"])
-            if session.get("recommended_deposit") is not None
-            else float(session.get("minimum_deposit", 0.0) or 0.0)
-        )
-    )
-
     contract = AccountingContract(
         contract_version=contract_version,
         capability_id=capability_id,
@@ -325,7 +254,6 @@ def _accounting_contract_for_publication(service, publication) -> dict:
         billable_units=billable_units,
         checkpoint_policy="per_request",
         maximum_unreported_usage=float(session.get("minimum_deposit", 0.0) or 0.0),
-        maximum_request_charge=maximum_request_charge,
         failure_pricing_policy="reject_unpriced_usage",
     )
     return contract.model_dump(mode="json")

@@ -54,6 +54,50 @@ export type InferenceCredential = {
   base_url?: string
 }
 
+export type EndpointRateQuote = {
+  schema_version: 'pricing-quote.v1'
+  rate_card_hash: string
+  currency: 'Q_ATOM'
+  supplied_usage: Record<string, number>
+  known_components: Array<{
+    component_id: string
+    dimension: string
+    measured_value: number
+    normalized_value: number
+    unit_price_q_atoms: number
+    unit_divisor: number
+    charge_q_atoms: number
+  }>
+  missing_dimensions: string[]
+  lower_bound_q_atoms: number
+  estimated_charge_q_atoms: number | null
+}
+
+export type EndpointQuoteEnvelope = {
+  data: {
+    endpoint_id: string
+    configuration_hash: string
+    minimum_escrow_deposit_q_atoms: number
+    recommended_escrow_deposit_q_atoms: number | null
+    quote: EndpointRateQuote
+  }
+  error: null
+  correlation_id: string
+}
+
+export type EscrowDepositRecommendation = {
+  schema_version: 'escrow-deposit-recommendation.v1'
+  rate_card_hash: string
+  safety_margin_bps: number
+  recommended_multiplier: number
+  usage_assumptions: Record<string, number>
+  missing_dimensions: string[]
+  estimated_request_charge_q_atoms: number | null
+  minimum_deposit_q_atoms: number | null
+  recommended_deposit_q_atoms: number | null
+  automatic: boolean
+}
+
 export type DashboardNetworkAccess = {
   mode: 'loopback' | 'lan'
   configured_mode: 'loopback' | 'lan'
@@ -453,6 +497,8 @@ export const dashboardApi = {
   createRuntimeBinding: (deploymentId: string, payload: { capability_id: string; capability_version: string; capability_definition_hash: string }) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/model-deployments/${encodeURIComponent(deploymentId)}/runtime-bindings`, { method: 'POST', body: JSON.stringify(payload) }),
   createBundleRevision: (sourceBundleId: string, payload: { bundle_id: string; overrides: DashboardRecord; enabled?: boolean }) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/bundles/${encodeURIComponent(sourceBundleId)}/revisions`, { method: 'POST', body: JSON.stringify(payload) }),
   createEndpoint: (payload: DashboardRecord) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/endpoints', { method: 'POST', body: JSON.stringify(payload) }),
+  quoteEndpoint: (endpointId: string, usage: Record<string, number> = {}) => writeDashboard<EndpointQuoteEnvelope>(`/api/v1/endpoints/${encodeURIComponent(endpointId)}/quote`, { method: 'POST', body: JSON.stringify({ usage }) }) as Promise<EndpointQuoteEnvelope>,
+  recommendEndpointDeposit: (endpointId: string, payload: { usage_overrides?: Record<string, number>; safety_margin_bps?: number; recommended_multiplier?: number } = {}) => writeDashboard<{ data: { endpoint_id: string; configuration_hash: string; recommendation: EscrowDepositRecommendation } }>(`/api/v1/endpoints/${encodeURIComponent(endpointId)}/deposit-recommendation`, { method: 'POST', body: JSON.stringify(payload) }),
   previewMarketplaceDescription: (html: string) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/endpoints/marketplace-description/preview', { method: 'POST', body: JSON.stringify({ html }) }),
   updateEndpoint: (endpointId: string, payload: DashboardRecord) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/endpoints/${encodeURIComponent(endpointId)}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   setEndpointLocalAgentUse: (endpointId: string, enabled: boolean) => writeDashboard<DashboardRecord>(`/operators/dashboard/access/operations/endpoints/${encodeURIComponent(endpointId)}/local-agent-use`, { method: 'POST', body: JSON.stringify({ enabled }) }),

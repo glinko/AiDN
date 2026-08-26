@@ -36,7 +36,16 @@ def _create_endpoint(endpoint_service: EndpointService):
                 "validation": "disabled",
                 "accepts_external_requests": True,
             },
-            pricing={"billing_unit": "request", "input_price": 1.0},
+            pricing={"rate_card": {
+                "components": [{
+                    "component_id": "input",
+                    "dimension": "input_tokens",
+                    "unit_price_q_atoms": 1_000_000,
+                    "unit_divisor": 1_000_000,
+                    "accounting_mode": "provider_metered",
+                }],
+            }},
+            session={"minimum_deposit": 10.0},
             validation={
                 "enabled": False,
                 "model_class_supported": True,
@@ -281,6 +290,78 @@ def test_publication_readiness_warns_for_unpriced_external_endpoint() -> None:
 
     assert readiness["ready"] is True
     assert readiness["warnings"][0]["code"] == "ENDPOINT_PRICING_NOT_CONFIGURED"
+
+
+def test_publication_readiness_requires_minimum_escrow_for_paid_endpoint() -> None:
+    endpoint_service = EndpointService(EndpointStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="bundle-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Paid Endpoint without escrow policy",
+            model_class="llm.chat",
+            capabilities=["llm.chat"],
+            publication={
+                "visibility": "public",
+                "discoverable": True,
+                "accepts_external_requests": True,
+            },
+            pricing={
+                "rate_card": {
+                    "components": [
+                        {
+                            "component_id": "output",
+                            "dimension": "output_tokens",
+                            "unit_price_q_atoms": 2,
+                        }
+                    ]
+                }
+            },
+        )
+    )
+    service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+
+    readiness = service.publication_readiness(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet="wallet-1",
+        node_id="node-1",
+        wallet_private_key="sk-1",
+    )
+
+    assert readiness["ready"] is False
+    assert any(
+        item["code"] == "ENDPOINT_MINIMUM_ESCROW_DEPOSIT_REQUIRED"
+        for item in readiness["blockers"]
+    )
+
+
+def test_publication_readiness_exposes_deposit_recommendation_and_missing_working_balance() -> None:
+    endpoint_service = EndpointService(EndpointStore())
+    created = _create_endpoint(endpoint_service)
+    service = EndpointPublicationService(
+        store=EndpointPublicationStore(),
+        endpoint_service=endpoint_service,
+    )
+
+    readiness = service.publication_readiness(
+        endpoint_id=created.endpoint.endpoint_id,
+        owner_wallet="wallet-1",
+        node_id="node-1",
+        wallet_private_key="sk-1",
+    )
+
+    recommendation = readiness["dimensions"]["session"]["deposit_recommendation"]
+    assert recommendation["automatic"] is True
+    assert recommendation["usage_assumptions"]["input_tokens"] == 8192
+    assert recommendation["recommended_multiplier"] == 5
+    assert any(
+        item["code"] == "ENDPOINT_RECOMMENDED_ESCROW_DEPOSIT_NOT_CONFIGURED"
+        for item in readiness["warnings"]
+    )
 
 
 def test_publish_configuration_supersedes_prior_publication() -> None:

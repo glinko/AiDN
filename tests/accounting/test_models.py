@@ -38,7 +38,6 @@ def test_accounting_contract_accepts_multiple_unit_modes() -> None:
             ),
         ],
         checkpoint_policy="per_request",
-        maximum_request_charge=25.0,
     )
 
     assert contract.billable_units[0].mode == "provider_metered"
@@ -68,7 +67,6 @@ def test_accounting_contract_derives_stable_registry_object_metadata() -> None:
             ),
         ],
         checkpoint_policy="per_request",
-        maximum_request_charge=25.0,
     )
     contract_b = AccountingContract(
         contract_version="acct-v1",
@@ -92,7 +90,6 @@ def test_accounting_contract_derives_stable_registry_object_metadata() -> None:
             ),
         ],
         checkpoint_policy="per_request",
-        maximum_request_charge=25.0,
     )
 
     assert contract_a.registry_namespace == "usage"
@@ -394,7 +391,6 @@ def test_proxy_opaque_fixed_price_accepts_unavailable_tokens() -> None:
             )
         ],
         checkpoint_policy="per_request",
-        maximum_request_charge=3.0,
     )
 
     assert contract.compatibility_errors(profile) == []

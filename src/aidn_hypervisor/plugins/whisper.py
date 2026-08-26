@@ -1,8 +1,11 @@
 import base64
 import binascii
 import hashlib
+import io
 import json
 import re
+import wave
+from decimal import ROUND_HALF_EVEN, Decimal
 from urllib import error, parse, request
 
 from aidn_hypervisor.plugins.base import ProviderPlugin
@@ -328,10 +331,14 @@ class WhisperPlugin(ProviderPlugin):
         if not audio_ref:
             raise ValueError("Whisper invocation requires an audio_ref payload")
 
+        ingress_evidence = None
         if self._api_format(runtime_handle) == self._managed_api_format:
+            decoded_audio = self._decode_inline_audio(str(audio_ref))
+            ingress_evidence = self._inspect_inline_audio(decoded_audio)
             response = self._invoke_native_asr(
                 endpoint=self._endpoint(runtime_handle),
                 audio_ref=str(audio_ref),
+                decoded_audio=decoded_audio,
             )
         else:
             response = self._request_json(
@@ -347,10 +354,22 @@ class WhisperPlugin(ProviderPlugin):
             "measurement_kind": "estimated",
             "measurement_source": "provider_request",
         }
-        duration_seconds = self._audio_duration_seconds(response)
-        if duration_seconds is not None:
-            usage["audio_input_seconds"] = duration_seconds
-            usage["measurement_source"] = "provider_response.duration"
+        if ingress_evidence is not None:
+            usage.update(ingress_evidence)
+        duration_milliseconds = (
+            ingress_evidence.get("audio_input_milliseconds")
+            if ingress_evidence is not None
+            else None
+        )
+        if duration_milliseconds is not None:
+            usage["measurement_kind"] = "exact"
+            usage["measurement_source"] = "hypervisor_ingress.wav_header"
+        else:
+            duration_milliseconds = self._audio_duration_milliseconds(response)
+        if duration_milliseconds is not None:
+            usage["audio_input_milliseconds"] = duration_milliseconds
+            if usage["measurement_kind"] != "exact":
+                usage["measurement_source"] = "provider_response.duration_ms"
         return {
             "ok": True,
             "task_type": task.task_type,
@@ -378,25 +397,67 @@ class WhisperPlugin(ProviderPlugin):
 
     def usage_contract(self) -> dict:
         return {
-            "supports_exact": False,
+            "supports_exact": True,
             "supports_estimated": True,
-            "supported_billing_units": ["audio_input_seconds"],
-            "supported_accounting_modes": ["fixed_price", "observable"],
-            "default_measurement_source": "provider_request",
+            "supported_billing_units": ["audio_input_milliseconds"],
+            "supported_accounting_modes": ["deterministic", "fixed_price", "observable"],
+            "default_measurement_source": "hypervisor_ingress.wav_header",
             "fallback_measurement_source": "provider_request",
             "fallback_policy": "fixed_request_estimate",
-            "missing_usage_behavior": "skip",
+            "missing_usage_behavior": "strict_accounting",
         }
 
+    @classmethod
+    def _inspect_inline_audio(cls, decoded_audio: tuple[str, str, bytes]) -> dict:
+        content_type, _filename, audio_bytes = decoded_audio
+        evidence = {
+            "input_media_type": content_type,
+            "input_bytes": len(audio_bytes),
+            "input_artifact_sha256": f"sha256:{hashlib.sha256(audio_bytes).hexdigest()}",
+        }
+        duration_milliseconds = cls._wav_duration_milliseconds(
+            audio_bytes,
+            content_type=content_type,
+        )
+        if duration_milliseconds is not None:
+            evidence["audio_input_milliseconds"] = duration_milliseconds
+        return evidence
+
     @staticmethod
-    def _audio_duration_seconds(response: dict) -> float | None:
-        """Accept only non-negative numeric duration evidence from the Provider."""
+    def _wav_duration_milliseconds(
+        audio_bytes: bytes,
+        *,
+        content_type: str,
+    ) -> int | None:
+        if content_type not in {"audio/wav", "audio/x-wav"}:
+            return None
+        try:
+            with wave.open(io.BytesIO(audio_bytes), "rb") as audio:
+                frame_rate = audio.getframerate()
+                frame_count = audio.getnframes()
+        except (EOFError, wave.Error):
+            return None
+        if frame_rate <= 0:
+            return None
+        milliseconds = Decimal(frame_count) * Decimal(1_000) / Decimal(frame_rate)
+        return int(milliseconds.to_integral_value(rounding=ROUND_HALF_EVEN))
+
+    @staticmethod
+    def _audio_duration_milliseconds(response: dict) -> int | None:
+        """Normalize non-negative Provider duration evidence to integer milliseconds."""
+        for key in ("audio_duration_milliseconds", "duration_milliseconds"):
+            value = response.get(key)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)) and value >= 0:
+                return int(Decimal(str(value)).to_integral_value(rounding=ROUND_HALF_EVEN))
         for key in ("audio_duration_seconds", "duration_seconds", "duration"):
             value = response.get(key)
             if isinstance(value, bool):
                 continue
             if isinstance(value, (int, float)) and value >= 0:
-                return float(value)
+                milliseconds = Decimal(str(value)) * Decimal(1_000)
+                return int(milliseconds.to_integral_value(rounding=ROUND_HALF_EVEN))
         return None
 
     def _endpoint(self, runtime_handle) -> str:
@@ -414,8 +475,16 @@ class WhisperPlugin(ProviderPlugin):
             raise ValueError("Whisper runtime metadata has unsupported api_format")
         return api_format
 
-    def _invoke_native_asr(self, *, endpoint: str, audio_ref: str) -> dict:
-        content_type, filename, audio_bytes = self._decode_inline_audio(audio_ref)
+    def _invoke_native_asr(
+        self,
+        *,
+        endpoint: str,
+        audio_ref: str,
+        decoded_audio: tuple[str, str, bytes] | None = None,
+    ) -> dict:
+        content_type, filename, audio_bytes = (
+            decoded_audio or self._decode_inline_audio(audio_ref)
+        )
         boundary = f"aidn-whisper-{hashlib.sha256(audio_bytes).hexdigest()[:24]}"
         body = bytearray()
         body.extend(f"--{boundary}\r\n".encode("ascii"))

@@ -70,7 +70,7 @@ def _publication(
         capabilities=capabilities,
         runtime={"streaming": True},
         publication=publication,
-        pricing={"billing_unit": "request"},
+        pricing={},
     )
     return PublishedEndpointConfiguration(
         schema_version="epcfg.v1",
@@ -87,7 +87,7 @@ def _publication(
         profile={"summary": "Operator endpoint"},
         runtime={"streaming": True},
         publication=publication,
-        pricing={"billing_unit": "request"},
+        pricing={},
         validation_requirement={"enabled": False},
         published_at="2026-07-01T00:00:00+00:00",
         sequence=1,
@@ -250,9 +250,14 @@ def test_project_registry_objects_wraps_capability_profile_and_accounting_artifa
                 "timeout": 30,
             },
             "pricing": {
-                "billing_unit": "request",
-                "input_price": 12.0,
-                "output_price": 18.0,
+                "rate_card": {"components": [
+                    {"component_id": "input", "dimension": "input_tokens",
+                     "unit_price_q_atoms": 12_000_000, "unit_divisor": 1_000_000,
+                     "accounting_mode": "provider_metered"},
+                    {"component_id": "output", "dimension": "output_tokens",
+                     "unit_price_q_atoms": 18_000_000, "unit_divisor": 1_000_000,
+                     "accounting_mode": "provider_metered"},
+                ]},
             },
             "session": {
                 "minimum_deposit": 5.0,

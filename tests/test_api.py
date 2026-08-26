@@ -700,7 +700,7 @@ def test_submit_task_endpoint_updates_session_activity_for_paid_endpoint_session
     assert refreshed.idle_deadline_at != "2026-06-30T00:10:00+00:00"
 
 
-def test_submit_task_endpoint_rejects_when_remaining_deposit_cannot_cover_maximum_request_charge() -> None:
+def test_submit_task_endpoint_requires_escrow_top_up_below_advertised_minimum() -> None:
     service = _service()
     endpoint_service = EndpointService(EndpointStore())
     session_service = SessionService(SessionStore())
@@ -722,10 +722,11 @@ def test_submit_task_endpoint_rejects_when_remaining_deposit_cannot_cover_maximu
                 "queue_policy": "busy",
                 "minimum_session_fee": 2.0,
             },
-            pricing={
-                "billing_unit": "request",
-                "fixed_price": 4.0,
-            },
+            pricing={"rate_card": {"components": [{
+                "component_id": "base-request", "dimension": "request_count",
+                "kind": "fixed", "unit_price_q_atoms": 4_000_000,
+                "accounting_mode": "fixed_price",
+            }]}},
         )
     )
     session = session_service.open_session(
@@ -735,15 +736,8 @@ def test_submit_task_endpoint_rejects_when_remaining_deposit_cannot_cover_maximu
         node_id=service.node_id,
         deposit_q=25.0,
         session_policy=created.endpoint.session.model_dump(mode="json"),
-        accounting_contract={
-            "contract_version": "acct-v1",
-            "pricing_version": "pricing-v1",
-            "checkpoint_policy": "per_request",
-            "maximum_request_charge": 15.0,
-            "billable_units": [],
-        },
     ).session
-    session_service.record_usage_charge(session.session_id, amount_q=12.0)
+    session_service.record_usage_charge(session.session_id, amount_q=16.0)
     client = TestClient(
         build_app(
             service=service,
@@ -765,7 +759,7 @@ def test_submit_task_endpoint_rejects_when_remaining_deposit_cannot_cover_maximu
     )
 
     assert response.status_code == 409
-    assert "maximum request charge" in response.json()["detail"]
+    assert "escrow top-up required" in response.json()["detail"]
 
 
 def test_get_task_endpoint_exposes_proxy_trace_for_proxy_execution() -> None:
@@ -6788,6 +6782,59 @@ def test_operator_dashboard_sessions_endpoint_includes_settlement_preview() -> N
     assert preview["seconds_until_idle_timeout"] > 0
 
 
+def test_operator_dashboard_sessions_exposes_deterministic_top_up_status() -> None:
+    service = _service()
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    created = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="llm-a",
+            bundle_hash="bundle-hash-a",
+            display_name="Paid LLM",
+            model_class="text.generate",
+            capabilities=["text.generate"],
+            session={
+                "minimum_deposit": 5.0,
+                "recommended_deposit": 25.0,
+            },
+        )
+    )
+    opened = session_service.open_session(
+        endpoint_id=created.endpoint.endpoint_id,
+        client_wallet="wallet-client",
+        provider_wallet="wallet-1",
+        node_id=service.node_id,
+        deposit_q=10.0,
+        session_policy=created.endpoint.session.model_dump(mode="json"),
+    )
+    session_service.record_usage_charge(opened.session.session_id, amount_q=6.0)
+    client = TestClient(
+        build_app(
+            service=service,
+            endpoint_service=endpoint_service,
+            session_service=session_service,
+        )
+    )
+
+    response = client.get("/operators/dashboard/sessions")
+
+    assert response.status_code == 200
+    escrow = response.json()["items"][0]["escrow_status"]
+    assert escrow == {
+        "minimum_deposit_q_atoms": 5_000_000,
+        "recommended_deposit_q_atoms": 25_000_000,
+        "locked_q_atoms": 10_000_000,
+        "consumed_q_atoms": 6_000_000,
+        "remaining_q_atoms": 4_000_000,
+        "request_admissible": False,
+        "top_up_required": True,
+        "minimum_top_up_q_atoms": 1_000_000,
+        "recommended_top_up_q_atoms": 21_000_000,
+        "recommended_target_q_atoms": 25_000_000,
+    }
+
+
 def test_operator_dashboard_session_close_action_closes_selected_session() -> None:
     service = _service(whisper_endpoint="http://127.0.0.1:9000")
     service.configure_owner_wallet(mode="create", label="Primary Wallet")
@@ -6994,7 +7041,7 @@ def test_post_session_usage_reports_returns_ack_pending_checkpoint_view() -> Non
             display_name="Paid Text",
             model_class="llm_text",
             capabilities=["llm_text.generate"],
-            pricing={"billing_unit": "token", "input_price": 12.0},
+            pricing={"rate_card": {"components": [{"component_id": "input", "dimension": "input_tokens", "unit_price_q_atoms": 12_000_000, "unit_divisor": 1_000_000, "accounting_mode": "provider_metered"}]}},
             session={
                 "minimum_deposit": 10.0,
                 "recommended_deposit": 25.0,
@@ -7080,7 +7127,7 @@ def test_post_session_usage_acknowledgements_advances_accepted_checkpoint() -> N
             display_name="Paid Text",
             model_class="llm_text",
             capabilities=["llm_text.generate"],
-            pricing={"billing_unit": "token", "input_price": 12.0},
+            pricing={"rate_card": {"components": [{"component_id": "input", "dimension": "input_tokens", "unit_price_q_atoms": 12_000_000, "unit_divisor": 1_000_000, "accounting_mode": "provider_metered"}]}},
             session={
                 "minimum_deposit": 10.0,
                 "recommended_deposit": 25.0,
@@ -7179,7 +7226,7 @@ def test_post_session_usage_acknowledgements_replay_is_idempotent() -> None:
             display_name="Paid Text",
             model_class="llm_text",
             capabilities=["llm_text.generate"],
-            pricing={"billing_unit": "token", "input_price": 12.0},
+            pricing={"rate_card": {"components": [{"component_id": "input", "dimension": "input_tokens", "unit_price_q_atoms": 12_000_000, "unit_divisor": 1_000_000, "accounting_mode": "provider_metered"}]}},
             session={
                 "minimum_deposit": 10.0,
                 "recommended_deposit": 25.0,
@@ -7290,7 +7337,7 @@ def test_post_session_usage_acknowledgements_replay_conflicts_on_different_accep
             display_name="Paid Text",
             model_class="llm_text",
             capabilities=["llm_text.generate"],
-            pricing={"billing_unit": "token", "input_price": 12.0},
+            pricing={"rate_card": {"components": [{"component_id": "input", "dimension": "input_tokens", "unit_price_q_atoms": 12_000_000, "unit_divisor": 1_000_000, "accounting_mode": "provider_metered"}]}},
             session={
                 "minimum_deposit": 10.0,
                 "recommended_deposit": 25.0,
@@ -7401,7 +7448,7 @@ def test_post_session_usage_reports_returns_422_for_invalid_nested_payload() -> 
             display_name="Paid Text",
             model_class="llm_text",
             capabilities=["llm_text.generate"],
-            pricing={"billing_unit": "token", "input_price": 12.0},
+            pricing={"rate_card": {"components": [{"component_id": "input", "dimension": "input_tokens", "unit_price_q_atoms": 12_000_000, "unit_divisor": 1_000_000, "accounting_mode": "provider_metered"}]}},
             session={
                 "minimum_deposit": 10.0,
                 "recommended_deposit": 25.0,
@@ -7458,7 +7505,7 @@ def test_post_session_usage_acknowledgements_returns_422_for_invalid_nested_payl
             display_name="Paid Text",
             model_class="llm_text",
             capabilities=["llm_text.generate"],
-            pricing={"billing_unit": "token", "input_price": 12.0},
+            pricing={"rate_card": {"components": [{"component_id": "input", "dimension": "input_tokens", "unit_price_q_atoms": 12_000_000, "unit_divisor": 1_000_000, "accounting_mode": "provider_metered"}]}},
             session={
                 "minimum_deposit": 10.0,
                 "recommended_deposit": 25.0,
@@ -7513,7 +7560,7 @@ def test_post_session_usage_reports_returns_409_for_broken_chain_continuity() ->
             display_name="Paid Text",
             model_class="llm_text",
             capabilities=["llm_text.generate"],
-            pricing={"billing_unit": "token", "input_price": 12.0},
+            pricing={"rate_card": {"components": [{"component_id": "input", "dimension": "input_tokens", "unit_price_q_atoms": 12_000_000, "unit_divisor": 1_000_000, "accounting_mode": "provider_metered"}]}},
             session={
                 "minimum_deposit": 10.0,
                 "recommended_deposit": 25.0,
@@ -7623,7 +7670,7 @@ def test_post_session_usage_acknowledgements_returns_409_for_report_hash_mismatc
             display_name="Paid Text",
             model_class="llm_text",
             capabilities=["llm_text.generate"],
-            pricing={"billing_unit": "token", "input_price": 12.0},
+            pricing={"rate_card": {"components": [{"component_id": "input", "dimension": "input_tokens", "unit_price_q_atoms": 12_000_000, "unit_divisor": 1_000_000, "accounting_mode": "provider_metered"}]}},
             session={
                 "minimum_deposit": 10.0,
                 "recommended_deposit": 25.0,
@@ -7727,7 +7774,7 @@ def test_get_session_accounting_returns_canonical_read_model() -> None:
             display_name="Paid Text",
             model_class="llm_text",
             capabilities=["llm_text.generate"],
-            pricing={"billing_unit": "token", "input_price": 12.0},
+            pricing={"rate_card": {"components": [{"component_id": "input", "dimension": "input_tokens", "unit_price_q_atoms": 12_000_000, "unit_divisor": 1_000_000, "accounting_mode": "provider_metered"}]}},
             session={
                 "minimum_deposit": 10.0,
                 "recommended_deposit": 25.0,
@@ -7825,7 +7872,7 @@ def test_session_endpoints_do_not_expose_internal_accounting_replay_metadata() -
             display_name="Paid Text",
             model_class="llm_text",
             capabilities=["llm_text.generate"],
-            pricing={"billing_unit": "token", "input_price": 12.0},
+            pricing={"rate_card": {"components": [{"component_id": "input", "dimension": "input_tokens", "unit_price_q_atoms": 12_000_000, "unit_divisor": 1_000_000, "accounting_mode": "provider_metered"}]}},
             session={
                 "minimum_deposit": 10.0,
                 "recommended_deposit": 25.0,

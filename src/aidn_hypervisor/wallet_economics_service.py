@@ -436,16 +436,20 @@ class WalletEconomicsService:
         self,
         *,
         input_tokens: int | None,
-        output_tokens: int | None,
+        cached_input_tokens: int | None = None,
+        output_tokens: int | None = None,
         fixed_request_count: int = 1,
         audio_input_seconds: float | None = None,
+        audio_input_milliseconds: int | None = None,
     ) -> dict:
         return quote_usage_q(
             pricing=self._host._pricing,
             input_tokens=input_tokens,
+            cached_input_tokens=cached_input_tokens,
             output_tokens=output_tokens,
             fixed_request_count=fixed_request_count,
             audio_input_seconds=audio_input_seconds,
+            audio_input_milliseconds=audio_input_milliseconds,
         )
 
     def record_wallet_usage(
@@ -457,9 +461,11 @@ class WalletEconomicsService:
         task_id: str | None = None,
         allocation_id: str | None = None,
         input_tokens: int | None,
-        output_tokens: int | None,
+        cached_input_tokens: int | None = None,
+        output_tokens: int | None = None,
         fixed_request_count: int = 1,
         audio_input_seconds: float | None = None,
+        audio_input_milliseconds: int | None = None,
         measurement_kind: str = "exact",
         measurement_source: str = "manual",
         source: str = "manual",
@@ -480,9 +486,11 @@ class WalletEconomicsService:
             occurred_at=datetime.now(UTC).isoformat(),
             quote=self.quote_wallet_usage(
                 input_tokens=input_tokens,
+                cached_input_tokens=cached_input_tokens,
                 output_tokens=output_tokens,
                 fixed_request_count=fixed_request_count,
                 audio_input_seconds=audio_input_seconds,
+                audio_input_milliseconds=audio_input_milliseconds,
             ),
         )
         payload = event.model_dump(mode="json")

@@ -35,11 +35,15 @@ def build_whisper_usage_profile(
                 limitations=["WHISPER_TOKEN_USAGE_UNAVAILABLE"],
             ),
             RuntimeUsageProfileDimension(
-                dimension_id="audio_input_seconds",
-                unit="second",
-                expected_availability="UNAVAILABLE",
-                billing_eligible=False,
-                limitations=["WHISPER_PROVIDER_MAY_OMIT_DURATION"],
+                dimension_id="audio_input_milliseconds",
+                unit="millisecond",
+                expected_availability="PARTIAL",
+                authority="DETERMINISTIC_LOCAL",
+                billing_eligible=True,
+                limitations=[
+                    "EXACT_FOR_HYPERVISOR_INGRESS_WAV",
+                    "OTHER_MEDIA_FORMATS_REQUIRE_A_TRUSTED_DURATION_METER",
+                ],
             ),
             RuntimeUsageProfileDimension(
                 dimension_id="output_bytes",

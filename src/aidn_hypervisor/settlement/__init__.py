@@ -1,4 +1,7 @@
-from aidn_hypervisor.settlement.accounting_terms import build_settlement_terms
+from aidn_hypervisor.settlement.accounting_terms import (
+    build_rate_card_settlement_terms,
+    build_settlement_terms,
+)
 from aidn_hypervisor.settlement.models import (
     AtomicSettlementTransition,
     BillableComponentResult,
@@ -41,4 +44,5 @@ __all__ = [
     "TerminalChargePolicy",
     "canonical_hash",
     "build_settlement_terms",
+    "build_rate_card_settlement_terms",
 ]

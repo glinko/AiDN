@@ -8,11 +8,13 @@ from aidn_hypervisor.accounting.llamacpp import build_llamacpp_usage_profile
 from aidn_hypervisor.accounting.models import AccountingContract
 from aidn_hypervisor.accounting.ollama import build_ollama_usage_profile
 from aidn_hypervisor.accounting.proxy import build_proxy_opaque_usage_profile
+from aidn_hypervisor.accounting.tts import build_tts_usage_profile
 from aidn_hypervisor.accounting.vllm import build_vllm_usage_profile
 from aidn_hypervisor.accounting.whisper import build_whisper_usage_profile
 from aidn_hypervisor.dispatcher.models import DispatcherRoute
 from aidn_hypervisor.runtime_protocol.adapters.llamacpp import LlamaCppOpenAIAdapter
 from aidn_hypervisor.runtime_protocol.adapters.ollama import OllamaGenerateAdapter
+from aidn_hypervisor.runtime_protocol.adapters.tts import OpenAITtsAdapter
 from aidn_hypervisor.runtime_protocol.adapters.proxy import ProxyOpenAIAdapter
 from aidn_hypervisor.runtime_protocol.adapters.vllm import VllmOpenAIAdapter
 from aidn_hypervisor.runtime_protocol.adapters.whisper import WhisperHttpAdapter
@@ -101,6 +103,7 @@ class ApprovedRuntimeDispatcher:
         if binding.adapter_id not in {
             "llamacpp-openai",
             "ollama-generate",
+            "openai-tts",
             "proxy-openai",
             "vllm-openai",
             "whisper-http",
@@ -213,6 +216,7 @@ class ApprovedRuntimeDispatcher:
         adapter_class = {
             "llamacpp-openai": LlamaCppOpenAIAdapter,
             "ollama-generate": OllamaGenerateAdapter,
+            "openai-tts": OpenAITtsAdapter,
             "proxy-openai": ProxyOpenAIAdapter,
             "vllm-openai": VllmOpenAIAdapter,
             "whisper-http": WhisperHttpAdapter,
@@ -227,6 +231,10 @@ class ApprovedRuntimeDispatcher:
             adapter_kwargs["api_format"] = str(
                 provider.configuration.get("api_format")
                 or "whisper_asr_webservice"
+            )
+        if binding.adapter_id == "openai-tts":
+            adapter_kwargs["voice"] = str(
+                provider.configuration.get("voice") or "alloy"
             )
         adapter = adapter_class(**adapter_kwargs)
         if streaming and "streaming" not in binding.supported_features:
@@ -252,6 +260,13 @@ class ApprovedRuntimeDispatcher:
                 runtime_generation=binding.runtime_generation,
                 runtime_configuration_hash=binding.runtime_configuration_hash,
                 adapter_version=binding.adapter_version or "ollama-generate.v1",
+            )
+        if binding.adapter_id == "openai-tts":
+            return build_tts_usage_profile(
+                runtime_id=binding.runtime_id,
+                runtime_generation=binding.runtime_generation,
+                runtime_configuration_hash=binding.runtime_configuration_hash,
+                adapter_version=binding.adapter_version or "openai-tts.v1",
             )
         if binding.adapter_id == "proxy-openai":
             return build_proxy_opaque_usage_profile(

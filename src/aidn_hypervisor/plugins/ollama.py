@@ -349,6 +349,8 @@ class OllamaPlugin(ProviderPlugin):
         return {
             "supports_exact": True,
             "supports_estimated": True,
+            "supported_billing_units": ["input_tokens", "output_tokens"],
+            "supported_accounting_modes": ["provider_metered", "fixed_price"],
             "default_measurement_source": "provider_api",
             "fallback_measurement_source": "provider_api_partial",
             "fallback_policy": "partial_response_estimate",

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 
 from aidn_hypervisor.accounting.models import SessionAccountingCheckpoint
 from aidn_hypervisor.domain.models import TaskRequest
+from aidn_hypervisor.pricing import Q_ATOMS_PER_Q
 from aidn_hypervisor.service import HypervisorService
 from aidn_hypervisor.session_failure.models import is_terminal_status
 
@@ -108,6 +110,54 @@ def build_operator_sessions_payload(
     current_time = datetime.now().astimezone()
     session_tasks: dict[str, list[dict]] = {}
     session_activity: dict[str, list[dict]] = {}
+
+    def _q_atoms(value: object) -> int:
+        try:
+            atoms = Decimal(str(value or 0)) * Q_ATOMS_PER_Q
+        except (InvalidOperation, ValueError) as error:
+            raise ValueError("Session escrow value is not a valid Q amount") from error
+        if not atoms.is_finite() or atoms != atoms.to_integral_value():
+            raise ValueError("Session escrow value must map to whole q_atoms")
+        return int(atoms)
+
+    def _escrow_status(session, deposit) -> dict:
+        policy = dict(session.session_policy_snapshot or {})
+        minimum_q_atoms = _q_atoms(policy.get("minimum_deposit", 0))
+        recommended_value = policy.get("recommended_deposit")
+        recommended_q_atoms = (
+            _q_atoms(recommended_value) if recommended_value is not None else None
+        )
+        locked_q_atoms = (
+            int(session.deposit_locked_q_atoms)
+            if session.deposit_locked_q_atoms is not None
+            else _q_atoms(deposit.locked_q)
+        )
+        consumed_q_atoms = _q_atoms(deposit.consumed_q)
+        remaining_q_atoms = max(0, locked_q_atoms - consumed_q_atoms)
+        minimum_top_up_q_atoms = max(0, minimum_q_atoms - remaining_q_atoms)
+        recommended_target_q_atoms = max(
+            minimum_q_atoms,
+            recommended_q_atoms or minimum_q_atoms,
+        )
+        return {
+            "minimum_deposit_q_atoms": minimum_q_atoms,
+            "recommended_deposit_q_atoms": recommended_q_atoms,
+            "locked_q_atoms": locked_q_atoms,
+            "consumed_q_atoms": consumed_q_atoms,
+            "remaining_q_atoms": remaining_q_atoms,
+            "request_admissible": (
+                minimum_q_atoms == 0 or remaining_q_atoms >= minimum_q_atoms
+            ),
+            "top_up_required": (
+                minimum_q_atoms > 0 and remaining_q_atoms < minimum_q_atoms
+            ),
+            "minimum_top_up_q_atoms": minimum_top_up_q_atoms,
+            "recommended_top_up_q_atoms": max(
+                0,
+                recommended_target_q_atoms - remaining_q_atoms,
+            ),
+            "recommended_target_q_atoms": recommended_target_q_atoms,
+        }
 
     def _task_input_preview(task_request: TaskRequest) -> str | None:
         payload = task_request.payload if isinstance(task_request.payload, dict) else {}
@@ -287,6 +337,7 @@ def build_operator_sessions_payload(
     ):
         result = session_service.get_session(session.session_id)
         binding = session_service.try_get_proxy_session_binding(session.session_id)
+        escrow_status = _escrow_status(result.session, result.deposit)
         items.append(
             {
                 **build_session_result_payload(result),
@@ -301,6 +352,7 @@ def build_operator_sessions_payload(
                     0.0,
                     result.deposit.locked_q - result.deposit.consumed_q,
                 ),
+                "escrow_status": escrow_status,
                 "settlement_preview": _settlement_preview(
                     result.session,
                     result.deposit,

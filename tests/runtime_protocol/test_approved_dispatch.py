@@ -1,9 +1,14 @@
+import base64
+import io
+import wave
+
 from aidn_hypervisor.accounting.models import AccountingContract, AccountingUnitContract
 from aidn_hypervisor.domain.models import NodeCapacity, TaskRequest
 from aidn_hypervisor.endpoints.models import CreateEndpointCommand
 from aidn_hypervisor.endpoints.service import EndpointService
 from aidn_hypervisor.endpoints.store import EndpointStore
 from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
+from aidn_hypervisor.plugins.openai_tts import OpenAITtsPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.plugins.whisper import WhisperPlugin
 from aidn_hypervisor.providers.service import ProviderInventoryService
@@ -53,7 +58,7 @@ def test_approved_llamacpp_binding_executes_through_runtime_protocol(monkeypatch
             display_name="Qwen",
             model_class="llm.chat",
             capabilities=["llm.chat"],
-            pricing={"billing_unit": "request", "fixed_price": 1.0},
+            pricing={"rate_card": {"components": [{"component_id": "base-request", "dimension": "request_count", "kind": "fixed", "unit_price_q_atoms": 1_000_000, "accounting_mode": "fixed_price"}]}},
             runtime={"timeout": 300},
         )
     ).endpoint
@@ -148,7 +153,7 @@ def test_approved_llamacpp_binding_executes_through_runtime_protocol(monkeypatch
             display_name="Queued Qwen",
             model_class="llm.chat",
             capabilities=["llm.chat"],
-            pricing={"billing_unit": "request", "fixed_price": 1.0},
+            pricing={"rate_card": {"components": [{"component_id": "base-request", "dimension": "request_count", "kind": "fixed", "unit_price_q_atoms": 1_000_000, "accounting_mode": "fixed_price"}]}},
         )
     ).endpoint
     queue_contract_payload = contract.model_dump(mode="json")
@@ -241,7 +246,7 @@ def test_approved_whisper_binding_executes_native_audio_through_runtime_protocol
             display_name="Whisper",
             model_class="speech_to_text",
             capabilities=["speech_to_text"],
-            pricing={"billing_unit": "request", "fixed_price": 1.0},
+            pricing={"rate_card": {"components": [{"component_id": "base-request", "dimension": "request_count", "kind": "fixed", "unit_price_q_atoms": 1_000_000, "accounting_mode": "fixed_price"}]}},
         )
     ).endpoint
     from aidn_hypervisor.runtime_execution_service import RuntimeExecutionService
@@ -288,6 +293,15 @@ def test_approved_whisper_binding_executes_native_audio_through_runtime_protocol
         },
     )
     runtime_store = RuntimeProtocolStore()
+    wav_buffer = io.BytesIO()
+    with wave.open(wav_buffer, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16_000)
+        audio.writeframes(b"\x00\x00" * 16_000)
+    audio_ref = "data:audio/wav;base64," + base64.b64encode(
+        wav_buffer.getvalue()
+    ).decode("ascii")
     result = ApprovedRuntimeDispatcher(
         provider_inventory=inventory,
         runtime_protocol_store=runtime_store,
@@ -296,7 +310,7 @@ def test_approved_whisper_binding_executes_native_audio_through_runtime_protocol
         endpoint=endpoint,
         session=session,
         request_id="whisper-request-1",
-        request_payload={"audio_ref": "data:audio/wav;base64,YQ=="},
+        request_payload={"audio_ref": audio_ref},
     )
 
     assert result.terminal_state == "COMPLETED"
@@ -309,3 +323,145 @@ def test_approved_whisper_binding_executes_native_audio_through_runtime_protocol
     assert {
         item.dimension_id: item.availability for item in report.dimensions
     }["output_bytes"] == "AVAILABLE"
+    audio_dimension = next(
+        item
+        for item in report.dimensions
+        if item.dimension_id == "audio_input_milliseconds"
+    )
+    assert audio_dimension.value == 1_000
+    assert audio_dimension.authority == "DETERMINISTIC_LOCAL"
+    assert audio_dimension.billing_eligible is True
+    assert audio_dimension.source_reference.source_hash.startswith("sha256:")
+
+
+def test_approved_tts_binding_returns_audio_and_exact_usage(monkeypatch) -> None:
+    plugins = PluginRegistry()
+    plugin = OpenAITtsPlugin()
+    plugins.register(plugin)
+    inventory = ProviderInventoryService(
+        plugins=plugins,
+        store=InMemoryProviderInventoryStore(),
+    )
+    provider = inventory.attach_provider_instance(
+        plugin_id="openai-tts",
+        display_name="Local TTS",
+        configuration={
+            "endpoint": "http://tts.example",
+            "model_id": "tts-1",
+            "voice": "alloy",
+        },
+    )
+    deployment = inventory.discover_models(provider.provider_instance_id)[0]
+    binding = inventory.create_runtime_binding(
+        model_deployment_id=deployment.model_deployment_id,
+        capability_id="speech.tts",
+        capability_version="1.0.0",
+        capability_definition_hash="capability:speech.tts:1.0.0",
+    )
+    assert binding.supported_features == ["streaming", "cancellation"]
+    endpoint = EndpointService(EndpointStore()).create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="operator-wallet",
+            runtime_binding_id=binding.runtime_binding_id,
+            bundle_id=binding.compatibility_bundle_id,
+            bundle_hash="bundle-hash",
+            display_name="TTS",
+            model_class="speech.tts",
+            capabilities=["speech.tts"],
+            pricing={"rate_card": {"components": [{
+                "component_id": "base-request",
+                "dimension": "request_count",
+                "kind": "fixed",
+                "unit_price_q_atoms": 1_000_000,
+                "accounting_mode": "fixed_price",
+            }]}},
+        )
+    ).endpoint
+    contract = AccountingContract(
+        accounting_mode="fixed_price",
+        contract_version="contract.v1",
+        capability_id="speech.tts",
+        endpoint_id=endpoint.endpoint_id,
+        pricing_version="pricing.v2",
+        billable_units=[
+            AccountingUnitContract(
+                unit="request_count",
+                mode="fixed_price",
+                price=1.0,
+                measurement_source="endpoint_policy",
+                verification_method="fixed_contract",
+            )
+        ],
+        checkpoint_policy="per_request",
+    )
+    sessions = SessionService(SessionStore())
+    session = sessions.open_session(
+        endpoint_id=endpoint.endpoint_id,
+        client_wallet="consumer-wallet",
+        provider_wallet="operator-wallet",
+        node_id="node-1",
+        deposit_q=2.0,
+        session_policy=endpoint.session.model_dump(mode="json"),
+        accounting_contract=contract.model_dump(mode="json"),
+        endpoint_configuration_hash=endpoint.configuration_hash,
+    ).session.model_copy(update={"request_charge_ceiling_q_atoms": 1_000_000})
+    sessions.store.save_session(session)
+    wav_buffer = io.BytesIO()
+    with wave.open(wav_buffer, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16_000)
+        audio.writeframes(b"\x00\x00" * 8_000)
+    audio_bytes = wav_buffer.getvalue()
+    monkeypatch.setattr(
+        OpenAITtsPlugin,
+        "_synthesize_wav",
+        lambda self, **_: ("audio/wav", audio_bytes),
+    )
+    runtime_store = RuntimeProtocolStore()
+
+    result = ApprovedRuntimeDispatcher(
+        provider_inventory=inventory,
+        runtime_protocol_store=runtime_store,
+        hypervisor_id="node-1",
+    ).execute(
+        endpoint=endpoint,
+        session=session,
+        request_id="tts-request-1",
+        request_payload={"text": "hello", "voice": "alloy"},
+    )
+
+    assert result.terminal_state == "COMPLETED"
+    assert result.result_payload["audio_ref"].startswith("data:audio/wav;base64,")
+    report = runtime_store.usage_reports[result.final_usage_report_id]
+    dimensions = {item.dimension_id: item for item in report.dimensions}
+    assert dimensions["text_input_characters"].value == 5
+    assert dimensions["audio_output_milliseconds"].value == 500
+    assert dimensions["audio_output_milliseconds"].billing_eligible is True
+
+    monkeypatch.setattr(
+        OpenAITtsPlugin,
+        "_stream_synthesize_wav",
+        lambda self, **_: iter([audio_bytes[:100], audio_bytes[100:]]),
+    )
+    streamed = ApprovedRuntimeDispatcher(
+        provider_inventory=inventory,
+        runtime_protocol_store=runtime_store,
+        hypervisor_id="node-1",
+    ).execute(
+        endpoint=endpoint,
+        session=session,
+        request_id="tts-request-stream-1",
+        request_payload={"text": "hello", "voice": "alloy"},
+        streaming=True,
+    )
+
+    assert streamed.terminal_state == "COMPLETED"
+    stream = runtime_store.streams["openai-tts-stream-tts-request-stream-1"]
+    assert stream.modality == "audio"
+    assert runtime_store.stream_closes[stream.stream_id].terminal_state == "COMPLETED"
+    streamed_report = runtime_store.usage_reports[streamed.final_usage_report_id]
+    streamed_dimensions = {
+        item.dimension_id: item for item in streamed_report.dimensions
+    }
+    assert streamed_dimensions["audio_output_milliseconds"].value == 500

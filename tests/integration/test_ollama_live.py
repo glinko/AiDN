@@ -151,7 +151,7 @@ def test_live_ollama_public_paid_session_settles_after_restart(tmp_path) -> None
                 "discoverable": True,
                 "accepts_external_requests": True,
             },
-            "pricing": {"billing_unit": "request", "fixed_price": 0.0009},
+            "pricing": {"rate_card": {"components": [{"component_id": "base-request", "dimension": "request_count", "kind": "fixed", "unit_price_q_atoms": 900, "accounting_mode": "fixed_price"}]}},
         },
     )
     assert created.status_code == 201, created.text

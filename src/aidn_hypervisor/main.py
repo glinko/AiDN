@@ -65,6 +65,7 @@ from aidn_hypervisor.operator_update_service import OperatorUpdateService
 from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
 from aidn_hypervisor.plugins.ollama import OllamaPlugin
+from aidn_hypervisor.plugins.openai_tts import OpenAITtsPlugin
 from aidn_hypervisor.plugins.proxy_openai import ProxyOpenAIPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.plugins.vllm import VllmPlugin
@@ -905,6 +906,7 @@ def _build_default_service(
     plugins = PluginRegistry()
     plugins.register(LlamaCppPlugin())
     plugins.register(OllamaPlugin())
+    plugins.register(OpenAITtsPlugin())
     plugins.register(ProxyOpenAIPlugin())
     plugins.register(VllmPlugin())
     plugins.register(WhisperPlugin())

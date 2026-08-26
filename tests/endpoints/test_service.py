@@ -102,7 +102,7 @@ def test_validator_endpoint_draft_update_does_not_record_wallet_operation() -> N
     service.update_endpoint(
         UpdateEndpointCommand(
             endpoint_id=created.endpoint.endpoint_id,
-            pricing={"fixed_price": 1.0},
+            pricing={"rate_card": {"components": [{"component_id": "base-request", "dimension": "request_count", "kind": "fixed", "unit_price_q_atoms": 1_000_000, "accounting_mode": "fixed_price"}]}},
         )
     )
 
@@ -239,20 +239,33 @@ def test_update_endpoint_pricing_rotates_configuration_hash_and_snapshot() -> No
             display_name="Operator STT",
             model_class="speech.stt",
             capabilities=["speech.stt"],
-            pricing={"fixed_price": 2.0},
+            pricing={"rate_card": {"components": [{"component_id": "base-request", "dimension": "request_count", "kind": "fixed", "unit_price_q_atoms": 2_000_000, "accounting_mode": "fixed_price"}]}},
         )
     )
 
     updated = service.update_endpoint(
         UpdateEndpointCommand(
             endpoint_id=created.endpoint.endpoint_id,
-            pricing={"audio_input_second_price": 0.4, "fixed_price": 2.0},
+            pricing={"rate_card": {"components": [
+                {"component_id": "audio-input", "dimension": "audio_input_milliseconds",
+                 "unit_price_q_atoms": 400_000, "unit_divisor": 1_000,
+                 "accounting_mode": "observable"},
+                {"component_id": "base-request", "dimension": "request_count",
+                 "kind": "fixed", "unit_price_q_atoms": 2_000_000,
+                 "accounting_mode": "fixed_price"},
+            ]}},
         )
     )
 
     assert updated.endpoint.configuration_hash != created.endpoint.configuration_hash
     assert updated.snapshot is not None
-    assert updated.snapshot.pricing.audio_input_second_price == 0.4
+    audio_component = next(
+        item
+        for item in updated.snapshot.pricing.rate_card.components
+        if item.dimension == "audio_input_milliseconds"
+    )
+    assert audio_component.unit_price_q_atoms == 400_000
+    assert audio_component.unit_divisor == 1_000
     assert len(service.list_configuration_snapshots(created.endpoint.endpoint_id)) == 2
 
 

@@ -27,7 +27,7 @@ def test_endpoint_manifest_defaults_to_created_status() -> None:
 
     assert manifest.status == "created"
     assert manifest.publication.visibility == "private"
-    assert manifest.pricing.billing_unit == "request"
+    assert manifest.pricing.rate_card.schema_version == "pricing.v2"
 
 
 def test_create_endpoint_command_requires_bundle_identity() -> None:
@@ -54,7 +54,10 @@ def test_configuration_snapshot_requires_bundle_hash() -> None:
 
 def test_endpoint_pricing_rejects_negative_costs() -> None:
     with pytest.raises(ValidationError):
-        EndpointPricing(billing_unit="tokens", input_price=-1)
+        EndpointPricing(rate_card={"components": [{
+            "component_id": "input", "dimension": "input_tokens",
+            "unit_price_q_atoms": -1,
+        }]})
 
 
 def test_shared_publication_requires_allowed_wallets() -> None:

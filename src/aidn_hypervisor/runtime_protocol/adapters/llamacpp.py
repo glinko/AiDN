@@ -52,17 +52,7 @@ class LlamaCppOpenAIAdapter:
             choice = response["choices"][0]
             dimensions = self._usage_dimensions(response.get("usage", {}))
             terminal_state = "COMPLETED"
-            result_payload = {
-                "text": self._choice_text(choice),
-                "model": str(response.get("model", self.model)),
-                "finish_reason": choice.get("finish_reason"),
-            }
-            message = choice.get("message")
-            if isinstance(message, dict) and isinstance(message.get("tool_calls"), list):
-                # Preserve native OpenAI tool calls for the local-agent
-                # gateway. The gateway turns them into the exact response
-                # shape Hermes expects instead of exposing provider markup.
-                result_payload["tool_calls"] = message["tool_calls"]
+            result_payload = self._result_payload(response, choice)
             limitations: list[str] = []
         except Exception as exc:
             dimensions = []
@@ -112,6 +102,18 @@ class LlamaCppOpenAIAdapter:
                 runtime_signature=self.runtime_signature,
             ),
         )
+
+    def _result_payload(self, response: dict, choice: dict) -> dict:
+        result_payload = {
+            "text": self._choice_text(choice),
+            "model": str(response.get("model", self.model)),
+            "finish_reason": choice.get("finish_reason"),
+        }
+        message = choice.get("message")
+        if isinstance(message, dict) and isinstance(message.get("tool_calls"), list):
+            # Preserve native OpenAI tool calls for the local-agent gateway.
+            result_payload["tool_calls"] = message["tool_calls"]
+        return result_payload
 
     def execute_streaming(
         self,
@@ -513,11 +515,20 @@ class LlamaCppOpenAIAdapter:
 
     def _usage_dimensions(self, usage: dict) -> list[RuntimeUsageDimension]:
         dimensions = []
+        details = usage.get("prompt_tokens_details")
+        cached_tokens = details.get("cached_tokens") if isinstance(details, dict) else None
         for provider_key, dimension_id in (
             ("prompt_tokens", "input_tokens"),
             ("completion_tokens", "output_tokens"),
         ):
             value = usage.get(provider_key)
+            if (
+                dimension_id == "input_tokens"
+                and isinstance(value, int)
+                and isinstance(cached_tokens, int)
+                and 0 <= cached_tokens <= value
+            ):
+                value -= cached_tokens
             if isinstance(value, int) and value >= 0:
                 dimensions.append(
                     RuntimeUsageDimension(
@@ -526,13 +537,28 @@ class LlamaCppOpenAIAdapter:
                         availability="AVAILABLE",
                         authority="AUTHORITATIVE_PROVIDER",
                         value=value,
-                        billing_eligible=dimension_id == "input_tokens",
+                        billing_eligible=True,
                         source_reference={
                             "source_type": "PROVIDER_USAGE_RESPONSE",
                             "source_id": "llamacpp-v1-completions",
                         },
                     )
                 )
+        if isinstance(cached_tokens, int) and cached_tokens >= 0:
+            dimensions.append(
+                RuntimeUsageDimension(
+                    dimension_id="cached_input_tokens",
+                    unit="token",
+                    availability="AVAILABLE",
+                    authority="AUTHORITATIVE_PROVIDER",
+                    value=cached_tokens,
+                    billing_eligible=True,
+                    source_reference={
+                        "source_type": "PROVIDER_USAGE_RESPONSE",
+                        "source_id": "llamacpp-v1-completions",
+                    },
+                )
+            )
         return dimensions
 
     @staticmethod

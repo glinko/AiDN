@@ -28,6 +28,14 @@ def build_llamacpp_usage_profile(
                 billing_eligible=True,
             ),
             RuntimeUsageProfileDimension(
+                dimension_id="cached_input_tokens",
+                unit="token",
+                expected_availability="PARTIAL",
+                authority="AUTHORITATIVE_PROVIDER",
+                billing_eligible=True,
+                limitations=["PROVIDER_MAY_OMIT_CACHED_TOKEN_BREAKDOWN"],
+            ),
+            RuntimeUsageProfileDimension(
                 dimension_id="output_tokens",
                 unit="token",
                 expected_availability="AVAILABLE",

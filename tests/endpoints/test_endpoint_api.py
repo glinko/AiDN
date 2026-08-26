@@ -342,6 +342,124 @@ def _ledger_operation_count(hypervisor: HypervisorService, operation_type: str) 
     )
 
 
+def test_endpoint_quote_returns_exact_pricing_v2_atoms() -> None:
+    _, client, endpoint, _ = _mvp_executable_api_context(open_session=False)
+    updated = client.patch(
+        f"/api/v1/endpoints/{endpoint['endpoint_id']}",
+        json={
+            "pricing": {
+                "rate_card": {
+                    "components": [
+                        {
+                            "component_id": "base",
+                            "dimension": "request_count",
+                            "kind": "fixed",
+                            "unit_price_q_atoms": 100,
+                            "accounting_mode": "fixed_price",
+                        },
+                        {
+                            "component_id": "input",
+                            "dimension": "input_tokens",
+                            "unit_price_q_atoms": 2,
+                        },
+                    ],
+                }
+            },
+            "session": {"minimum_deposit": 0.001},
+        },
+    )
+    assert updated.status_code == 200
+
+    response = client.post(
+        f"/api/v1/endpoints/{endpoint['endpoint_id']}/quote",
+        json={"usage": {"input_tokens": 40}},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()["data"]
+    assert payload["configuration_hash"] == updated.json()["data"]["endpoint"][
+        "configuration_hash"
+    ]
+    assert payload["quote"]["estimated_charge_q_atoms"] == 180
+    assert payload["minimum_escrow_deposit_q_atoms"] == 1_000
+    assert payload["recommended_escrow_deposit_q_atoms"] is None
+
+
+def test_endpoint_deposit_recommendation_uses_runtime_token_limits() -> None:
+    _, client, endpoint, _ = _mvp_executable_api_context(open_session=False)
+    endpoint_url = f"/api/v1/endpoints/{endpoint['endpoint_id']}"
+    updated = client.patch(
+        endpoint_url,
+        json={
+            "pricing": {"rate_card": {"components": [
+                {
+                    "component_id": "input",
+                    "dimension": "input_tokens",
+                    "unit_price_q_atoms": 2_000_000,
+                    "unit_divisor": 1_000_000,
+                },
+                {
+                    "component_id": "output",
+                    "dimension": "output_tokens",
+                    "unit_price_q_atoms": 4_000_000,
+                    "unit_divisor": 1_000_000,
+                },
+            ]}},
+            "runtime": {"context_length": 4096, "max_tokens": 512},
+        },
+    )
+    assert updated.status_code == 200
+
+    response = client.post(
+        f"{endpoint_url}/deposit-recommendation",
+        json={"safety_margin_bps": 1_000, "recommended_multiplier": 5},
+    )
+
+    assert response.status_code == 200
+    recommendation = response.json()["data"]["recommendation"]
+    assert recommendation["estimated_request_charge_q_atoms"] == 10_240
+    assert recommendation["minimum_deposit_q_atoms"] == 11_264
+    assert recommendation["recommended_deposit_q_atoms"] == 56_320
+
+
+def test_metered_endpoint_session_requires_the_advertised_minimum_escrow() -> None:
+    _, client, endpoint, _ = _mvp_executable_api_context(open_session=False)
+    endpoint_url = f"/api/v1/endpoints/{endpoint['endpoint_id']}"
+    unbounded_pricing = {
+        "rate_card": {
+            "components": [
+                {
+                    "component_id": "input",
+                    "dimension": "input_tokens",
+                    "unit_price_q_atoms": 2,
+                }
+            ]
+        }
+    }
+    assert client.patch(
+        endpoint_url,
+        json={
+            "pricing": unbounded_pricing,
+            "session": {"minimum_deposit": 0.002},
+        },
+    ).status_code == 200
+    underfunded = client.post(
+        f"{endpoint_url}/sessions",
+        json={"client_wallet": "wallet-consumer", "deposit_q": 0.001},
+    )
+    assert underfunded.status_code == 409
+    assert "below the minimum deposit" in underfunded.json()["error"]["message"]
+
+    funded = client.post(
+        f"{endpoint_url}/sessions",
+        json={"client_wallet": "wallet-consumer", "deposit_q": 0.002},
+    )
+    assert funded.status_code == 201
+    session = funded.json()["data"]["session"]
+    assert session["deposit_locked_q_atoms"] == 2_000
+    assert session["request_charge_ceiling_q_atoms"] == 2_000
+
+
 def test_create_endpoint_api_returns_enveloped_response() -> None:
     response = _client().post(
         "/api/v1/endpoints",
@@ -403,7 +521,7 @@ def test_open_mvp_fixed_price_session_locks_canonical_escrow() -> None:
     assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 0
 
 
-def test_open_mvp_fixed_price_session_rejects_deposit_below_accounting_ceiling() -> None:
+def test_open_mvp_fixed_price_session_ignores_recommended_deposit() -> None:
     hypervisor, client, endpoint, _ = _mvp_executable_api_context(open_session=False)
     updated = client.patch(
         f"/api/v1/endpoints/{endpoint['endpoint_id']}",
@@ -421,9 +539,9 @@ def test_open_mvp_fixed_price_session_rejects_deposit_below_accounting_ceiling()
         },
     )
 
-    assert response.status_code == 409
-    assert "maximum request charge" in response.json()["error"]["message"]
-    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 1_000
+    assert response.status_code == 201
+    assert response.json()["data"]["session"]["request_charge_ceiling_q_atoms"] == 900
+    assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 0
 
 
 def test_open_mvp_fixed_price_session_uses_fixed_price_as_accounting_ceiling() -> None:
@@ -431,7 +549,11 @@ def test_open_mvp_fixed_price_session_uses_fixed_price_as_accounting_ceiling() -
     updated = client.patch(
         f"/api/v1/endpoints/{endpoint['endpoint_id']}",
         json={
-            "pricing": {"fixed_price": 0.0009},
+            "pricing": {"rate_card": {"components": [{
+                "component_id": "base-request", "dimension": "request_count",
+                "kind": "fixed", "unit_price_q_atoms": 900,
+                "accounting_mode": "fixed_price",
+            }]}},
             "session": {"recommended_deposit": 0.002},
         },
     )
@@ -449,7 +571,7 @@ def test_open_mvp_fixed_price_session_uses_fixed_price_as_accounting_ceiling() -
 
     assert response.status_code == 201
     session = response.json()["data"]["session"]
-    assert session["accounting_contract_snapshot"]["maximum_request_charge"] == 0.0009
+    assert "maximum_request_charge" not in session["accounting_contract_snapshot"]
     assert hypervisor.wallet_q_atom_balance("wallet-consumer") == 0
 
 
@@ -483,7 +605,8 @@ def test_open_public_mvp_fixed_price_session_requires_wallet_bound_authorization
                 "discoverable": True,
                 "accepts_external_requests": True,
             },
-            "pricing": {"billing_unit": "request", "fixed_price": 0.0009},
+            "pricing": {"rate_card": {"components": [{"component_id": "base-request", "dimension": "request_count", "kind": "fixed", "unit_price_q_atoms": 900, "accounting_mode": "fixed_price"}]}},
+            "session": {"minimum_deposit": 0.001},
         },
     ).json()["data"]["endpoint"]
     hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
@@ -629,8 +752,9 @@ def test_open_public_mvp_proxy_session_rejects_legacy_remote_publication() -> No
                 "visibility": "public",
                 "discoverable": True,
                 "accepts_external_requests": True,
-            },
-            pricing={"billing_unit": "request", "fixed_price": 0.0009},
+                },
+                pricing={"rate_card": {"components": [{"component_id": "base-request", "dimension": "request_count", "kind": "fixed", "unit_price_q_atoms": 900, "accounting_mode": "fixed_price"}]}},
+                session={"minimum_deposit": 0.001},
         )
     ).endpoint
     remote = remote_endpoint_service.attach_remote_endpoint(
@@ -863,7 +987,8 @@ def test_open_public_mvp_fixed_price_session_rejects_revoked_endpoint() -> None:
                 "discoverable": True,
                 "accepts_external_requests": True,
             },
-            "pricing": {"billing_unit": "request", "fixed_price": 0.0009},
+            "pricing": {"rate_card": {"components": [{"component_id": "base-request", "dimension": "request_count", "kind": "fixed", "unit_price_q_atoms": 900, "accounting_mode": "fixed_price"}]}},
+            "session": {"minimum_deposit": 0.001},
         },
     ).json()["data"]["endpoint"]
     hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
@@ -977,7 +1102,8 @@ def test_open_public_mvp_fixed_price_session_rejects_drifted_publication() -> No
                 "discoverable": True,
                 "accepts_external_requests": True,
             },
-            "pricing": {"billing_unit": "request", "fixed_price": 0.0009},
+            "pricing": {"rate_card": {"components": [{"component_id": "base-request", "dimension": "request_count", "kind": "fixed", "unit_price_q_atoms": 900, "accounting_mode": "fixed_price"}]}},
+            "session": {"minimum_deposit": 0.001},
         },
     ).json()["data"]["endpoint"]
     hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)
@@ -1098,7 +1224,8 @@ def test_open_public_mvp_fixed_price_session_accepts_registry_backed_wallet_iden
                 "discoverable": True,
                 "accepts_external_requests": True,
             },
-            "pricing": {"billing_unit": "request", "fixed_price": 0.0009},
+            "pricing": {"rate_card": {"components": [{"component_id": "base-request", "dimension": "request_count", "kind": "fixed", "unit_price_q_atoms": 900, "accounting_mode": "fixed_price"}]}},
+            "session": {"minimum_deposit": 0.001},
         },
     ).json()["data"]["endpoint"]
     hypervisor.credit_wallet_q_atoms(wallet_id="wallet-consumer", amount_q_atoms=1_000)

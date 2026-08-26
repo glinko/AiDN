@@ -1,3 +1,6 @@
+import base64
+import io
+import wave
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -12,6 +15,7 @@ from aidn_hypervisor.runtime_protocol import (
     VllmOpenAIAdapter,
     canonical_hash,
 )
+from aidn_hypervisor.runtime_protocol.adapters.tts import OpenAITtsAdapter
 
 
 def _request(*, request_id: str = "request-1") -> RuntimeExecuteRequest:
@@ -36,6 +40,40 @@ def _request(*, request_id: str = "request-1") -> RuntimeExecuteRequest:
         idempotency_key=f"key-{request_id}",
         request_deadline=(datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
     )
+
+
+def _tts_request(*, request_id: str) -> RuntimeExecuteRequest:
+    payload = {"text": "hello", "voice": "alloy"}
+    return RuntimeExecuteRequest(
+        runtime_id="runtime-tts",
+        runtime_generation=1,
+        runtime_configuration_hash="runtime-config-tts",
+        route_generation=1,
+        endpoint_id="endpoint-tts",
+        endpoint_configuration_hash="endpoint-config-tts",
+        session_id="session-tts",
+        session_contract_hash="session-contract-tts",
+        request_id=request_id,
+        capability_id="speech.tts",
+        capability_version="1.0",
+        capability_definition_hash="capability-definition-tts",
+        request_payload_hash=canonical_hash(payload),
+        request_payload=payload,
+        request_charge_ceiling=1,
+        accounting_contract_hash="accounting-contract-tts",
+        idempotency_key=f"key-{request_id}",
+        request_deadline=(datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
+    )
+
+
+def _wav(*, milliseconds: int = 1_000) -> bytes:
+    output = io.BytesIO()
+    with wave.open(output, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16_000)
+        audio.writeframes(b"\x00\x00" * (16_000 * milliseconds // 1_000))
+    return output.getvalue()
 
 
 class _Protocol:
@@ -289,6 +327,83 @@ def test_llamacpp_adapter_maps_sse_events_to_ordered_stream_evidence(monkeypatch
         },
         "limitations": [],
     }
+
+
+def test_tts_adapter_streams_hash_bound_audio_and_exact_delivered_usage(monkeypatch) -> None:
+    adapter = OpenAITtsAdapter(
+        endpoint="http://provider",
+        model="tts-1",
+        runtime_signature="runtime-signed",
+    )
+    audio_bytes = _wav(milliseconds=1_000)
+    monkeypatch.setattr(
+        adapter._plugin,
+        "_stream_synthesize_wav",
+        lambda **_: iter([audio_bytes[:100], audio_bytes[100:]]),
+    )
+    protocol = _Protocol()
+
+    result = adapter.execute_streaming(
+        protocol,
+        "connection-1",
+        _tts_request(request_id="tts-stream-1"),
+    )
+
+    assert result.terminal_state == "COMPLETED"
+    stream = protocol.store.streams["openai-tts-stream-tts-stream-1"]
+    assert stream.modality == "audio"
+    assert stream.content_type == "audio/wav"
+    assert stream.ordering_model == "ARTIFACT_CHUNKS"
+    chunks = protocol.store.stream_chunks[stream.stream_id]
+    reconstructed = b"".join(
+        base64.b64decode(chunks[index].content) for index in sorted(chunks)
+    )
+    assert reconstructed == audio_bytes
+    assert chunks[2].cumulative_output_units == len(audio_bytes)
+    report = protocol.usage_reports[0]
+    dimensions = {item.dimension_id: item for item in report.dimensions}
+    assert dimensions["text_input_characters"].value == 5
+    assert dimensions["audio_output_milliseconds"].value == 1_000
+    assert dimensions["audio_output_milliseconds"].billing_eligible is True
+    assert result.stream_roots == [
+        protocol.store.stream_closes[stream.stream_id].final_content_root
+    ]
+
+
+def test_tts_adapter_cancellation_meters_only_audio_delivered_before_stop(monkeypatch) -> None:
+    adapter = OpenAITtsAdapter(
+        endpoint="http://provider",
+        model="tts-1",
+        runtime_signature="runtime-signed",
+    )
+    audio_bytes = _wav(milliseconds=1_000)
+    first_chunk = audio_bytes[: 44 + (32 * 250)]
+    protocol = _Protocol()
+
+    def stream(**_):
+        yield first_chunk
+        protocol.store.requests["tts-stream-cancel"].request_state = "CANCEL_REQUESTED"
+        yield audio_bytes[len(first_chunk) :]
+
+    monkeypatch.setattr(adapter._plugin, "_stream_synthesize_wav", stream)
+
+    result = adapter.execute_streaming(
+        protocol,
+        "connection-1",
+        _tts_request(request_id="tts-stream-cancel"),
+    )
+
+    assert result.terminal_state == "CANCELLED"
+    stream_id = "openai-tts-stream-tts-stream-cancel"
+    assert len(protocol.store.stream_chunks[stream_id]) == 1
+    close = protocol.store.stream_closes[stream_id]
+    assert close.terminal_state == "CANCELLED"
+    report = protocol.usage_reports[0]
+    assert report.request_state == "CANCELLED"
+    assert report.limitations == ["PARTIAL_AUDIO_DELIVERED"]
+    dimensions = {item.dimension_id: item for item in report.dimensions}
+    assert dimensions["audio_output_milliseconds"].value == 250
+    assert result.result_payload["delivered_audio_bytes"] == len(first_chunk)
 
 
 @pytest.mark.parametrize(

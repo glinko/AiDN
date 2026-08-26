@@ -182,7 +182,8 @@ class AccountingContract(BaseModel):
     billable_units: list[AccountingUnitContract] = Field(default_factory=list)
     checkpoint_policy: str = Field(min_length=1)
     maximum_unreported_usage: float | None = Field(default=None, ge=0.0)
-    maximum_request_charge: float | None = Field(default=None, ge=0.0)
+    rate_card_hash: str | None = None
+    maximum_unreported_usage_q_atoms: int | None = Field(default=None, ge=0)
     failure_pricing_policy: str = Field(
         default="reject_unpriced_usage",
         min_length=1,
@@ -215,7 +216,8 @@ class AccountingContract(BaseModel):
             ],
             "checkpoint_policy": self.checkpoint_policy,
             "maximum_unreported_usage": self.maximum_unreported_usage,
-            "maximum_request_charge": self.maximum_request_charge,
+            "rate_card_hash": self.rate_card_hash,
+            "maximum_unreported_usage_q_atoms": self.maximum_unreported_usage_q_atoms,
             "failure_pricing_policy": self.failure_pricing_policy,
             "unavailable_value_policy": self.unavailable_value_policy,
             "partial_value_policy": self.partial_value_policy,
@@ -301,10 +303,7 @@ class AccountingContract(BaseModel):
             ):
                 raise ValueError(f"Usage dimension is not numeric: {unit.unit}")
             charge += float(dimension.value) * unit.price
-        maximum = request_charge_ceiling
-        if self.maximum_request_charge is not None:
-            maximum = min(maximum, self.maximum_request_charge)
-        if charge > maximum:
+        if charge > request_charge_ceiling:
             raise ValueError("calculated charge exceeds Request Charge Ceiling")
         return charge
 

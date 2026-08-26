@@ -133,6 +133,8 @@ class ProxyOpenAIPlugin(ProviderPlugin):
         return {
             "supports_exact": False,
             "supports_estimated": False,
+            "supported_billing_units": [],
+            "supported_accounting_modes": ["proxy_opaque", "fixed_price", "observable"],
             "default_measurement_source": None,
             "fallback_measurement_source": "observable_output",
             "fallback_policy": "fixed_or_observable_only",

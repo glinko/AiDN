@@ -70,6 +70,7 @@ def test_default_app_exposes_builtin_plugins(tmp_path, monkeypatch) -> None:
     assert [plugin["plugin_id"] for plugin in plugins] == [
         "llama.cpp",
         "ollama",
+        "openai-tts",
         "proxy-openai",
         "vllm",
         "whisper",
@@ -130,14 +131,14 @@ def test_default_app_exposes_builtin_plugins(tmp_path, monkeypatch) -> None:
     assert whisper["supported_aidn_capabilities"] == ["speech_to_text"]
     assert whisper["workload_types"] == ["speech_to_text"]
     assert whisper["usage_contract"] == {
-        "supports_exact": False,
+        "supports_exact": True,
         "supports_estimated": True,
-        "supported_billing_units": ["audio_input_seconds"],
-        "supported_accounting_modes": ["fixed_price", "observable"],
-        "default_measurement_source": "provider_request",
+        "supported_billing_units": ["audio_input_milliseconds"],
+        "supported_accounting_modes": ["deterministic", "fixed_price", "observable"],
+        "default_measurement_source": "hypervisor_ingress.wav_header",
         "fallback_measurement_source": "provider_request",
         "fallback_policy": "fixed_request_estimate",
-        "missing_usage_behavior": "skip",
+        "missing_usage_behavior": "strict_accounting",
     }
 
 

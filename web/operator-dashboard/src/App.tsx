@@ -1370,6 +1370,8 @@ function EndpointDraftControl({ ownerWallet, bundles, bindings, onRefresh }: { o
   const [parameterDrafts, setParameterDrafts] = useState<EndpointParameterDraft[]>([])
   const [fixedPrice, setFixedPrice] = useState('0')
   const [minimumDeposit, setMinimumDeposit] = useState('0')
+  const [recommendedDeposit, setRecommendedDeposit] = useState('0')
+  const [automaticDeposit, setAutomaticDeposit] = useState(true)
   const [marketplaceHtml, setMarketplaceHtml] = useState('')
   const [marketplacePreview, setMarketplacePreview] = useState<{ html: string; content_hash: string; sanitizer_version: string } | null>(null)
   const [previewBusy, setPreviewBusy] = useState(false)
@@ -1402,6 +1404,15 @@ function EndpointDraftControl({ ownerWallet, bundles, bindings, onRefresh }: { o
     const selectedBundle = bundles.find((candidate) => candidate.bundle_id === selectedBundleId)
     setParameterDrafts(endpointParameterDrafts(selectedBundle))
   }, [bindingId, bundleId, bindings, bundles])
+
+  useEffect(() => {
+    if (!automaticDeposit) return
+    const requestCharge = parseQAtoms(fixedPrice)
+    if (requestCharge === null) return
+    const minimumAtoms = Math.ceil(requestCharge * 1.2)
+    setMinimumDeposit(qAtomsInputText(minimumAtoms))
+    setRecommendedDeposit(qAtomsInputText(minimumAtoms * 5))
+  }, [automaticDeposit, fixedPrice])
 
   async function createDraft() {
     if (!ownerWallet) {
@@ -1440,8 +1451,26 @@ function EndpointDraftControl({ ownerWallet, bundles, bindings, onRefresh }: { o
           : {},
         runtime: { streaming: true },
         publication: { visibility, shared_with_wallet_ids: visibility === 'shared' ? sharedWalletIds.split(',').map((wallet) => wallet.trim()).filter(Boolean) : [], discoverable: visibility !== 'private', validation: validationEnabled ? 'enabled' : 'disabled', accepts_external_requests: acceptsExternal },
-        pricing: { billing_unit: 'request', fixed_price: Number(fixedPrice) || 0 },
-        session: { minimum_deposit: Number(minimumDeposit) || 0, max_concurrent_sessions: 1 },
+        pricing: {
+          rate_card: {
+            schema_version: 'pricing.v2',
+            currency: 'Q_ATOM',
+            components: [{
+              component_id: 'base-request',
+              dimension: 'request_count',
+              kind: 'fixed',
+              unit_price_q_atoms: qTextToAtoms(fixedPrice),
+              accounting_mode: 'fixed_price',
+              measurement_source: 'endpoint_policy',
+              verification_method: 'fixed_contract',
+            }],
+          },
+        },
+        session: {
+          minimum_deposit: Number(minimumDeposit) || 0,
+          recommended_deposit: Number(recommendedDeposit) || 0,
+          max_concurrent_sessions: 1,
+        },
         validation,
       })
       setMessage('Endpoint draft created. Review readiness, then publish the exact configuration.')
@@ -1492,7 +1521,9 @@ function EndpointDraftControl({ ownerWallet, bundles, bindings, onRefresh }: { o
         <label className="grid gap-2"><span className="eyebrow">Bundle ID</span><input value={bundleId} onChange={(event) => setBundleId(event.target.value)} disabled={Boolean(bindingId)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300 disabled:opacity-50" /></label>
         <label className="grid gap-2"><span className="eyebrow">Bundle hash</span><input value={bundleHash} onChange={(event) => setBundleHash(event.target.value)} disabled={Boolean(bindingId)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 font-mono text-xs text-white outline-none focus:border-cyan-300 disabled:opacity-50" /></label>
         <label className="grid gap-2"><span className="eyebrow">Fixed price Q</span><input inputMode="decimal" value={fixedPrice} onChange={(event) => setFixedPrice(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label>
-        <label className="grid gap-2"><span className="eyebrow">Minimum deposit Q</span><input inputMode="decimal" value={minimumDeposit} onChange={(event) => setMinimumDeposit(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300" /></label>
+        <label className="grid gap-2"><span className="eyebrow">Minimum escrow Q</span><input inputMode="decimal" value={minimumDeposit} disabled={automaticDeposit} onChange={(event) => setMinimumDeposit(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300 disabled:opacity-70" /></label>
+        <label className="grid gap-2"><span className="eyebrow">Recommended escrow Q</span><input inputMode="decimal" value={recommendedDeposit} disabled={automaticDeposit} onChange={(event) => setRecommendedDeposit(event.target.value)} className="h-10 rounded-lg border border-input bg-[#07111d] px-3 text-sm text-white outline-none focus:border-cyan-300 disabled:opacity-70" /></label>
+        <div className="grid gap-2 lg:col-span-2"><label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={automaticDeposit} onChange={(event) => setAutomaticDeposit(event.target.checked)} />Calculate escrow automatically</label><p className="text-xs leading-5 text-muted-foreground">Minimum = estimated high-usage request + 20%. Recommended = five minimum deposits, so consumers can make several requests before topping up.</p></div>
         <div className="grid gap-2 lg:col-span-4">
           <label className="eyebrow" htmlFor="marketplace-description-html">Marketplace HTML description</label>
           <textarea id="marketplace-description-html" value={marketplaceHtml} onChange={(event) => { setMarketplaceHtml(event.target.value); setMarketplacePreview(null) }} rows={6} placeholder="<p>Describe your endpoint, supported inputs, and a safe usage example.</p>" className="w-full rounded-lg border border-input bg-[#07111d] px-3 py-2 font-mono text-xs leading-5 text-white outline-none focus:border-cyan-300" />
@@ -3251,6 +3282,7 @@ function AgentsSessionsWorkspace({ data, onNavigate, onRefresh }: { data: Dashbo
 function SessionLedgerRow({ item, busy, onInspect, onClose }: { item: DashboardRecord; busy: string | null; onInspect: () => void; onClose: () => void }) {
   const session = getRecord(item.session)
   const deposit = getRecord(item.deposit)
+  const escrow = getRecord(item.escrow_status)
   const preview = getRecord(item.settlement_preview)
   const id = valueText(session, 'session_id')
   const status = valueText(session, 'status') || 'unknown'
@@ -3261,7 +3293,7 @@ function SessionLedgerRow({ item, busy, onInspect, onClose }: { item: DashboardR
     <SessionValue label="Locked" value={`${valueText(deposit, 'locked_q', '0')} Q`} />
     <SessionValue label="Consumed" value={`${valueText(deposit, 'consumed_q', '0')} Q`} />
     <SessionValue label="Payment preview" value={`${valueText(preview, 'projected_charged_q', '0')} Q`} />
-    <SessionValue label="Refund preview" value={`${valueText(preview, 'projected_refundable_q', '0')} Q`} />
+    <SessionValue label={escrow?.top_up_required ? 'Top-up needed' : 'Remaining'} value={escrow?.top_up_required ? formatQAtoms(Number(escrow.minimum_top_up_q_atoms ?? 0)) : formatQAtoms(Number(escrow?.remaining_q_atoms ?? 0))} />
     <div className="flex flex-wrap gap-2 xl:justify-end"><Button variant="outline" size="sm" className="border-cyan-300/25 bg-transparent text-cyan-100" onClick={onInspect}><Eye />Inspect</Button><Button variant="outline" size="sm" className={cn('bg-transparent', terminal ? 'border-slate-300/20 text-slate-400' : 'border-rose-300/25 text-rose-100 hover:bg-rose-300/10')} disabled={terminal || busy === id} onClick={onClose}>{busy === id ? 'Closing...' : terminal ? terminalSessionLabel(status) : 'Close Session'}</Button></div>
   </div>
 }
@@ -3271,6 +3303,7 @@ function SessionDetailSheet({ item, open, busy, onOpenChange, onCloseSession }: 
   const deposit = getRecord(item?.deposit)
   const settlement = getRecord(item?.settlement)
   const preview = getRecord(item?.settlement_preview)
+  const escrow = getRecord(item?.escrow_status)
   const checkpoint = getRecord(session?.accounting_checkpoint)
   const tasks = recordList(item?.related_tasks)
   const activity = recordList(item?.activity)
@@ -3282,7 +3315,7 @@ function SessionDetailSheet({ item, open, busy, onOpenChange, onCloseSession }: 
   const acknowledgementChain = recordList(session.usage_acknowledgement_chain)
   return <Sheet open={open} onOpenChange={onOpenChange}><SheetContent side="right" className="w-full overflow-y-auto border-slate-700 bg-[#07111d] p-0 sm:max-w-xl"><SheetHeader className="border-b border-border/70 px-5 py-5"><div className="flex items-center gap-2"><StatusBadge value={status} /><span className="eyebrow">Session inspector</span></div><SheetTitle className="pr-8 text-xl text-white">{valueText(item, 'display_name') || valueText(session, 'endpoint_id') || 'Endpoint Session'}</SheetTitle><SheetDescription className="font-mono text-[11px] text-slate-500">{sessionId}</SheetDescription></SheetHeader><div className="space-y-4 p-5">
     <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-4 py-3"><CardTitle className="text-sm">Identity & lifecycle</CardTitle></CardHeader><CardContent className="grid grid-cols-2 gap-x-4 gap-y-4 p-4"><SessionValue label="Endpoint" value={valueText(session, 'endpoint_id', 'Not reported')} /><SessionValue label="Node" value={valueText(session, 'node_id', 'Not reported')} /><SessionValue label="Consumer auth" value={shortId(valueText(session, 'client_wallet'), 18)} /><SessionValue label="Requests" value={valueText(session, 'request_count', '0')} /><SessionValue label="Created" value={formatDateTime(valueText(session, 'created_at'))} /><SessionValue label="Last activity" value={formatDateTime(valueText(session, 'last_activity_at'))} /><SessionValue label="Idle deadline" value={formatDateTime(valueText(session, 'idle_deadline_at'))} /><SessionValue label="Funding state" value={valueText(session, 'canonical_funding_status', 'Not reported')} /><SessionValue label="Accounting" value={valueText(session, 'accounting_status', 'Not reported')} /></CardContent></Card>
-    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-4 py-3"><CardTitle className="text-sm">Execution & accounting evidence</CardTitle></CardHeader><CardContent className="grid grid-cols-2 gap-x-4 gap-y-4 p-4"><SessionValue label="Locked deposit" value={`${valueText(deposit, 'locked_q', '0')} Q`} /><SessionValue label="Consumed" value={`${valueText(deposit, 'consumed_q', '0')} Q`} /><SessionValue label="Endpoint payment" value={`${valueText(preview, 'projected_charged_q', '0')} Q`} /><SessionValue label="Network fee" value={`${valueText(preview, 'network_fee_q', '0')} Q`} /><SessionValue label="Refund preview" value={`${valueText(preview, 'projected_refundable_q', '0')} Q`} /><SessionValue label="Remaining" value={`${valueText(item, 'remaining_q', '0')} Q`} /><SessionValue label="Settlement" value={valueText(settlement, 'status', valueText(item, 'settlement_status', 'Not finalized'))} /><SessionValue label="Funding operation" value={shortId(valueText(session, 'canonical_funding_operation_id'), 18)} /><div className="col-span-2 rounded-md border border-cyan-300/15 bg-cyan-300/[0.035] p-3 text-xs leading-5 text-muted-foreground">{sessionIdleLabel(session, preview, status).label}. These values are projections or canonical records returned by the Hypervisor; the browser does not settle funds.</div></CardContent></Card>
+    <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-4 py-3"><CardTitle className="text-sm">Execution & accounting evidence</CardTitle></CardHeader><CardContent className="grid grid-cols-2 gap-x-4 gap-y-4 p-4"><SessionValue label="Locked deposit" value={`${valueText(deposit, 'locked_q', '0')} Q`} /><SessionValue label="Consumed" value={`${valueText(deposit, 'consumed_q', '0')} Q`} /><SessionValue label="Endpoint payment" value={`${valueText(preview, 'projected_charged_q', '0')} Q`} /><SessionValue label="Network fee" value={`${valueText(preview, 'network_fee_q', '0')} Q`} /><SessionValue label="Refund preview" value={`${valueText(preview, 'projected_refundable_q', '0')} Q`} /><SessionValue label="Remaining" value={formatQAtoms(Number(escrow?.remaining_q_atoms ?? 0))} /><SessionValue label="Minimum reserve" value={formatQAtoms(Number(escrow?.minimum_deposit_q_atoms ?? 0))} /><SessionValue label="Recommended reserve" value={formatQAtoms(Number(escrow?.recommended_deposit_q_atoms ?? 0))} /><SessionValue label="Settlement" value={valueText(settlement, 'status', valueText(item, 'settlement_status', 'Not finalized'))} /><SessionValue label="Funding operation" value={shortId(valueText(session, 'canonical_funding_operation_id'), 18)} />{escrow?.top_up_required ? <div className="col-span-2 rounded-md border border-amber-300/30 bg-amber-300/[0.06] p-3 text-xs leading-5 text-amber-100">Another request is blocked until the Consumer extends Session escrow by at least {formatQAtoms(Number(escrow.minimum_top_up_q_atoms ?? 0))}. Replenishing by {formatQAtoms(Number(escrow.recommended_top_up_q_atoms ?? 0))} restores the advertised working balance.</div> : <div className="col-span-2 rounded-md border border-cyan-300/15 bg-cyan-300/[0.035] p-3 text-xs leading-5 text-muted-foreground">Escrow is above the Endpoint minimum; another request may be admitted. {sessionIdleLabel(session, preview, status).label}.</div>}</CardContent></Card>
     <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-4 py-3"><div className="flex items-center justify-between gap-3"><CardTitle className="text-sm">Requests & results</CardTitle><span className="eyebrow">{tasks.length} record(s)</span></div></CardHeader><CardContent className="divide-y divide-border/70 p-0">{tasks.length === 0 ? <p className="p-4 text-sm text-muted-foreground">No request or task evidence has been recorded for this Session.</p> : tasks.slice(0, 12).map((task, index) => <div key={valueText(task, 'task_id') || `${sessionId}:task:${index}`} className="space-y-2 p-4"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-mono text-[11px] text-slate-400">{shortId(valueText(task, 'task_id'), 22)}</span><StatusBadge value={valueText(task, 'status', 'unknown')} /></div><p className="text-sm text-slate-200">{valueText(task, 'task_type') || valueText(task, 'bundle_id') || 'Request execution'}</p><p className="text-xs leading-5 text-muted-foreground">Endpoint: {valueText(task, 'endpoint_id', valueText(session, 'endpoint_id', 'Not reported'))} · Created {formatDateTime(valueText(task, 'created_at'))}</p>{valueText(task, 'input_preview') ? <p className="rounded border border-border/70 bg-[#091725] p-2 font-mono text-[11px] text-slate-400">{valueText(task, 'input_preview')}</p> : null}</div>)}</CardContent></Card>
     <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-4 py-3"><CardTitle className="text-sm">Usage & checkpoint</CardTitle></CardHeader><CardContent className="grid grid-cols-2 gap-x-4 gap-y-4 p-4"><SessionValue label="Accepted report seq." value={valueText(session, 'last_accepted_report_sequence', 'Not reported')} /><SessionValue label="Accepted usage" value={`${valueText(session, 'last_accepted_usage_charged_q', '0')} Q`} /><SessionValue label="Report chain" value={`${usageChain.length} link(s)`} /><SessionValue label="Acknowledgements" value={`${acknowledgementChain.length} link(s)`} /><SessionValue label="Report head" value={shortId(valueText(session, 'last_accepted_report_hash') || valueText(session, 'report_hash'), 18)} /><SessionValue label="Checkpoint" value={valueText(checkpoint, 'status', checkpoint ? 'Recorded' : 'Not recorded')} /></CardContent></Card>
     <Card className="border-border/80 bg-card py-0 shadow-none"><CardHeader className="border-b border-border/70 px-4 py-3"><div className="flex items-center justify-between gap-3"><CardTitle className="text-sm">Activity timeline</CardTitle><span className="eyebrow">latest first</span></div></CardHeader><CardContent className="divide-y divide-border/70 p-0">{activity.length === 0 ? <p className="p-4 text-sm text-muted-foreground">No activity events have been retained.</p> : activity.slice(0, 12).map((event, index) => <div key={`${valueText(event, 'timestamp')}:${index}`} className="flex gap-3 p-4"><CircleDot className="mt-1 size-3 shrink-0 text-cyan-200" /><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="text-sm text-slate-200">{valueText(event, 'message') || valueText(event, 'event_type') || 'Session event'}</p><span className="font-mono text-[10px] text-slate-500">{formatDateTime(valueText(event, 'timestamp'))}</span></div>{valueText(event, 'task_id') ? <p className="mt-1 font-mono text-[10px] text-slate-500">task {shortId(valueText(event, 'task_id'), 18)}</p> : null}</div></div>)}</CardContent></Card>
@@ -3402,10 +3435,29 @@ function ParameterPolicySummary({ offer }: { offer: DashboardRecord }) {
 
 function marketPrice(offer: DashboardRecord): string {
   const pricing = getRecord(offer.pricing)
-  const fixed = getText(pricing, 'fixed') || getText(pricing, 'fixed_price_q') || getText(offer, 'fixed_price_q')
-  if (fixed) return `${fixed} Q`
-  const input = getText(pricing, 'input')
-  return input ? `${input} Q input` : 'Contract-bound'
+  const rateCard = getRecord(pricing?.rate_card) ?? getRecord(pricing)
+  const components = Array.isArray(rateCard?.components)
+    ? rateCard.components.filter((item): item is DashboardRecord => Boolean(getRecord(item)))
+    : []
+  if (components.length === 0) return 'Unpriced'
+  const componentPrice = components.map((component) => {
+    const item = getRecord(component) ?? {}
+    const atoms = Number(item.unit_price_q_atoms ?? 0)
+    const divisor = Number(item.unit_divisor ?? 1)
+    const dimension = getText(item, 'dimension') || 'usage'
+    return `${formatQAtoms(atoms)}/${divisor === 1 ? dimension : `${divisor} ${dimension}`}`
+  }).join(' + ')
+  return componentPrice
+}
+
+function qTextToAtoms(value: string): number {
+  const atoms = parseQAtoms(value)
+  if (atoms === null) throw new Error('Price must be a non-negative Q amount with at most 6 decimals.')
+  return atoms
+}
+
+function qAtomsInputText(atoms: number): string {
+  return (atoms / 1_000_000).toFixed(6).replace(/\.?0+$/, '') || '0'
 }
 
 function ValidationWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {

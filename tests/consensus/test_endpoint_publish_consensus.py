@@ -35,7 +35,11 @@ def _publication() -> PublishedEndpointConfiguration:
             "discoverable": True,
             "accepts_external_requests": True,
         },
-        pricing={"fixed_price": 1.0, "billing_unit": "request"},
+        pricing={"rate_card": {"components": [{
+            "component_id": "base-request", "dimension": "request_count",
+            "kind": "fixed", "unit_price_q_atoms": 1_000_000,
+            "accounting_mode": "fixed_price",
+        }]}},
         session={"minimum_deposit": 1.0},
         execution={"strategy": "local", "runtime_binding_id": "binding-1"},
     )

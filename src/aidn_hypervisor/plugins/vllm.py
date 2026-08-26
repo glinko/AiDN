@@ -373,6 +373,12 @@ class VllmPlugin(ProviderPlugin):
         return {
             "supports_exact": True,
             "supports_estimated": True,
+            "supported_billing_units": [
+                "input_tokens",
+                "cached_input_tokens",
+                "output_tokens",
+            ],
+            "supported_accounting_modes": ["provider_metered", "fixed_price"],
             "default_measurement_source": "provider_api",
             "fallback_measurement_source": "provider_api_partial",
             "fallback_policy": "partial_response_estimate",
@@ -412,15 +418,27 @@ class VllmPlugin(ProviderPlugin):
     @staticmethod
     def _usage_from_response(usage: dict) -> dict:
         input_tokens, output_tokens = usage.get("prompt_tokens"), usage.get("completion_tokens")
+        details = usage.get("prompt_tokens_details")
+        cached_input_tokens = (
+            details.get("cached_tokens") if isinstance(details, dict) else None
+        )
         exact = isinstance(input_tokens, int) and isinstance(output_tokens, int)
         if exact:
-            return {
-                "input_tokens": input_tokens,
+            result = {
+                "input_tokens": (
+                    input_tokens - cached_input_tokens
+                    if isinstance(cached_input_tokens, int)
+                    and 0 <= cached_input_tokens <= input_tokens
+                    else input_tokens
+                ),
                 "output_tokens": output_tokens,
                 "fixed_request_count": 1,
                 "measurement_kind": "exact",
                 "measurement_source": "provider_api",
             }
+            if isinstance(cached_input_tokens, int) and 0 <= cached_input_tokens <= input_tokens:
+                result["cached_input_tokens"] = cached_input_tokens
+            return result
         result = {
             "fixed_request_count": 1,
             "measurement_kind": "estimated",

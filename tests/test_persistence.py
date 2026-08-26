@@ -55,7 +55,7 @@ def _published_record(
         capabilities=["speech.stt"],
         runtime={"timeout": 45, "streaming": True},
         publication={"visibility": "public", "discoverable": True},
-        pricing={"billing_unit": "request"},
+        pricing={},
     )
     configuration_hash = configuration_hash_for_publication(canonical_payload)
     previous_hash = configuration_hash if sequence > 1 else None
@@ -74,7 +74,7 @@ def _published_record(
         profile={},
         runtime={"timeout": 45, "streaming": True},
         publication={"visibility": "public", "discoverable": True},
-        pricing={"billing_unit": "request"},
+        pricing={},
         validation_requirement={},
         published_at=f"2026-06-30T00:00:0{sequence}+00:00",
         sequence=sequence,

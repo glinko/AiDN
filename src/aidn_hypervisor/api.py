@@ -4322,7 +4322,24 @@ def build_api_router(
 
     @router.post("/operators/wallet/usage", status_code=status.HTTP_201_CREATED)
     async def record_wallet_usage(request: WalletUsageRecordRequest) -> dict:
-        return service.record_wallet_usage(**request.model_dump(mode="json"))
+        # This operator endpoint records the legacy node-level telemetry quote.
+        # Pricing V2 media evidence is retained on the task Usage Report instead
+        # and must not be silently forwarded to the older wallet facade.
+        return service.record_wallet_usage(
+            **request.model_dump(
+                mode="json",
+                exclude={
+                    "audio_output_milliseconds",
+                    "text_input_characters",
+                    "input_bytes",
+                    "input_media_type",
+                    "input_artifact_sha256",
+                    "output_bytes",
+                    "output_media_type",
+                    "output_artifact_sha256",
+                },
+            )
+        )
 
     @router.post("/operators/models/install", status_code=status.HTTP_202_ACCEPTED)
     async def request_model_install(request: ModelInstallRequest) -> dict:

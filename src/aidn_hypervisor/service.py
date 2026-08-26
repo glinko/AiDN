@@ -2101,15 +2101,19 @@ class HypervisorService:
         self,
         *,
         input_tokens: int | None,
-        output_tokens: int | None,
+        cached_input_tokens: int | None = None,
+        output_tokens: int | None = None,
         fixed_request_count: int = 1,
         audio_input_seconds: float | None = None,
+        audio_input_milliseconds: int | None = None,
     ) -> dict:
         return self._wallet_application_facade().quote_wallet_usage(
             input_tokens=input_tokens,
+            cached_input_tokens=cached_input_tokens,
             output_tokens=output_tokens,
             fixed_request_count=fixed_request_count,
             audio_input_seconds=audio_input_seconds,
+            audio_input_milliseconds=audio_input_milliseconds,
         )
 
     def record_wallet_usage(
@@ -2121,9 +2125,11 @@ class HypervisorService:
         task_id: str | None = None,
         allocation_id: str | None = None,
         input_tokens: int | None,
-        output_tokens: int | None,
+        cached_input_tokens: int | None = None,
+        output_tokens: int | None = None,
         fixed_request_count: int = 1,
         audio_input_seconds: float | None = None,
+        audio_input_milliseconds: int | None = None,
         measurement_kind: str = "exact",
         measurement_source: str = "manual",
         source: str = "manual",
@@ -2135,9 +2141,11 @@ class HypervisorService:
             task_id=task_id,
             allocation_id=allocation_id,
             input_tokens=input_tokens,
+            cached_input_tokens=cached_input_tokens,
             output_tokens=output_tokens,
             fixed_request_count=fixed_request_count,
             audio_input_seconds=audio_input_seconds,
+            audio_input_milliseconds=audio_input_milliseconds,
             measurement_kind=measurement_kind,
             measurement_source=measurement_source,
             source=source,
@@ -4300,12 +4308,12 @@ class HypervisorService:
         *,
         task_id: str,
         task: TaskRequest,
-        amount_q: float,
+        amount_q_atoms: int,
     ):
         return self._task_usage_accounting_facade().record_session_usage_charge_for_task(
             task_id=task_id,
             task=task,
-            amount_q=amount_q,
+            amount_q_atoms=amount_q_atoms,
         )
 
     def _provider_usage_contract_for_bundle(self, bundle: BundleConfig) -> dict:

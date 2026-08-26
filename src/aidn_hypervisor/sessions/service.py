@@ -1,6 +1,7 @@
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from uuid import uuid4
 
 from cryptography.exceptions import InvalidSignature
@@ -51,6 +52,16 @@ def _registry_object_id(*, object_type: str, object_version: str, payload_hash: 
             "payload_hash": payload_hash,
         }
     )
+
+
+def _whole_q_atoms(value: object, *, field_name: str) -> int:
+    try:
+        atoms = Decimal(str(value)) * 1_000_000
+    except (InvalidOperation, ValueError) as error:
+        raise ValueError(f"{field_name} is not a valid Q amount") from error
+    if not atoms.is_finite() or atoms != atoms.to_integral_value():
+        raise ValueError(f"{field_name} must map to whole q_atoms")
+    return int(atoms)
 
 
 class SessionService:
@@ -945,15 +956,29 @@ class SessionService:
             endpoint_id=endpoint_id,
             session_id=session_id,
         )
-        deposit = self.store.get_deposit_for_session(session_id)
-        contract = dict(session.accounting_contract_snapshot or {})
-        maximum_request_charge = contract.get("maximum_request_charge")
-        if maximum_request_charge is None:
+        if session.economic_profile == "OWNER_AGENT":
             return session
-        remaining_q = max(0.0, float(deposit.locked_q) - float(deposit.consumed_q))
-        if remaining_q < float(maximum_request_charge):
+        deposit = self.store.get_deposit_for_session(session_id)
+        minimum_deposit_q_atoms = _whole_q_atoms(
+            session.session_policy_snapshot.get("minimum_deposit", 0.0) or 0.0,
+            field_name="minimum escrow deposit",
+        )
+        if minimum_deposit_q_atoms <= 0:
+            return session
+        locked_q_atoms = (
+            session.deposit_locked_q_atoms
+            if session.deposit_locked_q_atoms is not None
+            else _whole_q_atoms(deposit.locked_q, field_name="locked deposit")
+        )
+        consumed_q_atoms = _whole_q_atoms(
+            deposit.consumed_q,
+            field_name="consumed deposit",
+        )
+        remaining_q_atoms = max(0, locked_q_atoms - consumed_q_atoms)
+        if remaining_q_atoms < minimum_deposit_q_atoms:
             raise ValueError(
-                "remaining deposit is below the maximum request charge"
+                "escrow top-up required: remaining deposit is below the "
+                "Endpoint minimum deposit"
             )
         return session
 
@@ -1174,6 +1199,17 @@ class SessionService:
             raise ValueError("OWNER_AGENT sessions must not lock deposit atoms")
         if not owner_agent_session and deposit_q_atoms is not None and deposit_q_atoms <= 0:
             raise ValueError("deposit atoms must be positive outside OWNER_AGENT")
+        if (
+            not owner_agent_session
+            and request_charge_ceiling_q_atoms is not None
+            and (
+                deposit_q_atoms
+                if deposit_q_atoms is not None
+                else _whole_q_atoms(deposit_q, field_name="locked deposit")
+            )
+            < request_charge_ceiling_q_atoms
+        ):
+            raise ValueError("deposit cannot cover the authorized request ceiling")
         minimum_deposit = float(session_policy.get("minimum_deposit", 0.0) or 0.0)
         if not owner_agent_session and deposit_q < minimum_deposit:
             raise ValueError("deposit is below the minimum deposit")
@@ -1624,7 +1660,23 @@ class SessionService:
         amount_q: float,
         request_count: int = 1,
     ) -> SessionResult:
-        if amount_q < 0.0:
+        amount_q_atoms = _whole_q_atoms(amount_q, field_name="usage charge")
+        return self.record_usage_charge_q_atoms(
+            session_id,
+            amount_q_atoms=amount_q_atoms,
+            request_count=request_count,
+        )
+
+    def record_usage_charge_q_atoms(
+        self,
+        session_id: str,
+        *,
+        amount_q_atoms: int,
+        request_count: int = 1,
+    ) -> SessionResult:
+        if isinstance(amount_q_atoms, bool) or not isinstance(amount_q_atoms, int):
+            raise ValueError("usage charge q_atoms must be an integer")
+        if amount_q_atoms < 0:
             raise ValueError("usage charge cannot be negative")
         if request_count < 0:
             raise ValueError("request_count cannot be negative")
@@ -1632,9 +1684,21 @@ class SessionService:
         if current.status != "active":
             raise ValueError(f"Session is not active: {session_id}")
         deposit = self.store.get_deposit_for_session(session_id)
-        next_consumed_q = deposit.consumed_q + amount_q
-        if next_consumed_q > deposit.locked_q:
+        locked_q_atoms = (
+            current.deposit_locked_q_atoms
+            if current.deposit_locked_q_atoms is not None
+            else _whole_q_atoms(deposit.locked_q, field_name="locked deposit")
+        )
+        current_usage_q_atoms = current.usage_charged_q_atoms
+        if current_usage_q_atoms == 0 and deposit.consumed_q > 0:
+            current_usage_q_atoms = _whole_q_atoms(
+                deposit.consumed_q,
+                field_name="consumed deposit",
+            )
+        next_consumed_q_atoms = current_usage_q_atoms + amount_q_atoms
+        if next_consumed_q_atoms > locked_q_atoms:
             raise ValueError(f"Session deposit exhausted: {session_id}")
+        next_consumed_q = next_consumed_q_atoms / 1_000_000
         updated_deposit = deposit.model_copy(
             update={
                 "consumed_q": next_consumed_q,
@@ -1643,6 +1707,7 @@ class SessionService:
         updated_session = current.model_copy(
             update={
                 "request_count": current.request_count + request_count,
+                "usage_charged_q_atoms": next_consumed_q_atoms,
             }
         )
         self.store.save_session(updated_session)
@@ -1653,8 +1718,10 @@ class SessionService:
             details={
                 "session_id": session_id,
                 "endpoint_id": current.endpoint_id,
-                "amount_q": amount_q,
+                "amount_q": amount_q_atoms / 1_000_000,
+                "amount_q_atoms": amount_q_atoms,
                 "consumed_q": next_consumed_q,
+                "consumed_q_atoms": next_consumed_q_atoms,
                 "usage_charged_q": next_consumed_q,
                 "remaining_q": max(0.0, deposit.locked_q - next_consumed_q),
             },

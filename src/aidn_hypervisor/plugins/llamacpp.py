@@ -463,6 +463,12 @@ class LlamaCppPlugin(ProviderPlugin):
         return {
             "supports_exact": True,
             "supports_estimated": True,
+            "supported_billing_units": [
+                "input_tokens",
+                "cached_input_tokens",
+                "output_tokens",
+            ],
+            "supported_accounting_modes": ["provider_metered", "fixed_price"],
             "default_measurement_source": "provider_api",
             "fallback_measurement_source": "provider_api_partial",
             "fallback_policy": "partial_response_estimate",
@@ -540,14 +546,28 @@ class LlamaCppPlugin(ProviderPlugin):
         if isinstance(usage, dict):
             input_tokens = usage.get("prompt_tokens", usage.get("input_tokens", input_tokens))
             output_tokens = usage.get("completion_tokens", usage.get("output_tokens", output_tokens))
+            details = usage.get("prompt_tokens_details")
+            cached_input_tokens = (
+                details.get("cached_tokens") if isinstance(details, dict) else None
+            )
+        else:
+            cached_input_tokens = None
         if isinstance(input_tokens, int) and isinstance(output_tokens, int):
-            return {
-                "input_tokens": input_tokens,
+            result = {
+                "input_tokens": (
+                    input_tokens - cached_input_tokens
+                    if isinstance(cached_input_tokens, int)
+                    and 0 <= cached_input_tokens <= input_tokens
+                    else input_tokens
+                ),
                 "output_tokens": output_tokens,
                 "fixed_request_count": 1,
                 "measurement_kind": "exact",
                 "measurement_source": "provider_api",
             }
+            if isinstance(cached_input_tokens, int) and 0 <= cached_input_tokens <= input_tokens:
+                result["cached_input_tokens"] = cached_input_tokens
+            return result
         result = {
             "fixed_request_count": 1,
             "measurement_kind": "estimated",

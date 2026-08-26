@@ -2,10 +2,11 @@
 
 Status: `Draft`
 
-Version: `0.8`
+Version: `0.9`
 
 Revision note: accepted Usage chain heads feed RFC-0037 Request Settlement
-Records; Usage remains evidence and never redirects Endpoint Payment.
+Records; paid request admission uses a refillable minimum Session escrow rather
+than an operator-declared maximum request charge.
 
 Supersedes:
 
@@ -444,7 +445,6 @@ accounting_contract:
       rounding:
   checkpoint_policy:
   maximum_unreported_usage:
-  maximum_request_charge:
   failure_pricing_policy:
 ```
 
@@ -474,7 +474,6 @@ accounting:
     billable: false
   billing:
     units:
-    maximum_request_charge:
 ```
 
 The Marketplace SHALL clearly expose this limitation.
@@ -535,7 +534,6 @@ billing:
   output:
     unit: characters
     price_per_1000_units: 0.01Q
-  maximum_request_charge: 15Q
 ```
 
 An operator MAY instead publish a fixed price per completed request.
@@ -583,21 +581,48 @@ Queue time and upstream outage time SHALL NOT automatically count as active exec
 
 Where active processing cannot be distinguished reliably, the Endpoint SHOULD use fixed-price billing.
 
-## 20. Maximum Request Charge
+## 20. Escrow-Backed Request Admission
 
-Every Proxy-Opaque request SHOULD define a maximum possible charge.
+Every paid Endpoint SHALL publish a positive minimum Session escrow deposit.
+The value is a refillable collateral threshold and SHALL NOT be represented as
+a maximum request price.
 
-Before execution, the Consumer SHALL be shown:
+The default calculation is:
 
-- base fee;
-- variable units;
-- maximum execution time;
-- maximum request charge;
-- remaining Session Deposit.
+```text
+EstimatedHighUsageRequest = RateCard(RuntimeUsageLimits)
+MinimumEscrow = ceil(EstimatedHighUsageRequest * 1.20)
+RecommendedEscrow = MinimumEscrow * 5
+```
 
-The Provider SHALL stop, pause or request additional authorization before exceeding the accepted maximum.
+The estimate SHALL identify every Usage assumption. For LLM Endpoints these
+assumptions SHOULD include context tokens and the largest output permitted by
+the Runtime parameter policy. If a priced dimension has no trustworthy limit,
+automatic calculation SHALL report it as missing and the operator or node agent
+must provide an explicit assumption before publication.
 
-Unknown upstream usage does not authorize an unknown bill.
+Before Session opening, the Consumer SHALL be shown:
+
+- the Rate Card and billable units;
+- the minimum escrow deposit;
+- the recommended working escrow balance;
+- any available non-binding Usage estimate;
+- the rule that charges can be collected only from locked Session escrow.
+
+After each terminal response, the Endpoint SHALL calculate an invoice from the
+accepted Usage evidence. The invoice MAY consume only the remaining locked
+escrow. The Endpoint, Runtime and Hypervisor SHALL NOT debit the Consumer wallet
+or automatically extend escrow.
+
+Before another request is accepted, the remaining escrow SHALL be at least the
+minimum deposit published in the immutable Session policy snapshot. If it is
+lower, the Consumer MAY explicitly authorize `SESSION_DEPOSIT_EXTEND` to restore
+the buffer. That explicit top-up is authorization for continued execution, not
+acceptance of an operator-selected per-request maximum.
+
+When the Consumer closes the Session, the final accepted invoice is settled and
+the unused escrow remainder is returned to the Consumer. Unknown upstream Usage
+does not authorize an unknown bill.
 
 ## 21. Token Estimation
 
@@ -1005,6 +1030,12 @@ The Accounting Contract SHALL define treatment of:
 
 Speech-to-Text SHOULD normally account for submitted audio duration or fixed request classes.
 
+When the Hypervisor accepts an inline WAV artifact, it SHALL derive duration
+from decoded frame count and sample rate, normalize the result to integer
+milliseconds, and bind the measurement to the artifact SHA-256. A duration
+reported only by the Provider is estimated evidence unless an approved
+Provider-specific verification method says otherwise.
+
 The Consumer can independently measure the original input.
 
 Provider retries SHALL NOT create additional billable input unless the Consumer explicitly resubmits the request.
@@ -1019,6 +1050,21 @@ Text-to-Speech MAY account for:
 - fixed request cost.
 
 The selected unit SHALL be published in the Endpoint Advertisement.
+
+For OpenAI-compatible TTS, the approved adapter SHALL request WAV output when
+duration is priced. It SHALL count the exact submitted Unicode code points,
+derive output duration from decoded frame count and sample rate, and bind the
+duration, MIME type and byte count to the output artifact SHA-256. An
+unmeasurable output format SHALL fail strict metered accounting rather than be
+charged from an inferred duration.
+
+For streamed WAV output, every Runtime Protocol chunk SHALL be ordered and
+hash-bound. Its cumulative output counter SHALL represent raw audio bytes that
+crossed the Runtime-to-Hypervisor delivery boundary. The terminal Usage Report
+SHALL bind the delivered artifact hash and the duration of complete PCM frames
+physically present before the terminal Stream Close. On cancellation, the
+adapter SHALL NOT use the full data length declared in the WAV header and SHALL
+NOT charge audio frames that were generated upstream but not delivered.
 
 ## 43. Time-Based Accounting
 
@@ -1073,13 +1119,13 @@ Before request execution, the Endpoint SHOULD provide an estimated cost.
 The estimate MAY include:
 
 - estimated input units;
-- maximum output units;
+- estimated output units;
 - fixed request fee;
 - active-time ceiling;
 - reservation charges;
 - idle charges;
 - Network Fee;
-- maximum request charge.
+- minimum escrow deposit.
 
 An estimate is not a final Usage Report.
 
@@ -1178,7 +1224,7 @@ The network MAY evaluate:
 - success rate;
 - timeout rate;
 - rate-limit frequency;
-- maximum-charge frequency;
+- escrow top-up frequency;
 - confirmed mismatch rate;
 - report omission rate.
 
@@ -1246,7 +1292,7 @@ Examples:
 - deterministic only;
 - deterministic or observable;
 - Provider-Metered above a Reputation threshold;
-- Proxy-Opaque only with a maximum request charge;
+- Proxy-Opaque only with a positive minimum escrow deposit;
 - fixed-price requests only;
 - statistical confidence above a threshold.
 
@@ -1257,7 +1303,7 @@ Agents SHALL respect the owner’s accounting policy.
 Consumers SHALL be able to limit exposure through:
 
 - Session Deposit;
-- maximum request charge;
+- minimum escrow deposit;
 - maximum output units;
 - maximum active execution time;
 - maximum Session duration;
@@ -1452,7 +1498,7 @@ A Validator MAY:
 - inspect Provider-Metered disclosures;
 - inspect Proxy-Opaque disclosures;
 - compare usage statistically;
-- verify maximum-charge enforcement;
+- verify that charges never exceed locked escrow;
 - document unavailable upstream usage.
 
 A Validator SHALL NOT require authoritative upstream token counts when the upstream service does not provide them.
@@ -1467,7 +1513,7 @@ Every Endpoint Advertisement SHALL expose:
 - independent-verification availability;
 - upstream-usage visibility;
 - estimator information;
-- maximum request charge;
+- minimum escrow deposit;
 - historical mismatch rate;
 - statistical anomaly rate;
 - Accounting Transparency metrics.
@@ -1486,7 +1532,7 @@ accounting_transparency:
   billing_basis:
     - request
     - active_execution_time
-  maximum_request_charge: 15Q
+  minimum_escrow_deposit: 20Q
   statistical_confidence: medium
 ```
 
@@ -1501,7 +1547,7 @@ Usage-related Reputation Metrics MAY include:
 - Deterministic Verification Rate;
 - Confirmed Mismatch Rate;
 - Statistical Anomaly Rate;
-- Maximum-Charge Compliance;
+- Escrow-Boundary Compliance;
 - Pricing Predictability;
 - Reporting Consistency;
 - Cost Variance;
@@ -1613,7 +1659,7 @@ The MVP SHALL support:
 - Proxy-Opaque accounting;
 - fixed-price accounting;
 - token estimates as non-billable metadata;
-- maximum request charges;
+- minimum escrow admission and explicit replenishment;
 - budget limits;
 - maximum unacknowledged exposure;
 - confirmed mismatch termination;
@@ -1646,7 +1692,7 @@ The following remain Capability-specific or configurable:
 - idle billing interval;
 - rounding rules;
 - failed-request pricing;
-- maximum request charge defaults;
+- minimum escrow deposit defaults;
 - mismatch Reputation weights;
 - evidence-retention period;
 - minimum peer-group size;

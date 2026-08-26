@@ -630,10 +630,8 @@ def build_operator_access_router(
             raise ValueError("Configure the owner wallet before issuing an inference token")
         if endpoint.owner_wallet != owner["wallet_id"]:
             raise ValueError("Inference endpoint is not owned by this Hypervisor wallet")
-        pricing = endpoint.pricing.model_dump(mode="json")
-        for key in ("input_price", "output_price", "audio_input_second_price", "fixed_price"):
-            if float(pricing.get(key) or 0.0) != 0.0:
-                raise ValueError("Personal agent inference currently supports zero-priced endpoints only")
+        if endpoint.pricing.is_paid():
+            raise ValueError("Personal agent inference currently supports zero-priced endpoints only")
         session_policy = endpoint.session.model_dump(mode="json")
         for key in ("minimum_deposit", "minimum_session_fee", "idle_fee_per_minute"):
             if float(session_policy.get(key) or 0.0) != 0.0:

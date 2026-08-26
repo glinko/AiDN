@@ -5,6 +5,7 @@ from __future__ import annotations
 from decimal import ROUND_HALF_EVEN, Decimal, InvalidOperation
 
 from aidn_hypervisor.accounting.models import AccountingContract, AccountingUnitContract
+from aidn_hypervisor.pricing import RateCardV2
 from aidn_hypervisor.settlement.models import (
     SettlementAccountingTerms,
     SettlementChargeComponent,
@@ -106,4 +107,53 @@ def build_settlement_terms(contract: AccountingContract) -> SettlementAccounting
             "REJECTED": TerminalChargePolicy(mode="NO_CHARGE"),
         },
         terms_version="settlement-terms.v2",
+    )
+
+
+def build_rate_card_settlement_terms(
+    rate_card: RateCardV2,
+    *,
+    accounting_contract_hash: str | None = None,
+) -> SettlementAccountingTerms:
+    """Bridge a Pricing V2 Rate Card directly to integer Settlement terms."""
+    modes = {item.accounting_mode for item in rate_card.components}
+    accounting_mode = next(iter(modes)) if len(modes) == 1 else "hybrid"
+    components: list[SettlementChargeComponent] = []
+    for item in rate_card.components:
+        if item.kind == "fixed":
+            components.append(
+                SettlementChargeComponent(
+                    component_id=item.component_id,
+                    fixed_amount_q_atoms=item.unit_price_q_atoms,
+                )
+            )
+            continue
+        components.append(
+            SettlementChargeComponent(
+                component_id=item.component_id,
+                dimension_id=item.dimension,
+                unit_price_q_atoms=item.unit_price_q_atoms,
+                unit_divisor=item.unit_divisor,
+                source_value_scale=item.source_value_scale,
+                rounding=item.rounding,
+                required_authority=item.required_authority,
+                unavailable_value_policy=item.unavailable_value_policy,
+            )
+        )
+    return SettlementAccountingTerms(
+        accounting_contract_hash=accounting_contract_hash
+        or str(rate_card.rate_card_hash),
+        accounting_mode=accounting_mode,
+        components=components,
+        minimum_charge_q_atoms=rate_card.minimum_charge_q_atoms,
+        terminal_policies={
+            "COMPLETED": TerminalChargePolicy(mode="FULL_CHARGE"),
+            "PARTIAL": TerminalChargePolicy(mode="ACCRUED_USAGE_ONLY"),
+            "CANCELLED": TerminalChargePolicy(mode="ACCRUED_USAGE_ONLY"),
+            "FAILED": TerminalChargePolicy(mode="NO_CHARGE"),
+            "EXPIRED": TerminalChargePolicy(mode="NO_CHARGE"),
+            "UNRECOVERABLE": TerminalChargePolicy(mode="NO_CHARGE"),
+            "REJECTED": TerminalChargePolicy(mode="NO_CHARGE"),
+        },
+        terms_version="settlement-terms.v3",
     )

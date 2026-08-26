@@ -248,6 +248,7 @@ class EndpointSession(BaseModel):
     deposit_locked_q_atoms: int | None = Field(default=None, ge=0)
     fixed_price_q_atoms: int | None = Field(default=None, ge=0)
     request_charge_ceiling_q_atoms: int | None = Field(default=None, ge=0)
+    usage_charged_q_atoms: int = Field(default=0, ge=0)
     canonical_funding_state_hash: str | None = None
     canonical_funding_status: CanonicalFundingStatus = "UNBOUND"
     canonical_funding_operation_id: str | None = None

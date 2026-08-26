@@ -1,4 +1,7 @@
 import base64
+import hashlib
+import io
+import wave
 
 import pytest
 
@@ -72,14 +75,14 @@ def test_whisper_plugin_describes_speech_to_text_capability() -> None:
     assert description["installation_recipes"][0]["recipe_id"] == "whisper-local-http"
     assert description["installation_recipes"][0]["provider_configuration"]["api_format"] == "whisper_asr_webservice"
     assert description["usage_contract"] == {
-        "supports_exact": False,
+        "supports_exact": True,
         "supports_estimated": True,
-        "supported_billing_units": ["audio_input_seconds"],
-        "supported_accounting_modes": ["fixed_price", "observable"],
-        "default_measurement_source": "provider_request",
+        "supported_billing_units": ["audio_input_milliseconds"],
+        "supported_accounting_modes": ["deterministic", "fixed_price", "observable"],
+        "default_measurement_source": "hypervisor_ingress.wav_header",
         "fallback_measurement_source": "provider_request",
         "fallback_policy": "fixed_request_estimate",
-        "missing_usage_behavior": "skip",
+        "missing_usage_behavior": "strict_accounting",
     }
 
 
@@ -378,9 +381,9 @@ def test_whisper_plugin_records_provider_duration_without_inventing_tokens() -> 
 
     assert result["usage"] == {
         "fixed_request_count": 1,
-        "audio_input_seconds": 12.5,
+        "audio_input_milliseconds": 12_500,
         "measurement_kind": "estimated",
-        "measurement_source": "provider_response.duration",
+        "measurement_source": "provider_response.duration_ms",
     }
 
 
@@ -424,6 +427,46 @@ def test_whisper_native_invoke_posts_bounded_multipart_audio() -> None:
     assert b"\r\n" in body
     assert b"\\r\\n" not in body
     assert audio_bytes in body
+
+
+def test_whisper_native_wav_usage_is_measured_at_trusted_ingress() -> None:
+    wav_buffer = io.BytesIO()
+    with wave.open(wav_buffer, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16_000)
+        audio.writeframes(b"\x00\x00" * 20_000)
+    audio_bytes = wav_buffer.getvalue()
+    audio_ref = "data:audio/wav;base64," + base64.b64encode(audio_bytes).decode("ascii")
+    plugin = StubWhisperPlugin(
+        transcribe_payload={"text": "trusted duration", "duration_seconds": 999}
+    )
+    runtime = RuntimeHandle(
+        runtime_id="rt-native",
+        command=["whisper-server"],
+        status="running",
+        bundle_id="whisper-local",
+        metadata={
+            "endpoint": "http://127.0.0.1:9000",
+            "model_id": "base",
+            "api_format": "whisper_asr_webservice",
+        },
+    )
+
+    result = plugin.invoke(
+        TaskRequest(task_type="audio.transcribe", payload={"audio_ref": audio_ref}),
+        runtime,
+    )
+
+    assert result["usage"] == {
+        "fixed_request_count": 1,
+        "measurement_kind": "exact",
+        "measurement_source": "hypervisor_ingress.wav_header",
+        "input_media_type": "audio/wav",
+        "input_bytes": len(audio_bytes),
+        "input_artifact_sha256": f"sha256:{hashlib.sha256(audio_bytes).hexdigest()}",
+        "audio_input_milliseconds": 1_250,
+    }
 
 
 def test_whisper_native_invoke_rejects_filesystem_audio_ref() -> None:

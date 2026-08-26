@@ -14,6 +14,7 @@ from uuid import uuid4
 from aidn_hypervisor.accounting.llamacpp import build_llamacpp_usage_profile
 from aidn_hypervisor.accounting.ollama import build_ollama_usage_profile
 from aidn_hypervisor.accounting.proxy import build_proxy_opaque_usage_profile
+from aidn_hypervisor.accounting.tts import build_tts_usage_profile
 from aidn_hypervisor.accounting.vllm import build_vllm_usage_profile
 from aidn_hypervisor.accounting.whisper import build_whisper_usage_profile
 from aidn_hypervisor.domain.models import BundleConfig, ResourceProfile
@@ -1317,17 +1318,26 @@ class ProviderInventoryService:
         }
 
         pricing = payload.get("pricing") or {}
-        configured_prices = [
-            pricing.get("fixed_price"),
-            pricing.get("input_price"),
-            pricing.get("output_price"),
-            pricing.get("audio_input_second_price"),
-        ]
-        pricing_configured = any(value is not None for value in configured_prices)
+        rate_card = pricing.get("rate_card")
+        rate_components = (
+            rate_card.get("components", [])
+            if isinstance(rate_card, dict)
+            else []
+        )
+        pricing_configured = bool(rate_components)
         dimensions["pricing"] = {
             "ready": True,
             "status": "CONFIGURED" if pricing_configured else "DRAFT_PRICE_UNSET",
-            "billing_unit": pricing.get("billing_unit", "request"),
+            "schema_version": (
+                rate_card.get("schema_version")
+                if isinstance(rate_card, dict)
+                else None
+            ),
+            "dimensions": [
+                item.get("dimension")
+                for item in rate_components
+                if isinstance(item, dict) and item.get("dimension")
+            ],
         }
         if not pricing_configured:
             warnings.append(
@@ -3051,6 +3061,7 @@ class ProviderInventoryService:
         profile_builder = {
             "llamacpp-openai": build_llamacpp_usage_profile,
             "ollama-generate": build_ollama_usage_profile,
+            "openai-tts": build_tts_usage_profile,
             "proxy-openai": build_proxy_opaque_usage_profile,
             "vllm-openai": build_vllm_usage_profile,
             "whisper-http": build_whisper_usage_profile,

@@ -17,6 +17,7 @@ from aidn_hypervisor.endpoints.store import EndpointStore
 from aidn_hypervisor.main import build_app
 from aidn_hypervisor.plugins.fake import FakeManagedPlugin
 from aidn_hypervisor.plugins.registry import PluginRegistry
+from aidn_hypervisor.pricing import RateCardV2, RateComponent
 from aidn_hypervisor.process_manager import ProviderProcessManager
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.resources import ResourceOrchestrator
@@ -57,6 +58,16 @@ class UsageMeteringPlugin(FakeManagedPlugin):
                 "measurement_kind": "exact",
                 "measurement_source": "provider_api",
             },
+        }
+
+    def usage_contract(self) -> dict:
+        return {
+            "supports_exact": True,
+            "supports_estimated": False,
+            "supported_billing_units": ["input_tokens", "output_tokens"],
+            "supported_accounting_modes": ["provider_metered", "fixed_price"],
+            "default_measurement_source": "provider_api",
+            "missing_usage_behavior": "skip",
         }
 
 
@@ -117,21 +128,19 @@ class AudioDurationMeteringPlugin(FakeManagedPlugin):
             "task_type": task.task_type,
             "usage": {
                 "fixed_request_count": 1,
-                "audio_input_seconds": 12.5,
-                "measurement_kind": "estimated",
-                "measurement_source": "provider_response.duration",
+                "audio_input_milliseconds": 12_500,
+                "measurement_kind": "exact",
+                "measurement_source": "provider_response.duration_ms",
             },
         }
 
     def usage_contract(self) -> dict:
         return {
-            "supports_exact": False,
-            "supports_estimated": True,
-            "supported_billing_units": ["audio_input_seconds"],
+            "supports_exact": True,
+            "supports_estimated": False,
+            "supported_billing_units": ["audio_input_milliseconds"],
             "supported_accounting_modes": ["fixed_price", "observable"],
-            "default_measurement_source": "provider_response.duration",
-            "fallback_measurement_source": "provider_response.duration",
-            "fallback_policy": "fixed_request_estimate",
+            "default_measurement_source": "provider_response.duration_ms",
             "missing_usage_behavior": "skip",
         }
 
@@ -154,7 +163,6 @@ def _service(
         bundles=[active_bundle],
         plugins=plugins,
         runtimes=ProviderProcessManager(),
-        bundle_registry=FileBundleRegistry("bundles.json"),
         node_id="node-a",
         operator_id="operator-a",
         pricing={
@@ -334,6 +342,7 @@ def test_service_charges_paid_session_from_completed_task_usage() -> None:
             display_name="Paid Text",
             model_class="llm_text",
             capabilities=["llm_text.generate"],
+            pricing=_llm_pricing(input_q=12, output_q=18, fixed_q=4),
             session={
                 "minimum_deposit": 10.0,
                 "recommended_deposit": 25.0,
@@ -404,6 +413,7 @@ def test_service_records_wallet_session_events_from_paid_session_lifecycle() -> 
             display_name="Paid Text",
             model_class="llm_text",
             capabilities=["llm_text.generate"],
+            pricing=_llm_pricing(input_q=12, output_q=18, fixed_q=4),
             session={
                 "minimum_deposit": 10.0,
                 "recommended_deposit": 25.0,
@@ -469,12 +479,7 @@ def test_service_attaches_usage_report_to_paid_session_task_result() -> None:
             display_name="Paid Text",
             model_class="llm_text",
             capabilities=["llm_text.generate"],
-            pricing={
-                "billing_unit": "token",
-                "input_price": 12.0,
-                "output_price": 18.0,
-                "fixed_price": 4.0,
-            },
+            pricing=_llm_pricing(input_q=12, output_q=18, fixed_q=4),
             session={
                 "minimum_deposit": 10.0,
                 "recommended_deposit": 25.0,
@@ -2056,12 +2061,7 @@ def test_service_builds_provider_metered_accounting_contract_for_paid_endpoint()
             display_name="Paid Text",
             model_class="llm_text",
             capabilities=["llm_text.generate"],
-            pricing={
-                "billing_unit": "token",
-                "input_price": 12.0,
-                "output_price": 18.0,
-                "fixed_price": 4.0,
-            },
+            pricing=_llm_pricing(input_q=12, output_q=18, fixed_q=4),
             session={
                 "minimum_deposit": 10.0,
                 "recommended_deposit": 25.0,
@@ -2085,6 +2085,184 @@ def test_service_builds_provider_metered_accounting_contract_for_paid_endpoint()
     assert any(item["mode"] == "provider_metered" for item in contract["billable_units"])
 
 
+def test_service_builds_accounting_contract_from_pricing_v2_rate_card() -> None:
+    from aidn_hypervisor.pricing import RateCardV2, RateComponent
+
+    service = _service(
+        plugin=UsageMeteringPlugin(),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(
+            update={"plugin_id": "fake-usage-metering"}
+        ),
+    )
+
+
+def _llm_pricing(*, input_q: int = 0, output_q: int = 0, fixed_q: int = 0) -> dict:
+    components = []
+    if input_q:
+        components.append(RateComponent(
+            component_id="input", dimension="input_tokens",
+            unit_price_q_atoms=input_q * 1_000_000, unit_divisor=1_000_000,
+            accounting_mode="provider_metered",
+        ))
+    if output_q:
+        components.append(RateComponent(
+            component_id="output", dimension="output_tokens",
+            unit_price_q_atoms=output_q * 1_000_000, unit_divisor=1_000_000,
+            accounting_mode="provider_metered",
+        ))
+    if fixed_q:
+        components.append(RateComponent(
+            component_id="base", dimension="request_count", kind="fixed",
+            unit_price_q_atoms=fixed_q * 1_000_000, accounting_mode="fixed_price",
+        ))
+    return {"rate_card": RateCardV2(components=components).model_dump(mode="json")}
+
+
+def _audio_pricing() -> dict:
+    return {"rate_card": RateCardV2(components=[
+        RateComponent(
+            component_id="audio-input", dimension="audio_input_milliseconds",
+            unit_price_q_atoms=400_000, unit_divisor=1_000,
+            accounting_mode="observable",
+            measurement_source="provider_response.duration_ms",
+            verification_method="provider_response",
+            unavailable_value_policy="ZERO_VARIABLE_COMPONENT",
+        ),
+        RateComponent(
+            component_id="base", dimension="request_count", kind="fixed",
+            unit_price_q_atoms=2_000_000, accounting_mode="fixed_price",
+        ),
+    ]).model_dump(mode="json")}
+    rate_card = RateCardV2(
+        components=[
+            RateComponent(
+                component_id="input",
+                dimension="input_tokens",
+                unit_price_q_atoms=12_000_000,
+                unit_divisor=1_000_000,
+                accounting_mode="provider_metered",
+            ),
+            RateComponent(
+                component_id="base",
+                dimension="request_count",
+                kind="fixed",
+                unit_price_q_atoms=2_000_000,
+                accounting_mode="fixed_price",
+            ),
+        ],
+    )
+    endpoint = EndpointService(EndpointStore()).create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="phi4-local",
+            bundle_hash="bundle-hash-a",
+            display_name="Pricing V2 Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            pricing={"rate_card": rate_card.model_dump(mode="json")},
+            session={"minimum_deposit": 10.0, "recommended_deposit": 25.0},
+        )
+    ).endpoint
+
+    contract = service.accounting_contract_for_endpoint(endpoint)
+
+    assert contract["pricing_version"] == (
+        f"pricing.v2:{rate_card.rate_card_hash}"
+    )
+    assert contract["pricing_policy_reference"] == rate_card.rate_card_hash
+    assert "maximum_request_charge" not in contract
+    assert [(item["unit"], item["price"], item["mode"]) for item in contract["billable_units"]] == [
+        ("input_tokens", 12.0, "provider_metered"),
+        ("request_count", 2.0, "fixed_price"),
+    ]
+
+
+def test_pricing_v2_charges_llm_tokens_and_base_request_end_to_end() -> None:
+    from aidn_hypervisor.pricing import RateCardV2, RateComponent
+
+    service = _service(
+        plugin=UsageMeteringPlugin(),
+        bundle=_bundle("phi4-local", "llm_text").model_copy(
+            update={"plugin_id": "fake-usage-metering"}
+        ),
+    )
+    endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
+    service.endpoint_service = endpoint_service
+    service.session_service = session_service
+    rate_card = RateCardV2(
+        components=[
+            RateComponent(
+                component_id="input",
+                dimension="input_tokens",
+                unit_price_q_atoms=1_000_000,
+                unit_divisor=1_000_000,
+                accounting_mode="provider_metered",
+            ),
+            RateComponent(
+                component_id="output",
+                dimension="output_tokens",
+                unit_price_q_atoms=2_000_000,
+                unit_divisor=1_000_000,
+                accounting_mode="provider_metered",
+            ),
+            RateComponent(
+                component_id="base",
+                dimension="request_count",
+                kind="fixed",
+                unit_price_q_atoms=1_000_000,
+                accounting_mode="fixed_price",
+            ),
+        ],
+    )
+    endpoint = endpoint_service.create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="phi4-local",
+            bundle_hash="bundle-hash-a",
+            display_name="Pricing V2 Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            pricing={"rate_card": rate_card.model_dump(mode="json")},
+            session={"minimum_deposit": 10.0, "recommended_deposit": 10.0},
+        )
+    ).endpoint
+    opened = session_service.open_session(
+        endpoint_id=endpoint.endpoint_id,
+        client_wallet="wallet-client",
+        provider_wallet="wallet-1",
+        node_id=service.node_id,
+        deposit_q=10.0,
+        session_policy=endpoint.session.model_dump(mode="json"),
+        accounting_contract=service.accounting_contract_for_endpoint(endpoint),
+    )
+
+    task = service.submit(
+        TaskRequest(
+            task_type="llm_text.generate",
+            payload={"prompt": "hello"},
+            constraints={
+                "endpoint_id": endpoint.endpoint_id,
+                "session_id": opened.session.session_id,
+            },
+        )
+    )
+
+    result = service.task_result(task.task_id)
+    session_result = session_service.get_session(opened.session.session_id)
+    assert result is not None
+    assert result["usage_report"]["cumulative_usage"] == {
+        "fixed_request_count": 1,
+        "input_tokens": 250_000,
+        "output_tokens": 500_000,
+    }
+    assert result["charge_breakdown"]["total_q_atoms"] == 2_250_000
+    assert [
+        item["component_id"] for item in result["charge_breakdown"]["components"]
+    ] == ["input", "output", "base"]
+    assert session_result.deposit.consumed_q == 2.25
+
+
 def test_service_builds_observable_audio_accounting_contract() -> None:
     service = _service(
         plugin=AudioDurationMeteringPlugin(),
@@ -2100,7 +2278,7 @@ def test_service_builds_observable_audio_accounting_contract() -> None:
             display_name="Paid STT",
             model_class="speech_to_text",
             capabilities=["speech_to_text.transcribe"],
-            pricing={"audio_input_second_price": 0.4, "fixed_price": 2.0},
+            pricing=_audio_pricing(),
         )
     ).endpoint
 
@@ -2108,13 +2286,13 @@ def test_service_builds_observable_audio_accounting_contract() -> None:
 
     assert any(
         item == {
-            "unit": "audio_input_seconds",
+                "unit": "audio_input_milliseconds",
             "mode": "observable",
             "price": 0.4,
-            "measurement_source": "provider_response.duration",
+                "measurement_source": "provider_response.duration_ms",
             "verification_method": "provider_response",
             "tolerance": None,
-            "rounding": None,
+                "rounding": "DOWN",
             "required_authority": None,
             "unavailable_value_policy": "ZERO_VARIABLE_COMPONENT",
         }
@@ -2130,7 +2308,9 @@ def test_service_rejects_token_priced_audio_endpoint_before_provider_execution()
         ),
     )
     endpoint_service = EndpointService(EndpointStore())
+    session_service = SessionService(SessionStore())
     service.endpoint_service = endpoint_service
+    service.session_service = session_service
     endpoint = endpoint_service.create_endpoint(
         CreateEndpointCommand(
             owner_wallet="wallet-1",
@@ -2139,15 +2319,26 @@ def test_service_rejects_token_priced_audio_endpoint_before_provider_execution()
             display_name="Invalid STT token billing",
             model_class="speech_to_text",
             capabilities=["speech_to_text.transcribe"],
-            pricing={"input_price": 1.0},
+            pricing=_llm_pricing(input_q=1),
         )
     ).endpoint
+    opened = session_service.open_session(
+        endpoint_id=endpoint.endpoint_id,
+        client_wallet="wallet-client",
+        provider_wallet="wallet-1",
+        node_id=service.node_id,
+        deposit_q=1.0,
+        session_policy=endpoint.session.model_dump(mode="json"),
+    )
 
     task = service.submit(
         TaskRequest(
             task_type="audio.transcribe",
             payload={"audio_ref": "clip.wav"},
-            constraints={"endpoint_id": endpoint.endpoint_id},
+            constraints={
+                "endpoint_id": endpoint.endpoint_id,
+                "session_id": opened.session.session_id,
+            },
         )
     )
 
@@ -2180,7 +2371,7 @@ def test_service_charges_audio_session_from_endpoint_contract_not_node_quote() -
             display_name="Paid STT",
             model_class="speech_to_text",
             capabilities=["speech_to_text.transcribe"],
-            pricing={"audio_input_second_price": 0.4, "fixed_price": 2.0},
+            pricing=_audio_pricing(),
             session={"minimum_deposit": 10.0, "recommended_deposit": 10.0},
         )
     ).endpoint
@@ -2209,7 +2400,7 @@ def test_service_charges_audio_session_from_endpoint_contract_not_node_quote() -
     assert result is not None
     assert result["usage_report"]["cumulative_usage"] == {
         "fixed_request_count": 1,
-        "audio_input_seconds": 12.5,
+        "audio_input_milliseconds": 12_500,
     }
     assert session_service.get_session(opened.session.session_id).deposit.consumed_q == 7.0
 

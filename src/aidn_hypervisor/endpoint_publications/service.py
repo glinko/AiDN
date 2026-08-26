@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from decimal import Decimal
 from uuid import uuid4
 
 from aidn_hypervisor.endpoint_publications.models import (
@@ -11,6 +12,7 @@ from aidn_hypervisor.endpoint_publications.signing import (
     public_key_for_private_key,
     sign_publication_payload,
 )
+from aidn_hypervisor.pricing import Q_ATOMS_PER_Q, estimate_escrow_deposits
 
 
 class EndpointPublicationReadinessError(ValueError):
@@ -304,23 +306,23 @@ class EndpointPublicationService:
             manifest.publication.accepts_external_requests
             or manifest.publication.visibility == "public"
         )
-        pricing_configured = any(
-            value is not None
-            for value in (
-                manifest.pricing.fixed_price,
-                manifest.pricing.input_price,
-                manifest.pricing.output_price,
-                manifest.pricing.audio_input_second_price,
-            )
+        pricing_configured = manifest.pricing.is_configured()
+        paid_pricing = manifest.pricing.is_paid()
+        deposit_recommendation = estimate_escrow_deposits(
+            manifest.pricing.rate_card,
+            runtime=manifest.runtime,
+            runtime_parameter_policy=manifest.runtime_parameter_policy,
         )
-        paid_pricing = any(
-            (value or 0) > 0
-            for value in (
-                manifest.pricing.fixed_price,
-                manifest.pricing.input_price,
-                manifest.pricing.output_price,
-                manifest.pricing.audio_input_second_price,
+        configured_minimum_q_atoms = int(
+            Decimal(str(manifest.session.minimum_deposit)) * Q_ATOMS_PER_Q
+        )
+        configured_recommended_q_atoms = (
+            int(
+                Decimal(str(manifest.session.recommended_deposit))
+                * Q_ATOMS_PER_Q
             )
+            if manifest.session.recommended_deposit is not None
+            else None
         )
         validation_requested = manifest.publication.validation == "enabled"
         validation_supported = (
@@ -382,9 +384,37 @@ class EndpointPublicationService:
                 "it will be treated as free until pricing is configured.",
             )
         if paid_pricing and manifest.session.minimum_deposit <= 0:
+            block(
+                "ENDPOINT_MINIMUM_ESCROW_DEPOSIT_REQUIRED",
+                "A paid Endpoint must publish a positive minimum Session escrow "
+                "deposit before it can accept requests.",
+            )
+        if paid_pricing and manifest.session.recommended_deposit is None:
             warn(
-                "ENDPOINT_MINIMUM_DEPOSIT_NOT_CONFIGURED",
-                "Paid Endpoint publication has no minimum Session deposit policy.",
+                "ENDPOINT_RECOMMENDED_ESCROW_DEPOSIT_NOT_CONFIGURED",
+                "A paid Endpoint should publish a recommended working escrow "
+                "balance for several requests.",
+            )
+        if (
+            paid_pricing
+            and deposit_recommendation.minimum_deposit_q_atoms is not None
+            and configured_minimum_q_atoms
+            < deposit_recommendation.minimum_deposit_q_atoms
+        ):
+            warn(
+                "ENDPOINT_MINIMUM_ESCROW_BELOW_ESTIMATE",
+                "The configured minimum escrow deposit is below the deterministic "
+                "high-usage request estimate plus safety margin.",
+            )
+        if (
+            paid_pricing
+            and configured_recommended_q_atoms is not None
+            and configured_recommended_q_atoms < configured_minimum_q_atoms * 5
+        ):
+            warn(
+                "ENDPOINT_RECOMMENDED_ESCROW_BELOW_FIVE_REQUESTS",
+                "The recommended escrow deposit is below five configured minimum "
+                "deposits.",
             )
         if manifest.publication.visibility == "public" and not manifest.publication.discoverable:
             warn(
@@ -420,10 +450,19 @@ class EndpointPublicationService:
                 "pricing": {
                     "configured": pricing_configured,
                     "paid": paid_pricing,
-                    "billing_unit": manifest.pricing.billing_unit,
+                    "schema_version": manifest.pricing.rate_card.schema_version,
+                    "rate_card_hash": manifest.pricing.rate_card.rate_card_hash,
+                    "dimensions": [
+                        item.dimension
+                        for item in manifest.pricing.rate_card.components
+                    ],
                 },
                 "session": {
                     "minimum_deposit": manifest.session.minimum_deposit,
+                    "recommended_deposit": manifest.session.recommended_deposit,
+                    "deposit_recommendation": (
+                        deposit_recommendation.model_dump(mode="json")
+                    ),
                     "maximum_session_duration_seconds": (
                         manifest.session.maximum_session_duration_seconds
                     ),

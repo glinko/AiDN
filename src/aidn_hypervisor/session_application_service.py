@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING
 
 from aidn_hypervisor.session_read_models import (
@@ -11,6 +12,7 @@ from aidn_hypervisor.session_read_models import (
     build_session_sweep_payload,
 )
 from aidn_hypervisor.sessions.models import SessionAmendmentKind
+from aidn_hypervisor.pricing import Q_ATOMS_PER_Q, quote_rate_card
 
 if TYPE_CHECKING:
     from aidn_hypervisor.endpoints.service import EndpointService
@@ -103,6 +105,17 @@ class SessionApplicationService:
         if self._endpoint_service is None:
             raise RuntimeError("Endpoint service is not configured")
         endpoint = self._endpoint_service.get_endpoint(endpoint_id).endpoint
+        quote = quote_rate_card(endpoint.pricing.rate_card)
+        try:
+            deposit_atoms_value = Decimal(str(deposit_q)) * Q_ATOMS_PER_Q
+        except (InvalidOperation, ValueError) as error:
+            raise ValueError("Session deposit is not a valid Q amount") from error
+        if (
+            not deposit_atoms_value.is_finite()
+            or deposit_atoms_value != deposit_atoms_value.to_integral_value()
+        ):
+            raise ValueError("Session deposit must map to whole q_atoms")
+        deposit_q_atoms = int(deposit_atoms_value)
         accounting_contract = None
         if self._hypervisor_service is not None:
             try:
@@ -121,6 +134,15 @@ class SessionApplicationService:
                 else "node-local"
             ),
             deposit_q=deposit_q,
+            deposit_q_atoms=deposit_q_atoms,
+            fixed_price_q_atoms=(
+                quote.estimated_charge_q_atoms
+                if not quote.missing_dimensions
+                else None
+            ),
+            # The Consumer authorizes only the funds locked in escrow. The
+            # operator does not publish a second per-request maximum.
+            request_charge_ceiling_q_atoms=deposit_q_atoms,
             session_policy=endpoint.session.model_dump(mode="json"),
             accounting_contract=accounting_contract,
             endpoint_configuration_hash=endpoint.configuration_hash,

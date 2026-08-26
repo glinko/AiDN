@@ -7,6 +7,7 @@ from aidn_hypervisor.registry_models import RegistryPricing
 
 class WalletQuoteRequest(BaseModel):
     input_tokens: int | None = Field(default=None, ge=0)
+    cached_input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
     fixed_request_count: int = Field(default=1, ge=0)
     audio_input_seconds: float | None = Field(default=None, ge=0.0)
@@ -23,6 +24,7 @@ class WalletQuoteCharges(BaseModel):
 class WalletQuote(BaseModel):
     pricing: RegistryPricing
     input_tokens: int | None = Field(default=None, ge=0)
+    cached_input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
     fixed_request_count: int = Field(default=1, ge=0)
     audio_input_seconds: float | None = Field(default=None, ge=0.0)
@@ -31,9 +33,25 @@ class WalletQuote(BaseModel):
 
 class WalletUsageMeasurement(BaseModel):
     input_tokens: int | None = Field(default=None, ge=0)
+    cached_input_tokens: int | None = Field(default=None, ge=0)
     output_tokens: int | None = Field(default=None, ge=0)
     fixed_request_count: int = Field(default=1, ge=0)
+    audio_input_milliseconds: int | None = Field(default=None, ge=0)
     audio_input_seconds: float | None = Field(default=None, ge=0.0)
+    audio_output_milliseconds: int | None = Field(default=None, ge=0)
+    text_input_characters: int | None = Field(default=None, ge=0)
+    input_bytes: int | None = Field(default=None, ge=0)
+    input_media_type: str | None = Field(default=None, min_length=1)
+    input_artifact_sha256: str | None = Field(
+        default=None,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
+    output_bytes: int | None = Field(default=None, ge=0)
+    output_media_type: str | None = Field(default=None, min_length=1)
+    output_artifact_sha256: str | None = Field(
+        default=None,
+        pattern=r"^sha256:[0-9a-f]{64}$",
+    )
     measurement_kind: Literal["exact", "estimated"]
     measurement_source: str = Field(min_length=1)
 

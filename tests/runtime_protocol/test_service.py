@@ -135,7 +135,6 @@ def _accounting_contract() -> AccountingContract:
             )
         ],
         checkpoint_policy="per_request",
-        maximum_request_charge=2.0,
     )
 
 

@@ -93,7 +93,6 @@ class _HypervisorService:
             "capability_id": endpoint.capabilities[0] if endpoint.capabilities else None,
             "pricing_version": "owner-agent.v1",
             "checkpoint_policy": "per_request",
-            "maximum_request_charge": 0.0,
             "billable_units": [],
         }
 
@@ -480,7 +479,7 @@ def test_streaming_converts_legacy_xml_tool_markup_to_sse_tool_calls(tmp_path) -
 
 def test_chat_completion_replaces_legacy_owner_agent_session(tmp_path) -> None:
     client, issued, _, sessions = _client(tmp_path)
-    sessions.session.accounting_contract_snapshot = {"maximum_request_charge": 0.0}
+    sessions.session.accounting_contract_snapshot = {}
     sessions.session.session_id = "sess-legacy"
     sessions.session.request_charge_ceiling_q_atoms = None
     client._aidn_credential_store.bind_inference_session(

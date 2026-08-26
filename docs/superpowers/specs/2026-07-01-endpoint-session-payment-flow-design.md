@@ -217,10 +217,18 @@ Each request must carry `session_id`.
 
 The hypervisor:
 - verifies session ownership and state;
+- verifies that remaining escrow is at least the published minimum deposit;
 - executes through the endpoint/provider path;
 - records usage against that Session;
+- creates the request invoice only after returning the terminal response;
 - updates `last_activity_at`;
 - updates deposit consumption and settlement counters.
+
+If the invoice leaves less than the published minimum deposit, the next request
+is blocked until the client explicitly replenishes escrow through
+`SESSION_DEPOSIT_EXTEND`. The client normally adds only the consumed amount to
+restore the original buffer. The Endpoint cannot initiate an unbounded wallet
+debit; its maximum loss claim is the collateral already locked in escrow.
 
 ### Session Idle
 
@@ -239,7 +247,7 @@ A Session closes when:
 
 Close triggers:
 - slot release;
-- final settlement calculation;
+- final invoice and settlement calculation;
 - provider payout booking;
 - automatic refund booking for unused balance.
 

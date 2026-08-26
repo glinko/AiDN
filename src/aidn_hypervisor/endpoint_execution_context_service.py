@@ -35,6 +35,7 @@ class EndpointExecutionContextService:
         session_policy = manifest.session
         return any(
             (
+                manifest.pricing.is_paid(),
                 session_policy.minimum_deposit > 0,
                 session_policy.minimum_session_fee > 0,
                 session_policy.idle_fee_per_minute > 0,

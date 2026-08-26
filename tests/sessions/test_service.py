@@ -86,7 +86,7 @@ def test_open_owner_agent_session_allows_zero_escrow_and_zero_cost_budget() -> N
         deposit_q_atoms=0,
         economic_profile="OWNER_AGENT",
         session_policy=_session_policy(minimum_deposit=12.0, minimum_session_fee=0.0),
-        accounting_contract={"maximum_request_charge": 0.0, "profile": "OWNER_AGENT"},
+        accounting_contract={"profile": "OWNER_AGENT"},
     )
 
     assert opened.deposit.locked_q == 0.0
@@ -401,7 +401,6 @@ def test_open_session_preserves_accounting_contract_snapshot() -> None:
         pricing_version="pricing-v1",
         billable_units=[],
         checkpoint_policy="per_request",
-        maximum_request_charge=25.0,
     )
 
     opened = service.open_session(
@@ -415,7 +414,7 @@ def test_open_session_preserves_accounting_contract_snapshot() -> None:
     )
 
     assert opened.session.accounting_contract_snapshot["contract_version"] == "acct-v1"
-    assert opened.session.accounting_contract_snapshot["maximum_request_charge"] == 25.0
+    assert "maximum_request_charge" not in opened.session.accounting_contract_snapshot
     assert opened.session.accounting_contract_object_id.startswith("sha256:")
     assert opened.session.accounting_contract_object_version == "acctobj.v1"
     assert opened.session.accounting_contract_namespace == "usage"
@@ -429,7 +428,6 @@ def test_open_session_binds_accepted_marketplace_contract() -> None:
         pricing_version="pricing-v1",
         billable_units=[],
         checkpoint_policy="per_request",
-        maximum_request_charge=25.0,
     )
 
     opened = service.open_session(
@@ -466,7 +464,6 @@ def test_open_session_persists_session_contract_registry_object(tmp_path: Path) 
         pricing_version="pricing-v1",
         billable_units=[],
         checkpoint_policy="per_request",
-        maximum_request_charge=25.0,
     )
 
     opened = service.open_session(
@@ -863,6 +860,15 @@ def test_application_verifies_escrow_extension_before_economic_amendment() -> No
         hypervisor_service=FakeHypervisor(),
         session_service=service,
     )
+    service.record_usage_charge_q_atoms(
+        opened.session.session_id,
+        amount_q_atoms=2_000_000,
+    )
+    with pytest.raises(ValueError, match="escrow top-up required"):
+        service.require_request_budget(
+            endpoint_id="ep-1",
+            session_id=opened.session.session_id,
+        )
     updated = application.accept_session_amendment(
         session_id=opened.session.session_id,
         amendment_id="economic-amendment-verified",
@@ -882,6 +888,10 @@ def test_application_verifies_escrow_extension_before_economic_amendment() -> No
         opened.session.session_id
     ).session.effective_terms_hash
     assert service.get_session(opened.session.session_id).deposit.locked_q == 12.0
+    assert service.require_request_budget(
+        endpoint_id="ep-1",
+        session_id=opened.session.session_id,
+    ).status == "active"
 
 
 def test_open_session_reuses_persisted_session_contract_object_after_registry_restart(
@@ -894,7 +904,6 @@ def test_open_session_reuses_persisted_session_contract_object_after_registry_re
         pricing_version="pricing-v1",
         billable_units=[],
         checkpoint_policy="per_request",
-        maximum_request_charge=25.0,
     )
     first_registry = RegistryService(snapshot_path=snapshot_path)
     service = SessionService(SessionStore(), registry_service=first_registry)
@@ -1628,7 +1637,7 @@ def test_close_session_uses_last_accepted_checkpoint_when_later_usage_mismatches
     assert closed.settlement.charged_q == 6.51
 
 
-def test_require_request_budget_rejects_when_remaining_deposit_is_below_maximum_request_charge() -> None:
+def test_require_request_budget_requires_minimum_escrow_after_each_invoice() -> None:
     service = _session_service()
     opened = service.open_session(
         endpoint_id="ep-1",
@@ -1637,18 +1646,62 @@ def test_require_request_budget_rejects_when_remaining_deposit_is_below_maximum_
         node_id="node-1",
         deposit_q=25.0,
         session_policy=_session_policy(),
-        accounting_contract={
-            "contract_version": "acct-v1",
-            "pricing_version": "pricing-v1",
-            "checkpoint_policy": "per_request",
-            "maximum_request_charge": 15.0,
-            "billable_units": [],
-        },
     )
-    service.record_usage_charge(opened.session.session_id, amount_q=12.0)
+    service.record_usage_charge(opened.session.session_id, amount_q=16.0)
 
-    with pytest.raises(ValueError, match="maximum request charge"):
+    with pytest.raises(ValueError, match="escrow top-up required"):
         service.require_request_budget(
             endpoint_id="ep-1",
             session_id=opened.session.session_id,
         )
+
+
+def test_larger_initial_escrow_allows_requests_until_balance_falls_below_minimum() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=50.0,
+        session_policy=_session_policy(
+            minimum_deposit=5.0,
+            recommended_deposit=25.0,
+        ),
+    )
+
+    service.record_usage_charge(opened.session.session_id, amount_q=44.0)
+    assert service.require_request_budget(
+        endpoint_id="ep-1",
+        session_id=opened.session.session_id,
+    ).status == "active"
+
+    service.record_usage_charge(opened.session.session_id, amount_q=2.0)
+    with pytest.raises(ValueError, match="escrow top-up required"):
+        service.require_request_budget(
+            endpoint_id="ep-1",
+            session_id=opened.session.session_id,
+        )
+
+
+def test_invoice_cannot_claim_more_than_remaining_escrow() -> None:
+    service = _session_service()
+    opened = service.open_session(
+        endpoint_id="ep-1",
+        client_wallet="wallet-a",
+        provider_wallet="wallet-provider",
+        node_id="node-1",
+        deposit_q=10.0,
+        deposit_q_atoms=10_000_000,
+        session_policy=_session_policy(),
+    )
+
+    with pytest.raises(ValueError, match="deposit exhausted"):
+        service.record_usage_charge_q_atoms(
+            opened.session.session_id,
+            amount_q_atoms=10_000_001,
+        )
+
+    unchanged = service.get_session(opened.session.session_id)
+    assert unchanged.deposit.consumed_q == 0.0
+    assert unchanged.session.usage_charged_q_atoms == 0

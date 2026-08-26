@@ -222,7 +222,7 @@ def test_session_accounting_api_records_ledger_operations_via_build_app_wiring()
             display_name="Paid Text",
             model_class="llm_text",
             capabilities=["llm_text.generate"],
-            pricing={"billing_unit": "token", "input_price": 12.0},
+            pricing={"rate_card": {"components": [{"component_id": "input", "dimension": "input_tokens", "unit_price_q_atoms": 12_000_000, "unit_divisor": 1_000_000, "accounting_mode": "provider_metered"}]}},
             session={
                 "minimum_deposit": 10.0,
                 "recommended_deposit": 25.0,

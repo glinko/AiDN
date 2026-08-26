@@ -1,8 +1,9 @@
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from aidn_hypervisor.endpoints.html import SANITIZER_VERSION, sanitize_marketplace_html
+from aidn_hypervisor.pricing import RateCardV2
 from aidn_hypervisor.runtime_parameter_policy import RuntimeParameterPolicy
 from aidn_hypervisor.validation.models import (
     CertificationStatus,
@@ -89,11 +90,18 @@ class EndpointPublicationPolicy(BaseModel):
 
 
 class EndpointPricing(BaseModel):
-    billing_unit: str = "request"
-    input_price: float | None = Field(default=None, ge=0.0)
-    output_price: float | None = Field(default=None, ge=0.0)
-    audio_input_second_price: float | None = Field(default=None, ge=0.0)
-    fixed_price: float | None = Field(default=None, ge=0.0)
+    model_config = ConfigDict(extra="forbid")
+
+    rate_card: RateCardV2 = Field(default_factory=RateCardV2)
+
+    def is_configured(self) -> bool:
+        return bool(self.rate_card.components)
+
+    def is_paid(self) -> bool:
+        return any(
+            item.unit_price_q_atoms > 0
+            for item in self.rate_card.components
+        )
 
 
 class EndpointSessionPolicy(BaseModel):

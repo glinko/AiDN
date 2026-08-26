@@ -1,3 +1,4 @@
+from decimal import Decimal
 from uuid import uuid4
 
 from fastapi import APIRouter
@@ -22,6 +23,13 @@ from aidn_hypervisor.endpoints.mvp_session_application_service import (
     MvpSessionApplicationService,
 )
 from aidn_hypervisor.endpoints.service import EndpointStateError
+from aidn_hypervisor.pricing import (
+    Q_ATOMS_PER_Q,
+    EscrowDepositRecommendationRequest,
+    RateQuoteRequest,
+    estimate_escrow_deposits,
+    quote_rate_card,
+)
 from aidn_hypervisor.runtime_parameter_policy import marketplace_parameter_policy
 from aidn_hypervisor.session_application_service import SessionApplicationService
 
@@ -423,6 +431,64 @@ def build_endpoint_router(
         except KeyError:
             return _error(404, "endpoint_not_found", f"Unknown endpoint: {endpoint_id}")
         return _ok(result["payload"])
+
+    @router.post("/{endpoint_id}/quote")
+    async def quote_endpoint(
+        endpoint_id: str,
+        request: RateQuoteRequest,
+    ) -> JSONResponse:
+        try:
+            endpoint = service.get_endpoint(endpoint_id).endpoint
+        except KeyError:
+            return _error(404, "endpoint_not_found", f"Unknown endpoint: {endpoint_id}")
+        try:
+            quote = quote_rate_card(endpoint.pricing.rate_card, request.usage)
+        except ValueError as error:
+            return _error(422, "endpoint_quote_invalid", str(error))
+        return _ok(
+            {
+                "endpoint_id": endpoint.endpoint_id,
+                "configuration_hash": endpoint.configuration_hash,
+                "minimum_escrow_deposit_q_atoms": int(
+                    Decimal(str(endpoint.session.minimum_deposit))
+                    * Q_ATOMS_PER_Q
+                ),
+                "recommended_escrow_deposit_q_atoms": (
+                    int(
+                        Decimal(str(endpoint.session.recommended_deposit))
+                        * Q_ATOMS_PER_Q
+                    )
+                    if endpoint.session.recommended_deposit is not None
+                    else None
+                ),
+                "quote": quote.model_dump(mode="json"),
+            }
+        )
+
+    @router.post("/{endpoint_id}/deposit-recommendation")
+    async def recommend_endpoint_deposit(
+        endpoint_id: str,
+        request: EscrowDepositRecommendationRequest,
+    ) -> JSONResponse:
+        try:
+            endpoint = service.get_endpoint(endpoint_id).endpoint
+        except KeyError:
+            return _error(404, "endpoint_not_found", f"Unknown endpoint: {endpoint_id}")
+        recommendation = estimate_escrow_deposits(
+            endpoint.pricing.rate_card,
+            runtime=endpoint.runtime,
+            runtime_parameter_policy=endpoint.runtime_parameter_policy,
+            usage_overrides=request.usage_overrides,
+            safety_margin_bps=request.safety_margin_bps,
+            recommended_multiplier=request.recommended_multiplier,
+        )
+        return _ok(
+            {
+                "endpoint_id": endpoint.endpoint_id,
+                "configuration_hash": endpoint.configuration_hash,
+                "recommendation": recommendation.model_dump(mode="json"),
+            }
+        )
 
     @router.post("/{endpoint_id}/sessions", status_code=201)
     async def open_session(

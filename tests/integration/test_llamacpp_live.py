@@ -162,7 +162,11 @@ def test_llamacpp_live_operator_attach_discover_and_bind() -> None:
             "discoverable": True,
             "accepts_external_requests": True,
         },
-        "pricing": {"billing_unit": "request", "fixed_price": 1.0},
+        "pricing": {"rate_card": {"components": [{
+            "component_id": "base-request", "dimension": "request_count",
+            "kind": "fixed", "unit_price_q_atoms": 1_000_000,
+            "accounting_mode": "fixed_price",
+        }]}},
         "validation": {
             "enabled": False,
             "model_class_supported": True,
@@ -236,7 +240,7 @@ def test_llamacpp_live_approved_binding_dispatches_session_request() -> None:
             display_name=f"Live approved {model}",
             model_class="llm.chat",
             capabilities=["llm.chat"],
-            pricing={"billing_unit": "request", "fixed_price": 1.0},
+            pricing={"rate_card": {"components": [{"component_id": "base-request", "dimension": "request_count", "kind": "fixed", "unit_price_q_atoms": 1_000_000, "accounting_mode": "fixed_price"}]}},
         )
     )
     contract = AccountingContract(
@@ -353,7 +357,7 @@ def test_llamacpp_live_fixed_price_session_executes_and_settles_after_restart(tm
                 "discoverable": True,
                 "accepts_external_requests": True,
             },
-            "pricing": {"billing_unit": "request", "fixed_price": 0.0009},
+            "pricing": {"rate_card": {"components": [{"component_id": "base-request", "dimension": "request_count", "kind": "fixed", "unit_price_q_atoms": 900, "accounting_mode": "fixed_price"}]}},
         },
     )
     assert created.status_code == 201

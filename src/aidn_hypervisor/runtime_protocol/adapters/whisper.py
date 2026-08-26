@@ -47,11 +47,14 @@ class WhisperHttpAdapter(LlamaCppOpenAIAdapter):
             raise ValueError("Whisper adapter requires a non-empty audio_ref")
 
         if self.api_format == "whisper_asr_webservice":
+            decoded_audio = self._plugin._decode_inline_audio(audio_ref)
+            ingress_evidence = self._plugin._inspect_inline_audio(decoded_audio)
             response = self._plugin._invoke_native_asr(
                 endpoint=self.endpoint,
                 audio_ref=audio_ref,
             )
         else:
+            ingress_evidence = {}
             response = self._request_json(
                 "POST",
                 f"{self.endpoint}/v1/audio/transcriptions",
@@ -60,17 +63,23 @@ class WhisperHttpAdapter(LlamaCppOpenAIAdapter):
 
         text = str(response.get("text", ""))
         usage: dict = {"output_bytes": len(text.encode("utf-8"))}
+        usage.update(ingress_evidence)
         try:
-            usage["input_bytes"] = len(
-                self._plugin._decode_inline_audio(audio_ref)[2]
-            )
+            if "input_bytes" not in usage:
+                usage["input_bytes"] = len(
+                    self._plugin._decode_inline_audio(audio_ref)[2]
+                )
         except ValueError:
             # The legacy adapter may receive an opaque reference. Do not infer
             # its size or turn an unavailable measurement into zero.
             pass
-        duration_seconds = self._plugin._audio_duration_seconds(response)
-        if duration_seconds is not None:
-            usage["audio_input_seconds"] = duration_seconds
+        duration_milliseconds = usage.get("audio_input_milliseconds")
+        if duration_milliseconds is None:
+            duration_milliseconds = self._plugin._audio_duration_milliseconds(response)
+            if duration_milliseconds is not None:
+                usage["audio_duration_authority"] = "ESTIMATED"
+        if duration_milliseconds is not None:
+            usage["audio_input_milliseconds"] = duration_milliseconds
         return {
             "model": self.model,
             "choices": [{"text": text, "finish_reason": "stop"}],
@@ -88,30 +97,47 @@ class WhisperHttpAdapter(LlamaCppOpenAIAdapter):
             )
             for dimension_id in ("input_tokens", "output_tokens")
         ]
-        duration_seconds = usage.get("audio_input_seconds")
-        if isinstance(duration_seconds, (int, float)) and not isinstance(
-            duration_seconds, bool
-        ) and duration_seconds >= 0:
+        duration_milliseconds = usage.get("audio_input_milliseconds")
+        if isinstance(duration_milliseconds, int) and not isinstance(
+            duration_milliseconds, bool
+        ) and duration_milliseconds >= 0:
+            exact_ingress = usage.get("audio_duration_authority") != "ESTIMATED"
             dimensions.append(
                 RuntimeUsageDimension(
-                    dimension_id="audio_input_seconds",
-                    unit="second",
+                    dimension_id="audio_input_milliseconds",
+                    unit="millisecond",
                     availability="AVAILABLE",
-                    authority="ESTIMATED",
-                    value=float(duration_seconds),
-                    billing_eligible=False,
+                    authority=("DETERMINISTIC_LOCAL" if exact_ingress else "ESTIMATED"),
+                    value=duration_milliseconds,
+                    billing_eligible=exact_ingress,
                     source_reference={
-                        "source_type": "PROVIDER_USAGE_RESPONSE",
-                        "source_id": "whisper-response-duration",
+                        "source_type": (
+                            "HYPERVISOR_OBSERVATION"
+                            if exact_ingress
+                            else "PROVIDER_USAGE_RESPONSE"
+                        ),
+                        "source_id": (
+                            "whisper-ingress-wav"
+                            if exact_ingress
+                            else "whisper-response-duration"
+                        ),
+                        "source_hash": usage.get("input_artifact_sha256"),
+                        "observation_boundary": (
+                            "hypervisor-audio-ingress" if exact_ingress else None
+                        ),
                     },
-                    limitations=["WHISPER_DURATION_REPORTED_BY_PROVIDER"],
+                    limitations=(
+                        []
+                        if exact_ingress
+                        else ["WHISPER_DURATION_REPORTED_BY_PROVIDER"]
+                    ),
                 )
             )
         else:
             dimensions.append(
                 RuntimeUsageDimension(
-                    dimension_id="audio_input_seconds",
-                    unit="second",
+                    dimension_id="audio_input_milliseconds",
+                    unit="millisecond",
                     availability="UNAVAILABLE",
                     billing_eligible=False,
                     limitations=["WHISPER_PROVIDER_MAY_OMIT_DURATION"],

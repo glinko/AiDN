@@ -392,13 +392,7 @@ def build_inference_router(
         }
         if model not in aliases:
             raise LookupError(f"Model '{model}' is not available to this credential")
-        pricing = endpoint.pricing.model_dump(mode="json")
-        if any(float(pricing.get(key) or 0.0) != 0.0 for key in (
-            "input_price",
-            "output_price",
-            "audio_input_second_price",
-            "fixed_price",
-        )):
+        if endpoint.pricing.is_paid():
             raise ValueError("Personal agent inference is limited to zero-priced endpoints")
         session_policy = endpoint.session.model_dump(mode="json")
         if any(float(session_policy.get(key) or 0.0) != 0.0 for key in (

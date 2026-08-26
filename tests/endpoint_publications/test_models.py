@@ -24,7 +24,11 @@ def test_configuration_hash_changes_when_execution_relevant_fields_change() -> N
             "validation": "disabled",
             "accepts_external_requests": True,
         },
-        pricing={"billing_unit": "request", "input_price": 1.0},
+        pricing={"rate_card": {"components": [{
+            "component_id": "input", "dimension": "input_tokens",
+            "unit_price_q_atoms": 1_000_000, "unit_divisor": 1_000_000,
+            "accounting_mode": "provider_metered",
+        }]}},
     )
     payload_b = canonical_configuration_payload(
         bundle_hash="bundle-hash-a",
@@ -38,7 +42,11 @@ def test_configuration_hash_changes_when_execution_relevant_fields_change() -> N
             "validation": "disabled",
             "accepts_external_requests": True,
         },
-        pricing={"billing_unit": "request", "input_price": 1.0},
+        pricing={"rate_card": {"components": [{
+            "component_id": "input", "dimension": "input_tokens",
+            "unit_price_q_atoms": 1_000_000, "unit_divisor": 1_000_000,
+            "accounting_mode": "provider_metered",
+        }]}},
     )
 
     assert configuration_hash_for_publication(payload_a) != configuration_hash_for_publication(
@@ -53,7 +61,7 @@ def test_configuration_hash_binds_endpoint_parameter_policy() -> None:
         "capabilities": ["llm.chat"],
         "runtime": {"streaming": True},
         "publication": {"visibility": "public"},
-        "pricing": {"billing_unit": "request"},
+        "pricing": {},
     }
     unlocked = {
         "temperature": {
@@ -85,7 +93,7 @@ def test_configuration_hash_has_no_local_agent_permission_field() -> None:
         capabilities=["llm_text"],
         runtime={"streaming": False},
         publication={"visibility": "private"},
-        pricing={"billing_unit": "request"},
+        pricing={},
     )
     assert "local_agent_use" not in base
 
@@ -103,7 +111,11 @@ def test_configuration_hash_treats_capabilities_as_order_stable() -> None:
             "validation": "disabled",
             "accepts_external_requests": True,
         },
-        pricing={"billing_unit": "request", "input_price": 1.0},
+        pricing={"rate_card": {"components": [{
+            "component_id": "input", "dimension": "input_tokens",
+            "unit_price_q_atoms": 1_000_000, "unit_divisor": 1_000_000,
+            "accounting_mode": "provider_metered",
+        }]}},
     )
     payload_b = canonical_configuration_payload(
         bundle_hash="bundle-hash-a",
@@ -117,7 +129,11 @@ def test_configuration_hash_treats_capabilities_as_order_stable() -> None:
             "validation": "disabled",
             "accepts_external_requests": True,
         },
-        pricing={"billing_unit": "request", "input_price": 1.0},
+        pricing={"rate_card": {"components": [{
+            "component_id": "input", "dimension": "input_tokens",
+            "unit_price_q_atoms": 1_000_000, "unit_divisor": 1_000_000,
+            "accounting_mode": "provider_metered",
+        }]}},
     )
 
     assert payload_a["capabilities"] == payload_b["capabilities"]
@@ -163,7 +179,7 @@ def test_published_endpoint_configuration_excludes_signature_from_signed_payload
         capabilities=["speech.stt"],
         runtime={"timeout": 45, "streaming": True},
         publication={"visibility": "public", "discoverable": True},
-        pricing={"billing_unit": "request"},
+        pricing={},
     )
     record = PublishedEndpointConfiguration(
         schema_version="epcfg.v1",
@@ -180,7 +196,7 @@ def test_published_endpoint_configuration_excludes_signature_from_signed_payload
         profile={"summary": "Operator STT"},
         runtime={"timeout": 45, "streaming": True},
         publication={"visibility": "public", "discoverable": True},
-        pricing={"billing_unit": "request"},
+        pricing={},
         validation_requirement={"enabled": False},
         published_at="2026-06-30T00:00:00+00:00",
         sequence=1,
@@ -198,7 +214,7 @@ def test_published_configuration_accepts_pre_migration_local_agent_signature() -
         capabilities=["llm_text"],
         runtime={"streaming": False},
         publication={"visibility": "private"},
-        pricing={"billing_unit": "request"},
+        pricing={},
     )
     record = PublishedEndpointConfiguration(
         publication_id="pub-local-agent-legacy",
@@ -213,7 +229,7 @@ def test_published_configuration_accepts_pre_migration_local_agent_signature() -
         local_agent_use=True,
         runtime={"streaming": False},
         publication={"visibility": "private"},
-        pricing={"billing_unit": "request"},
+        pricing={},
         published_at="2026-08-16T00:00:00+00:00",
         sequence=1,
         wallet_signature="sig-legacy",
@@ -325,7 +341,7 @@ def test_published_endpoint_configuration_rejects_inconsistent_configuration_has
             profile={"summary": "Operator STT"},
             runtime={"timeout": 45, "streaming": True},
             publication={"visibility": "public", "discoverable": True},
-            pricing={"billing_unit": "request"},
+            pricing={},
             validation_requirement={"enabled": False},
             published_at="2026-06-30T00:00:00+00:00",
             sequence=1,
