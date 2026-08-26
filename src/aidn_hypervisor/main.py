@@ -1394,10 +1394,12 @@ def _build_default_consensus_service(
 
     genesis_accounts = _consensus_genesis_accounts()
     genesis_treasury_manifest = _consensus_genesis_treasury_manifest(chain_id=config.chain_id)
-    # Hypervisor state is restored before ABCI bootstrap.  Never reapply the
-    # disposable test genesis over an already populated local Ledger during a
-    # validator restart.
-    if hypervisor_service.ledger_operation_service.snapshot_operations():
+    # Hypervisor state is restored before ABCI bootstrap. A durable ABCI
+    # snapshot is already the canonical genesis boundary, even when it has no
+    # Ledger operations yet. Never apply the disposable test genesis a second
+    # time during a validator restart: that would inflate local balances before
+    # the safe ABCI/Hypervisor reconciliation check can run.
+    if durable_snapshot is not None or hypervisor_service.ledger_operation_service.snapshot_operations():
         genesis_accounts = None
 
     consensus.bootstrap_validator_abci(

@@ -51,6 +51,34 @@ def test_validator_lifecycle_restores_matching_hypervisor_and_abci_state(
     )
 
 
+def test_validator_restart_does_not_reapply_genesis_accounts(monkeypatch, tmp_path):
+    _configure_validator(monkeypatch, tmp_path)
+    monkeypatch.setenv(
+        "AIDN_CONSENSUS_GENESIS_ACCOUNTS_JSON",
+        '{"wallet:genesis":2000}',
+    )
+
+    first_app = build_app()
+    first_consensus = first_app.state.consensus_service
+    assert first_consensus is not None
+    assert first_consensus.abci is not None
+    result, _ = first_consensus.abci.finalize_block_with_results(
+        block_height=1,
+        block_hash=hashlib.sha256(b"genesis restart").digest(),
+        txs=[],
+    )
+    assert result.code == "ok"
+    first_consensus.abci.commit()
+
+    restored_app = build_app()
+    assert (
+        restored_app.state.hypervisor_service.ledger_operation_service.wallet_q_atom_balance(
+            "wallet:genesis"
+        )
+        == 2000
+    )
+
+
 def test_validator_lifecycle_fails_closed_when_abci_ledger_differs(monkeypatch, tmp_path):
     _configure_validator(monkeypatch, tmp_path)
 
