@@ -8,6 +8,9 @@ import json
 import sys
 from pathlib import Path
 
+# Allow a source checkout to run the tool before the package is installed.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
 from aidn_hypervisor.reward.development_scenarios import run_launch_simulation_matrix
 
 

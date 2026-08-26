@@ -141,7 +141,7 @@ def launch_simulation_cases() -> list[DevelopmentScenarioCase]:
             contributions=[
                 _contribution(
                     f"dominant-{index}",
-                    units_milli=100_000,
+                    units_milli=1_000_000,
                     contributor_id="dominant-contributor",
                 )
                 for index in range(4)
@@ -156,7 +156,7 @@ def launch_simulation_cases() -> list[DevelopmentScenarioCase]:
             contributions=[
                 _contribution(
                     f"small-{index:02d}",
-                    units_milli=10_000,
+                    units_milli=200_000,
                     contributor_id=f"small-contributor-{index:02d}",
                 )
                 for index in range(24)
@@ -185,7 +185,7 @@ def launch_simulation_cases() -> list[DevelopmentScenarioCase]:
             contributions=[
                 _contribution(
                     f"fragment-{index}",
-                    units_milli=100_000,
+                    units_milli=1_000_000,
                     contributor_id=f"fragment-contributor-{index}",
                     group="logical-feature",
                 )
@@ -201,7 +201,7 @@ def launch_simulation_cases() -> list[DevelopmentScenarioCase]:
             contributions=[
                 _contribution(
                     f"reviewed-{index}",
-                    units_milli=100_000,
+                    units_milli=1_000_000,
                     contributor_id=f"reviewed-author-{index}",
                     roles=[
                         DevelopmentRoleInput(
@@ -234,7 +234,7 @@ def launch_simulation_cases() -> list[DevelopmentScenarioCase]:
             contributions=[
                 _contribution(
                     "security-fix",
-                    units_milli=100_000,
+                    units_milli=1_000_000,
                     contributor_id="security-author",
                     contribution_class="SECURITY",
                 )
@@ -257,7 +257,7 @@ def launch_simulation_cases() -> list[DevelopmentScenarioCase]:
             contributions=[
                 _contribution(
                     f"oversubscribed-{index}",
-                    units_milli=100_000,
+                    units_milli=1_000_000,
                     contributor_id=f"oversubscribed-contributor-{index}",
                 )
                 for index in range(8)
@@ -267,7 +267,7 @@ def launch_simulation_cases() -> list[DevelopmentScenarioCase]:
         DevelopmentScenarioCase(
             scenario_id="high-carryover",
             description="Carryover reaches the configured cap and excess returns explicitly to the reserve.",
-            pool=_pool(carryover_in_q_atoms=1_500_000_000),
+            pool=_pool(carryover_in_q_atoms=20_000_000_000),
             policy=default_policy,
             contributions=[],
             observations=["carryover-cap", "returned-to-emission-reserve"],

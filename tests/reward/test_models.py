@@ -49,10 +49,11 @@ class TestMintStatus:
 class TestPoolConfig:
     def test_defaults(self):
         cfg = PoolConfig()
-        assert cfg.consensus_share == 0.30
-        assert cfg.registry_share == 0.30
-        assert cfg.validation_share == 0.30
-        assert cfg.faucet_share == 0.10
+        assert cfg.contribution_share == 0.60
+        assert cfg.consensus_share == 0.12
+        assert cfg.registry_share == 0.12
+        assert cfg.validation_share == 0.12
+        assert cfg.faucet_share == 0.04
 
     def test_shares_sum_to_one(self):
         cfg = PoolConfig()

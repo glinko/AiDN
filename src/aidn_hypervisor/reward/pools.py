@@ -53,16 +53,18 @@ class ServicePoolManager:
         """
         total = base_emission + recyclable
 
+        contribution = floor(total * self._config.contribution_share)
         consensus = floor(total * self._config.consensus_share)
         registry = floor(total * self._config.registry_share)
         validation = floor(total * self._config.validation_share)
         # Faucet gets the remainder to avoid rounding loss
-        faucet = total - consensus - registry - validation
+        faucet = total - contribution - consensus - registry - validation
 
         return EpochRewardBudget(
             epoch=epoch,
             base_emission=base_emission,
             recyclable_amount=recyclable,
+            contribution_pool=contribution,
             consensus_pool=consensus,
             registry_pool=registry,
             validation_pool=validation,

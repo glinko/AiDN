@@ -75,8 +75,9 @@ def test_derive_next_epoch_reward_budget_uses_previous_epoch_removals_and_carryo
     assert budget["recycle_backlog_q"] == 25.0
     assert budget["recyclable_amount_q"] == 535.0
     assert budget["total_authorized_q"] == 5535.0
-    assert budget["faucet_budget_q"] == 593.5
-    assert budget["faucet_share_q"] == 23.74
+    assert budget["contribution_budget_q"] == 3321.0
+    assert budget["faucet_budget_q"] == 261.4
+    assert budget["faucet_share_q"] == 10.456
 
 
 def test_validation_bond_forfeiture_records_recyclable_removal() -> None:
@@ -176,10 +177,11 @@ def test_economics_summary_aggregates_removals_and_latest_budget() -> None:
 
     assert summary["base_emission_q"] == 5000.0
     assert summary["pool_shares"] == {
-        "consensus": 0.3,
-        "registry": 0.3,
-        "validation": 0.3,
-        "faucet": 0.1,
+        "contribution": 0.6,
+        "consensus": 0.12,
+        "registry": 0.12,
+        "validation": 0.12,
+        "faucet": 0.04,
     }
     assert summary["removals"] == {
         "count": 2,
@@ -209,9 +211,10 @@ def test_economics_summary_aggregates_removals_and_latest_budget() -> None:
         "claim": None,
     }
     assert summary["pools"] == {
-        "consensus_budget_q": 1660.5,
-        "registry_budget_q": 1660.5,
-        "validation_budget_q": 1660.5,
+        "contribution_budget_q": 3321.0,
+        "consensus_budget_q": 664.2,
+        "registry_budget_q": 664.2,
+        "validation_budget_q": 664.2,
         "faucet_budget_q": 0.0,
     }
     assert summary["latest_budget_breakdown"] == {

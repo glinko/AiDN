@@ -2315,6 +2315,30 @@ class LedgerOperationService:
             }
         return None
 
+    def canonical_operator_wallet_binding(self, node_id: str) -> dict | None:
+        """Return the finalized Wallet identity bound to one Node Identity.
+
+        Consumers such as the testnet participation evidence store must not
+        infer this association from Registry advertisements. The binding is a
+        signed consensus operation and is therefore the canonical source.
+        """
+
+        for operation in reversed(self._operations):
+            if operation.get("operation_type") != OPERATOR_WALLET_BIND_OPERATION:
+                continue
+            payload = operation.get("payload") or {}
+            if payload.get("node_id") != node_id:
+                continue
+            return {
+                "node_id": node_id,
+                "operator_id": payload["operator_id"],
+                "wallet_id": payload["wallet_id"],
+                "public_key": payload["public_key"],
+                "registered_at": payload["created_at"],
+                "operation_id": operation["operation_id"],
+            }
+        return None
+
     def validate_consensus_wallet_identity_register(
         self,
         envelope: "LedgerOperationEnvelope",

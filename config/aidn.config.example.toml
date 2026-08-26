@@ -74,6 +74,9 @@ AIDN_STEWARD_WORKER_INTERVAL_SECONDS = 15
 
 # Consensus / CometBFT. Keep disabled until the reviewed install/reconnect
 # workflow has staged and applied a valid network configuration.
+# AIDN_NETWORK_PROFILE_PATH = "/etc/aidn/network-profile.toml"
+# AIDN_NETWORK_PROFILE_SIGNERS_PATH = "/etc/aidn/network-profile-signers.json"
+# AIDN_TESTNET_PARTICIPATION_PROGRAM_PATH = "/etc/aidn/testnet-participation.toml"
 AIDN_CONSENSUS_MODE = "disabled"
 AIDN_CONSENSUS_NODE_ID = "node-example"
 AIDN_COMETBFT_ENDPOINT = "tcp://127.0.0.1:26657"

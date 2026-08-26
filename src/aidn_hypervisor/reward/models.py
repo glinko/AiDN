@@ -5,18 +5,20 @@ from __future__ import annotations
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 # ── Constants ──────────────────────────────────────────────────────
 
 # ECO-0005 §3: Base emission per epoch in q-atoms
 BASE_EMISSION_Q_ATOMS: int = 5_000_000_000  # 5000Q
 
-# ECO-0005 §12: Pool shares
-CONSENSUS_POOL_SHARE: float = 0.30
-REGISTRY_POOL_SHARE: float = 0.30
-VALIDATION_POOL_SHARE: float = 0.30
-FAUCET_POOL_SHARE: float = 0.10
+# ECO-0010: 60% Contribution Pool; the remaining 40% preserves the
+# pre-amendment 30:30:30:10 service-pool ratio.
+CONTRIBUTION_POOL_SHARE: float = 0.60
+CONSENSUS_POOL_SHARE: float = 0.12
+REGISTRY_POOL_SHARE: float = 0.12
+VALIDATION_POOL_SHARE: float = 0.12
+FAUCET_POOL_SHARE: float = 0.04
 
 # ECO-0004 §26: Minimum reward
 MIN_REWARD_Q_ATOMS: int = 10_000  # 0.01Q
@@ -53,10 +55,11 @@ class MintStatus(str, Enum):
 class PoolConfig(BaseModel, frozen=True):
     """Configuration for service pool allocation."""
 
-    consensus_share: float = CONSENSUS_POOL_SHARE
-    registry_share: float = REGISTRY_POOL_SHARE
-    validation_share: float = VALIDATION_POOL_SHARE
-    faucet_share: float = FAUCET_POOL_SHARE
+    contribution_share: float = Field(default=CONTRIBUTION_POOL_SHARE, ge=0.0, le=1.0)
+    consensus_share: float = Field(default=CONSENSUS_POOL_SHARE, ge=0.0, le=1.0)
+    registry_share: float = Field(default=REGISTRY_POOL_SHARE, ge=0.0, le=1.0)
+    validation_share: float = Field(default=VALIDATION_POOL_SHARE, ge=0.0, le=1.0)
+    faucet_share: float = Field(default=FAUCET_POOL_SHARE, ge=0.0, le=1.0)
     target_consensus_groups: int = TARGET_CONSENSUS_GROUPS
     target_registry_groups: int = TARGET_REGISTRY_GROUPS
     target_validation_groups: int = TARGET_VALIDATION_GROUPS
@@ -67,11 +70,18 @@ class PoolConfig(BaseModel, frozen=True):
     def shares_sum(self) -> float:
         """Sum of all pool shares (should be 1.0)."""
         return (
-            self.consensus_share
+            self.contribution_share
+            + self.consensus_share
             + self.registry_share
             + self.validation_share
             + self.faucet_share
         )
+
+    @model_validator(mode="after")
+    def validate_shares(self) -> PoolConfig:
+        if abs(self.shares_sum - 1.0) > 1e-12:
+            raise ValueError("reward pool shares must sum to 1.0")
+        return self
 
 
 # ── Reward Calculation ───────────────────────────────────────────
@@ -182,6 +192,7 @@ class EpochRewardBudget(BaseModel, frozen=True):
     epoch: int
     base_emission: int = BASE_EMISSION_Q_ATOMS
     recyclable_amount: int = 0
+    contribution_pool: int = 0
     consensus_pool: int = 0
     registry_pool: int = 0
     validation_pool: int = 0
@@ -196,7 +207,8 @@ class EpochRewardBudget(BaseModel, frozen=True):
     @property
     def pool_total(self) -> int:
         return (
-            self.consensus_pool
+            self.contribution_pool
+            + self.consensus_pool
             + self.registry_pool
             + self.validation_pool
             + self.faucet_pool

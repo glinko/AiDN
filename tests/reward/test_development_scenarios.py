@@ -41,8 +41,8 @@ def test_launch_matrix_exercises_caps_reserves_and_empty_epochs():
     assert dominant.contributor_cap_overflow_q_atoms > 0
 
     fragmented = scenarios["pr-fragmentation"].calculation
-    assert fragmented.group_cap_overflow_q_atoms == 150_000_000
-    assert fragmented.accepted_gross_reward_q_atoms == 50_000_000
+    assert fragmented.group_cap_overflow_q_atoms == 1_800_000_000
+    assert fragmented.accepted_gross_reward_q_atoms == 600_000_000
 
     reviewer = scenarios["reviewer-allocation-control-group"].calculation
     reviewer_roles = [
@@ -55,8 +55,8 @@ def test_launch_matrix_exercises_caps_reserves_and_empty_epochs():
     assert reviewer.contributor_cap_overflow_q_atoms > 0
 
     security = scenarios["high-security-reserve"].calculation
-    assert security.pool.security_reserve_q_atoms == 200_000_000
-    assert security.pool.available_contribution_budget_q_atoms == 37_500_000
+    assert security.pool.security_reserve_q_atoms == 2_400_000_000
+    assert security.pool.available_contribution_budget_q_atoms == 450_000_000
 
     inactive = scenarios["inactive-epoch"].calculation
     assert inactive.nominal_demand_q_atoms == 0

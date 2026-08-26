@@ -103,6 +103,9 @@ class WalletEconomicsService:
             "claim": faucet_preview["claim"],
         }
         pools = {
+            "contribution_budget_q": float(latest_budget["contribution_budget_q"])
+            if latest_budget is not None
+            else 0.0,
             "consensus_budget_q": float(latest_budget["consensus_budget_q"])
             if latest_budget is not None
             else 0.0,

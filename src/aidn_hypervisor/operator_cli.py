@@ -18,7 +18,24 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from aidn_hypervisor.config import load_operator_config
 from aidn_hypervisor.mcp.credentials import McpCredentialStore
 from aidn_hypervisor.mcp.enrollment import McpEnrollmentService
+from aidn_hypervisor.network_profile import (
+    NETWORK_PROFILE_ENV,
+    NETWORK_PROFILE_SIGNERS_ENV,
+    NetworkProfileError,
+    activate_network_profile,
+    load_network_profile,
+    load_network_profile_signers,
+    resolve_network_profile_path,
+    verify_network_profile,
+)
 from aidn_hypervisor.secrets import FileSecretManager, SecretManagerError
+from aidn_hypervisor.testnet_participation import (
+    TestnetParticipationCalculator,
+    load_testnet_participation_program,
+)
+from aidn_hypervisor.testnet_participation_evidence import (
+    TestnetParticipationEvidenceStore,
+)
 
 _RUNTIME_ENVIRONMENT_KEYS = (
     "AIDN_HYPERVISOR_STATE_PATH",
@@ -133,6 +150,51 @@ def _build_parser() -> argparse.ArgumentParser:
         _add_secret_options(enrollment_action)
         _add_runtime_options(enrollment_action)
         enrollment_action.add_argument("--request-id", required=True)
+
+    network = commands.add_parser(
+        "network", help="show, verify, or select the local Network Profile"
+    )
+    network.add_argument(
+        "--profile-path",
+        default=None,
+        help=f"active Network Profile (defaults to {NETWORK_PROFILE_ENV})",
+    )
+    network.add_argument(
+        "--trusted-signers-path",
+        default=None,
+        help=f"trusted authority registry (defaults to {NETWORK_PROFILE_SIGNERS_ENV})",
+    )
+    network_commands = network.add_subparsers(dest="network_command", required=True)
+    network_commands.add_parser("show", help="show the selected profile and binding hash")
+    network_commands.add_parser("verify", help="verify genesis and public-profile bindings")
+    network_use = network_commands.add_parser("use", help="activate one verified profile")
+    network_use.add_argument("name", help="profile name or TOML file path")
+    network_use.add_argument(
+        "--profiles-dir",
+        default=None,
+        help="directory containing <name>.toml profiles",
+    )
+
+    participation = commands.add_parser(
+        "participation",
+        help="inspect or reproduce a Testnet participation settlement",
+    )
+    participation.add_argument(
+        "--program-path",
+        required=True,
+        help="reviewed Testnet participation TOML policy",
+    )
+    participation_commands = participation.add_subparsers(
+        dest="participation_command", required=True
+    )
+    participation_commands.add_parser("verify", help="verify policy schema and show its hash")
+    participation_calculate = participation_commands.add_parser(
+        "calculate", help="calculate a non-emitting daily settlement from finalized evidence"
+    )
+    participation_calculate.add_argument("--evidence-store", required=True)
+    participation_calculate.add_argument("--protocol-epoch", required=True, type=int)
+    participation_calculate.add_argument("--source-epoch-transition-operation-id", required=True)
+    participation_calculate.add_argument("--period-start", required=True)
     return parser
 
 
@@ -391,11 +453,93 @@ def _enrollment_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _network_command(args: argparse.Namespace) -> int:
+    selected = resolve_network_profile_path(args.profile_path)
+    trusted_signers = load_network_profile_signers(
+        args.trusted_signers_path or os.getenv(NETWORK_PROFILE_SIGNERS_ENV)
+    )
+    if args.network_command == "use":
+        if selected is None:
+            raise ValueError(
+                "network use requires --profile-path or AIDN_NETWORK_PROFILE_PATH"
+            )
+        candidate = Path(args.name).expanduser()
+        if candidate.suffix.lower() != ".toml":
+            profiles_dir = (
+                Path(args.profiles_dir).expanduser()
+                if args.profiles_dir
+                else selected.parent / "network-profiles"
+            )
+            candidate = profiles_dir / f"{args.name}.toml"
+        result = activate_network_profile(
+            candidate,
+            selected,
+            trusted_profile_signers=trusted_signers,
+        )
+        print(_bounded_json(result.model_dump(mode="json")))
+        return 0
+    if selected is None:
+        raise ValueError(
+            "network command requires --profile-path or AIDN_NETWORK_PROFILE_PATH"
+        )
+    if args.network_command == "verify":
+        result = verify_network_profile(
+            selected, trusted_profile_signers=trusted_signers
+        )
+        print(_bounded_json(result.model_dump(mode="json")))
+        return 0 if result.valid else 2
+    if args.network_command == "show":
+        profile = load_network_profile(selected)
+        payload = profile.model_dump(mode="json")
+        payload["profile_path"] = str(selected)
+        payload["consensus_binding_hash"] = profile.consensus_binding_hash
+        print(_bounded_json(payload))
+        return 0
+    raise ValueError(f"unsupported network command: {args.network_command}")
+
+
+def _participation_command(args: argparse.Namespace) -> int:
+    program = load_testnet_participation_program(args.program_path)
+    if args.participation_command == "verify":
+        print(
+            _bounded_json(
+                {
+                    "program": program.model_dump(mode="json"),
+                    "policy_hash": program.policy_hash,
+                }
+            )
+        )
+        return 0
+    if args.participation_command == "calculate":
+        evidence_store = TestnetParticipationEvidenceStore(args.evidence_store)
+        enrollments, heartbeats = evidence_store.settlement_inputs(
+            program,
+            period_start=args.period_start,
+        )
+        settlement = TestnetParticipationCalculator().calculate(
+            program,
+            protocol_epoch=args.protocol_epoch,
+            source_epoch_transition_operation_id=(
+                args.source_epoch_transition_operation_id
+            ),
+            period_start=args.period_start,
+            enrollments=enrollments,
+            heartbeats=heartbeats,
+        )
+        print(_bounded_json(settlement.model_dump(mode="json")))
+        return 0
+    raise ValueError(f"unsupported participation command: {args.participation_command}")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Execute a local operator command without persisting secret values."""
-    load_operator_config()
     args = _build_parser().parse_args(argv)
     try:
+        # An explicit recovery target must remain usable even when the
+        # currently selected profile is invalid. Other commands consume the
+        # normal operator/network configuration before doing any work.
+        if not (args.command == "network" and args.profile_path is not None):
+            load_operator_config()
         if args.command == "pair":
             if args.ttl_seconds <= 0:
                 raise ValueError("--ttl-seconds must be positive")
@@ -413,8 +557,12 @@ def main(argv: list[str] | None = None) -> int:
                 return _wallet_command(args)
         if args.command == "enrollment":
             return _enrollment_command(args)
+        if args.command == "network":
+            return _network_command(args)
+        if args.command == "participation":
+            return _participation_command(args)
         raise ValueError(f"unsupported command: {args.command}")
-    except (OSError, RuntimeError, SecretManagerError, ValueError) as exc:
+    except (OSError, RuntimeError, SecretManagerError, NetworkProfileError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
 
 

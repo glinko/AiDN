@@ -107,7 +107,7 @@ def test_controlled_eco0005_profile_derives_the_fixed_development_budget() -> No
     )
 
     assert bundle.source_kind == CONTROLLED_LOCALNET_ECO_0005
-    assert bundle.pool_budgets == {"GENERAL_DEVELOPMENT": 250_000_000}
+    assert bundle.pool_budgets == {"GENERAL_DEVELOPMENT": 3_000_000_000}
     assert bundle.verify_integrity()
     assert any(item.startswith("controlled-localnet:eco-0005:") for item in bundle.source_references)
 

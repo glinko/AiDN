@@ -11,6 +11,7 @@ from aidn_hypervisor.economics.models import (
 def test_epoch_reward_pool_shares_must_sum_to_one() -> None:
     with pytest.raises(ValidationError):
         EpochRewardPoolShares(
+            contribution=0.1,
             consensus=0.3,
             registry=0.3,
             validation=0.3,
@@ -27,20 +28,22 @@ def test_epoch_reward_budget_derives_pool_allocations_from_authorized_budget() -
         faucet_carryover_q=40.0,
         active_hypervisor_count=20,
         pool_shares=EpochRewardPoolShares(
-            consensus=0.3,
-            registry=0.3,
-            validation=0.3,
-            faucet=0.1,
+            contribution=0.6,
+            consensus=0.12,
+            registry=0.12,
+            validation=0.12,
+            faucet=0.04,
         ),
     )
 
     assert budget.recyclable_amount_q == 625.0
     assert budget.total_authorized_q == 5625.0
-    assert budget.consensus_budget_q == 1687.5
-    assert budget.registry_budget_q == 1687.5
-    assert budget.validation_budget_q == 1687.5
-    assert budget.faucet_budget_q == 602.5
-    assert budget.faucet_share_q == 30.125
+    assert budget.contribution_budget_q == 3375.0
+    assert budget.consensus_budget_q == 675.0
+    assert budget.registry_budget_q == 675.0
+    assert budget.validation_budget_q == 675.0
+    assert budget.faucet_budget_q == 265.0
+    assert budget.faucet_share_q == 13.25
 
 
 def test_recyclable_removal_accepts_validation_bond_forfeiture_metadata() -> None:

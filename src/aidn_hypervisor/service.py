@@ -136,10 +136,11 @@ _DEFAULT_OPERATOR_REQUESTS_POLICY = {
     "ready_endpoint_only": True,
 }
 _DEFAULT_EPOCH_REWARD_POOL_SHARES = {
-    "consensus": 0.3,
-    "registry": 0.3,
-    "validation": 0.3,
-    "faucet": 0.1,
+    "contribution": 0.6,
+    "consensus": 0.12,
+    "registry": 0.12,
+    "validation": 0.12,
+    "faucet": 0.04,
 }
 
 

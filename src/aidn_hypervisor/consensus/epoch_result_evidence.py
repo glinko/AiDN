@@ -87,7 +87,7 @@ def build_controlled_localnet_eco0005_profile(
         "source_document_version": source_document_version,
         "source_document_hash": source_document_hash,
         "base_emission_q_atoms": ECO_0005_BASE_EMISSION_Q_ATOMS,
-        "development_share_bps": 500,
+        "development_share_bps": 6_000,
         "security_pool_share_bps": 1_500,
         "documentation_pool_share_bps": 500,
         "carryover_in_q_atoms": 0,
@@ -246,7 +246,7 @@ class ControlledLocalnetEco0005Profile(BaseModel):
     source_document_version: str = Field(min_length=1)
     source_document_hash: str = Field(min_length=1)
     base_emission_q_atoms: int = ECO_0005_BASE_EMISSION_Q_ATOMS
-    development_share_bps: int = 500
+    development_share_bps: int = 6_000
     security_pool_share_bps: int = 1_500
     documentation_pool_share_bps: int = 500
     carryover_in_q_atoms: int = 0
@@ -264,7 +264,7 @@ class ControlledLocalnetEco0005Profile(BaseModel):
             raise ValueError("CONTROLLED_LOCALNET_ECO_0005_PROFILE_VERSION_INVALID")
         if self.base_emission_q_atoms != ECO_0005_BASE_EMISSION_Q_ATOMS:
             raise ValueError("CONTROLLED_LOCALNET_ECO_0005_BASE_EMISSION_INVALID")
-        if self.development_share_bps != 500:
+        if self.development_share_bps != 6_000:
             raise ValueError("CONTROLLED_LOCALNET_ECO_0005_DEVELOPMENT_SHARE_INVALID")
         if self.security_pool_share_bps != 1_500 or self.documentation_pool_share_bps != 500:
             raise ValueError("CONTROLLED_LOCALNET_ECO_0005_RESERVE_SHARE_INVALID")

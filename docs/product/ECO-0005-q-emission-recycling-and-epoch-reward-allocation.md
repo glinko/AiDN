@@ -220,19 +220,21 @@ Detailed intra-pool eligibility, weighting, diversity reduction, concentration c
 
 ## 12. Initial Reward Pools
 
-The initial Epoch Reward Budget is divided into the following pools:
+As amended by `ECO-0010`, the Epoch Reward Budget is divided into:
 
-- `Consensus Service: 30%`
-- `Registry Service: 30%`
-- `Validation Activity: 30%`
-- `Faucet: 10%`
+- `Contribution: 60%`
+- `Consensus Service: 12%`
+- `Registry Service: 12%`
+- `Validation Activity: 12%`
+- `Faucet: 4%`
 
 For a Base Emission Budget of `5000 Q`, before recyclable additions:
 
-- `Consensus Service: 1500 Q`
-- `Registry Service: 1500 Q`
-- `Validation Activity: 1500 Q`
-- `Faucet: 500 Q`
+- `Contribution: 3000 Q`
+- `Consensus Service: 600 Q`
+- `Registry Service: 600 Q`
+- `Validation Activity: 600 Q`
+- `Faucet: 200 Q`
 
 The same percentages apply to recyclable `Q` unless a future protocol version defines another allocation.
 

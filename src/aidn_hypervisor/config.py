@@ -54,6 +54,9 @@ _READ_ONLY_KEYS = frozenset(
         "AIDN_REMOTE_TRUST_ANCHOR_CONFIG",
         "AIDN_COMETBFT_FINALITY_CONFIG",
         "AIDN_PROTOCOL_AUTHORITY_POLICY_PATH",
+        "AIDN_NETWORK_PROFILE_PATH",
+        "AIDN_NETWORK_PROFILE_SIGNERS_PATH",
+        "AIDN_TESTNET_PARTICIPATION_PROGRAM_PATH",
         # The software updater is deliberately bound to the reviewed
         # bootstrap checkout and tooling. These values are not operator
         # editable from the TOML editor.
@@ -304,14 +307,13 @@ def load_operator_config(
 
     target_environment = os.environ if environ is None else environ
     configured_path = path if path is not None else target_environment.get(CONFIG_FILE_ENV)
-    if configured_path is None or not str(configured_path).strip():
-        return OperatorConfigLoadResult(path=None)
-
-    config_path = Path(str(configured_path)).expanduser()
-    if not config_path.is_file():
-        raise OperatorConfigError(f"AIDN_CONFIG_FILE does not exist: {config_path}")
-
-    values = _read_values(config_path)
+    config_path: Path | None = None
+    values: dict[str, str] = {}
+    if configured_path is not None and str(configured_path).strip():
+        config_path = Path(str(configured_path)).expanduser()
+        if not config_path.is_file():
+            raise OperatorConfigError(f"AIDN_CONFIG_FILE does not exist: {config_path}")
+        values = _read_values(config_path)
     applied: list[str] = []
     preserved: list[str] = []
     for key, value in values.items():
@@ -320,6 +322,33 @@ def load_operator_config(
         else:
             target_environment[key] = value
             applied.append(key)
+    network_profile_path = target_environment.get("AIDN_NETWORK_PROFILE_PATH")
+    if network_profile_path:
+        from aidn_hypervisor.network_profile import (
+            apply_network_profile_environment,
+            load_network_profile,
+            load_network_profile_signers,
+            verify_network_profile,
+        )
+
+        trusted_signers = load_network_profile_signers(
+            target_environment.get("AIDN_NETWORK_PROFILE_SIGNERS_PATH")
+        )
+        verification = verify_network_profile(
+            network_profile_path,
+            trusted_profile_signers=trusted_signers,
+        )
+        if not verification.valid:
+            raise OperatorConfigError(
+                "AIDN_NETWORK_PROFILE_PATH verification failed: "
+                + ",".join(verification.errors)
+            )
+        applied.extend(
+            apply_network_profile_environment(
+                load_network_profile(network_profile_path),
+                environ=target_environment,
+            )
+        )
     return OperatorConfigLoadResult(
         path=config_path,
         applied=tuple(sorted(applied)),

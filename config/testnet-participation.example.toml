@@ -1,0 +1,23 @@
+# Temporary aidn-testnet-1 participation incentive policy.
+#
+# This file defines eligibility and calculation only. The payout worker uses a
+# separately funded Testnet Incentive Treasury and the existing consensus
+# WALLET_TRANSFER path. Copy this file to a protected host path and replace the
+# activation boundary before enabling public rewards.
+
+schema_version = "aidn.testnet-participation.v1"
+
+[program]
+program_id = "testnet-alpha-participation-1"
+network_id = "aidn-testnet"
+chain_id = "aidn-testnet-1"
+active_from_epoch = 1000
+participation_window_seconds = 600
+heartbeat_interval_seconds = 30
+minimum_presence_bps = 8000
+minimum_enrollment_seconds = 1800
+reward_per_eligible_window_q_atoms = 1000000
+settlement_period_seconds = 86400
+compatible_protocol_versions = ["0.1"]
+funding_source = "TESTNET_INCENTIVE_TREASURY"
+sunset = "GOVERNANCE_TERMINATION"

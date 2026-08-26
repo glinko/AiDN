@@ -665,7 +665,7 @@ def test_operator_wallet_economics_summary_reports_removals_and_latest_budget() 
     }
     assert response.json()["latest_budget"]["epoch_id"] == "epoch-21"
     assert response.json()["latest_budget"]["recyclable_amount_q"] == 517.5
-    assert response.json()["latest_budget"]["faucet_budget_q"] == 571.75
+    assert response.json()["latest_budget"]["faucet_budget_q"] == 240.7
     assert response.json()["recent_removals"][0]["category"] == "validation_bond_forfeiture"
     assert response.json()["recycling"] == {
         "eligible_removed_q": 512.5,
@@ -683,9 +683,10 @@ def test_operator_wallet_economics_summary_reports_removals_and_latest_budget() 
         "claim": None,
     }
     assert response.json()["pools"] == {
-        "consensus_budget_q": 1655.25,
-        "registry_budget_q": 1655.25,
-        "validation_budget_q": 1655.25,
+        "contribution_budget_q": 3310.5,
+        "consensus_budget_q": 662.1,
+        "registry_budget_q": 662.1,
+        "validation_budget_q": 662.1,
         "faucet_budget_q": 0.0,
     }
     assert response.json()["latest_budget_breakdown"] == {

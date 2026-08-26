@@ -35,6 +35,7 @@ class FaucetClaim(BaseModel):
 
 
 class EpochRewardPoolShares(BaseModel):
+    contribution: float = Field(ge=0.0, le=1.0)
     consensus: float = Field(ge=0.0, le=1.0)
     registry: float = Field(ge=0.0, le=1.0)
     validation: float = Field(ge=0.0, le=1.0)
@@ -45,6 +46,7 @@ class EpochRewardPoolShares(BaseModel):
         total = sum(
             Decimal(str(value))
             for value in (
+                self.contribution,
                 self.consensus,
                 self.registry,
                 self.validation,
@@ -65,6 +67,7 @@ class EpochRewardBudget(BaseModel):
     recyclable_amount_q: float = Field(default=0.0, ge=0.0)
     faucet_carryover_q: float = Field(default=0.0, ge=0.0)
     total_authorized_q: float = Field(default=0.0, ge=0.0)
+    contribution_budget_q: float = Field(default=0.0, ge=0.0)
     consensus_budget_q: float = Field(default=0.0, ge=0.0)
     registry_budget_q: float = Field(default=0.0, ge=0.0)
     validation_budget_q: float = Field(default=0.0, ge=0.0)
@@ -77,6 +80,7 @@ class EpochRewardBudget(BaseModel):
     def _derive_values(self):
         recyclable_amount = round(self.eligible_removed_q + self.recycle_backlog_q, 6)
         total_authorized = round(self.base_emission_q + recyclable_amount, 6)
+        contribution_budget = round(total_authorized * self.pool_shares.contribution, 6)
         consensus_budget = round(total_authorized * self.pool_shares.consensus, 6)
         registry_budget = round(total_authorized * self.pool_shares.registry, 6)
         validation_budget = round(total_authorized * self.pool_shares.validation, 6)
@@ -91,6 +95,7 @@ class EpochRewardBudget(BaseModel):
         )
         self.recyclable_amount_q = recyclable_amount
         self.total_authorized_q = total_authorized
+        self.contribution_budget_q = contribution_budget
         self.consensus_budget_q = consensus_budget
         self.registry_budget_q = registry_budget
         self.validation_budget_q = validation_budget

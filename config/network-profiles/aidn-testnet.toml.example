@@ -1,0 +1,43 @@
+# Template only — it is intentionally unverifiable until release engineering
+# replaces every placeholder with signed aidn-testnet-1 artifacts.
+
+schema_version = "aidn.network-profile.v1"
+
+[network]
+name = "aidn-testnet"
+network_id = "aidn-testnet"
+chain_id = "aidn-testnet-1"
+environment = "testnet"
+protocol_version = "0.1"
+genesis_file = "/etc/aidn/testnet/genesis.json"
+genesis_sha256 = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+public_profile_file = "/etc/aidn/testnet/public-multivalidator-profile.json"
+public_profile_sha256 = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+[network.cometbft]
+p2p_host = "0.0.0.0"
+p2p_port = 26656
+rpc_host = "127.0.0.1"
+rpc_port = 26657
+persistent_peers = []
+seeds = []
+max_num_inbound_peers = 40
+max_num_outbound_peers = 10
+pex = true
+addr_book_strict = true
+
+[network.consensus]
+timeout_propose = "3s"
+timeout_prevote = "1s"
+timeout_precommit = "1s"
+timeout_commit = "3s"
+
+[network.state_sync]
+enabled = true
+rpc_servers = []
+trust_height = 0
+trust_hash = ""
+
+[network.discovery]
+enabled = true
+bootstrap = []

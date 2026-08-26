@@ -43,7 +43,10 @@ DevelopmentPool_e = DevelopmentBaseAllocation_e
 
 Distributable epoch emission is defined by the active emission policy and may contain base issuance, recycled Q, assigned protocol revenue, grants, and donations. This ECO does not redefine total emission. New Q assigned to development SHALL NOT exceed the active epoch allocation; carryover is already allocated but undistributed Q.
 
-Recommended launch values are `DevelopmentShare = 5%`, with an ordinary Governance range of 3% through 10%. A change outside that range SHOULD require an enhanced Governance threshold and SHALL apply only from a declared future epoch.
+Under `ECO-0010`, the launch value is `DevelopmentShare = 60%`. It replaces
+the earlier 5% draft default and SHALL apply only from its declared activation
+Epoch. Any later change remains a versioned Governance parameter and cannot
+retroactively reprice accepted contributions.
 
 ## 3. Pool Accounts and Reserves
 
@@ -275,7 +278,7 @@ Ordinary rewards are public or pseudonymous. Private security reward evidence an
 Recommended launch profile:
 
 ```yaml
-development_share: 0.05
+development_share: 0.60
 security_pool_share_of_development: 0.15
 documentation_pool_share_of_development: 0.05
 nominal_q_per_cu: 1.0

@@ -49,7 +49,7 @@ class DevelopmentRewardPolicy(BaseModel, frozen=True):
     """Governance parameters for the simulation profile, expressed as integers."""
 
     policy_version: str = DEVELOPMENT_REWARD_CALCULATION_VERSION
-    development_share_bps: int = Field(default=500, ge=0, le=BASIS_POINTS)
+    development_share_bps: int = Field(default=6_000, ge=0, le=BASIS_POINTS)
     security_pool_share_bps: int = Field(default=1_500, ge=0, le=BASIS_POINTS)
     documentation_pool_share_bps: int = Field(default=500, ge=0, le=BASIS_POINTS)
     nominal_q_per_cu_q_atoms: int = Field(default=Q_ATOMS_PER_Q, ge=0)
