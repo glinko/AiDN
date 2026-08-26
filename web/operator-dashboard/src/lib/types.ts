@@ -21,9 +21,11 @@ const nodeIdentitySchema = z.object({
 
 const walletSchema = z.object({
   configured: z.boolean().catch(false),
-  wallet_id: z.string().optional(),
-  public_key: z.string().optional(),
-  label: z.string().optional(),
+  // A new node intentionally has no owner Wallet yet. The API represents
+  // those absent values as null, while a configured Wallet returns strings.
+  wallet_id: z.string().nullable().optional(),
+  public_key: z.string().nullable().optional(),
+  label: z.string().nullable().optional(),
 }).passthrough()
 
 export const bundleSchema = z.object({
