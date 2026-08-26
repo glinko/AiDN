@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 from aidn_hypervisor.domain.models import (
@@ -234,6 +235,66 @@ def test_file_state_store_returns_empty_snapshot_when_file_is_missing(
     store = FileStateStore(tmp_path / "missing-state.json")
 
     assert store.load() == HypervisorStateSnapshot()
+
+
+def test_file_state_store_migrates_pre_v2_endpoint_pricing(tmp_path: Path) -> None:
+    state_path = tmp_path / "legacy-hypervisor-state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "endpoints": [
+                    {
+                        "endpoint_id": "ep-legacy",
+                        "owner_wallet": "wallet-legacy",
+                        "created_at": "2026-08-01T00:00:00+00:00",
+                        "bundle_id": "bundle-legacy",
+                        "bundle_hash": "bundle-hash",
+                        "configuration_hash": "cfg-legacy",
+                        "display_name": "Legacy endpoint",
+                        "model_class": "llm_text",
+                        "pricing": {
+                            "billing_unit": "request",
+                            "input_price": 12.0,
+                            "output_price": 18.0,
+                            "audio_input_second_price": None,
+                            "fixed_price": 1.0,
+                        },
+                    }
+                ],
+                "endpoint_configuration_snapshots": [
+                    {
+                        "configuration_hash": "cfg-legacy",
+                        "endpoint_id": "ep-legacy",
+                        "bundle_hash": "bundle-hash",
+                        "created_at": "2026-08-01T00:00:00+00:00",
+                        "runtime": {},
+                        "publication": {},
+                        "pricing": {
+                            "billing_unit": "request",
+                            "input_price": None,
+                            "output_price": None,
+                            "audio_input_second_price": 0.4,
+                            "fixed_price": 0.0,
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    restored = FileStateStore(state_path).load()
+
+    endpoint_components = restored.endpoints[0].pricing.rate_card.components
+    assert [(item.dimension, item.unit_price_q_atoms) for item in endpoint_components] == [
+        ("input_tokens", 12_000_000),
+        ("output_tokens", 18_000_000),
+        ("request_count", 1_000_000),
+    ]
+    snapshot_component = restored.endpoint_configuration_snapshots[0].pricing.rate_card.components[0]
+    assert snapshot_component.dimension == "audio_input_milliseconds"
+    assert snapshot_component.unit_price_q_atoms == 400_000
+    assert snapshot_component.unit_divisor == 1_000
 
 
 def test_file_state_store_round_trips_endpoint_snapshot_fields(tmp_path: Path) -> None:

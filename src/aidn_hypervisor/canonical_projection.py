@@ -16,6 +16,7 @@ from aidn_hypervisor.canonical_models import (
 )
 from aidn_hypervisor.endpoints.models import EndpointPricing
 from aidn_hypervisor.pricing import accounting_snapshot_units
+from aidn_hypervisor.pricing.migration import normalize_legacy_pricing
 from aidn_hypervisor.runtime_parameter_policy import marketplace_parameter_policy
 
 _CAPABILITY_BY_WORKLOAD = {
@@ -233,7 +234,10 @@ def _accounting_contract_for_publication(service, publication) -> dict:
         or usage_contract.get("fallback_measurement_source")
         or "provider_report"
     )
-    pricing = publication.pricing or {}
+    # Publications are a signed historical read model and may outlive the
+    # endpoint snapshot that created them.  Normalize only at this projection
+    # boundary; do not rewrite the signed legacy record or its hash.
+    pricing = normalize_legacy_pricing(publication.pricing or {})
     normalized_pricing = EndpointPricing.model_validate(pricing)
     rate_card = normalized_pricing.rate_card
     session = publication.session or {}
