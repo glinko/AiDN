@@ -61,6 +61,13 @@ class McpPairingCode:
     expires_at: str
 
 
+@dataclass(frozen=True)
+class DashboardFirstBrowserClaim:
+    """A short-lived, explicit opportunity for one browser to become trusted."""
+
+    expires_at: str
+
+
 class McpCredentialStore:
     """Store MCP credential digests in the configured encrypted secret backend."""
 
@@ -354,6 +361,9 @@ class McpCredentialStore:
             "created_at": self._format_timestamp(created_at),
             "expires_at": self._format_timestamp(expires_at),
         }
+        # A CLI code is a deliberate replacement for the less restrictive
+        # trusted-LAN enrollment window, never a second concurrent path.
+        state["dashboard_first_browser_claim"] = None
         self._save_state(state)
         return McpPairingCode(code=code, expires_at=self._format_timestamp(expires_at))
 
@@ -376,6 +386,82 @@ class McpCredentialStore:
             state["pairing"] = None
             self._save_state(state)
         return valid
+
+    def open_first_dashboard_browser_claim(self, *, ttl_seconds: int) -> DashboardFirstBrowserClaim:
+        """Allow exactly one explicitly-confirmed browser enrollment for a short period.
+
+        This mode is intentionally separate from a pairing code: it is suitable
+        only for the trusted LAN selected by the operator during bootstrap.  A
+        page load alone cannot consume it; the browser has to call the explicit
+        claim endpoint and a successful claim removes the window permanently.
+        """
+        if ttl_seconds <= 0:
+            raise ValueError("first browser claim TTL must be positive")
+        created_at = self._current_time()
+        expires_at = created_at + timedelta(seconds=ttl_seconds)
+        state = self._load_state()
+        self._prune_dashboard_sessions(state)
+        if state["dashboard_sessions"]:
+            raise ValueError("cannot open first browser enrollment after a browser is already trusted")
+        # Conversely, an explicit first-browser choice invalidates a prior
+        # terminal code so the installer has one active enrollment method.
+        state["pairing"] = None
+        state["dashboard_first_browser_claim"] = {
+            "created_at": self._format_timestamp(created_at),
+            "expires_at": self._format_timestamp(expires_at),
+        }
+        self._save_state(state)
+        return DashboardFirstBrowserClaim(expires_at=self._format_timestamp(expires_at))
+
+    def first_dashboard_browser_claim_expiry(self) -> str | None:
+        """Return a redacted claim-window status, pruning stale state on read."""
+        state = self._load_state()
+        self._prune_dashboard_sessions(state)
+        claim = state.get("dashboard_first_browser_claim")
+        expires_at = self._parse_timestamp(claim.get("expires_at")) if isinstance(claim, dict) else None
+        active = bool(not state["dashboard_sessions"] and expires_at is not None and expires_at > self._current_time())
+        if not active and claim is not None:
+            state["dashboard_first_browser_claim"] = None
+            self._save_state(state)
+        elif state["dashboard_sessions"]:
+            self._save_state(state)
+        return self._format_timestamp(expires_at) if active and expires_at is not None else None
+
+    def claim_first_dashboard_browser(
+        self,
+        *,
+        session_id: str,
+        browser_key: str,
+        expires_at: str | None,
+        max_sessions: int,
+    ) -> bool:
+        """Consume the first-browser window and store one browser-bound session."""
+        if not session_id or not self._valid_browser_key(browser_key) or max_sessions < 1:
+            return False
+        state = self._load_state()
+        self._prune_dashboard_sessions(state)
+        claim = state.get("dashboard_first_browser_claim")
+        claim_expires_at = self._parse_timestamp(claim.get("expires_at")) if isinstance(claim, dict) else None
+        valid = bool(
+            not state["dashboard_sessions"]
+            and claim_expires_at is not None
+            and claim_expires_at > self._current_time()
+        )
+        if not valid:
+            if claim is not None:
+                state["dashboard_first_browser_claim"] = None
+                self._save_state(state)
+            return False
+        state["dashboard_sessions"].append(
+            {
+                "session_digest": self._digest(session_id),
+                "browser_key_digest": self._digest(browser_key),
+                "expires_at": expires_at,
+            }
+        )
+        state["dashboard_first_browser_claim"] = None
+        self._save_state(state)
+        return True
 
     def create_dashboard_browser_session(
         self,
@@ -464,6 +550,7 @@ class McpCredentialStore:
                 "pairing": None,
                 "legacy_imported": False,
                 "dashboard_sessions": [],
+                "dashboard_first_browser_claim": None,
             }
         try:
             raw = self._secret_manager.get(MCP_ACCESS_STATE_HANDLE)
@@ -483,6 +570,8 @@ class McpCredentialStore:
             state["legacy_imported"] = False
         if "dashboard_sessions" not in state:
             state["dashboard_sessions"] = []
+        if "dashboard_first_browser_claim" not in state:
+            state["dashboard_first_browser_claim"] = None
         for record in credentials:
             record.setdefault("kind", "mcp")
             if "auto_approved_scopes" not in record:
@@ -495,6 +584,10 @@ class McpCredentialStore:
             not isinstance(item, dict) for item in state["dashboard_sessions"]
         ):
             raise SecretManagerError("MCP dashboard browser session state is invalid")
+        if state["dashboard_first_browser_claim"] is not None and not isinstance(
+            state["dashboard_first_browser_claim"], dict
+        ):
+            raise SecretManagerError("MCP first dashboard browser claim state is invalid")
         return state
 
     def _prune_dashboard_sessions(self, state: dict) -> None:

@@ -167,6 +167,45 @@ def test_access_session_can_be_persistent_and_survives_service_restart(tmp_path)
     assert restored.session_expiry(session.session_id, browser_key=browser_key) is None
 
 
+def test_first_browser_claim_requires_explicit_action_and_is_single_use(tmp_path) -> None:
+    clock = _Clock()
+    store = McpCredentialStore(secret_manager=_manager(tmp_path), now=clock)
+    access = DashboardAccessService(store=store, now=clock)
+    browser_key = "first-browser-key-000000000000000000000000000000000000000000"
+
+    window = access.open_first_browser_claim(ttl_seconds=3600)
+
+    assert access.first_browser_claim_expiry() == window.expires_at
+    session = access.claim_first_browser(browser_key=browser_key, duration="one_day")
+    assert session is not None
+    assert access.authorize(session.session_id, browser_key=browser_key) is True
+    assert access.first_browser_claim_expiry() is None
+    assert access.claim_first_browser(browser_key=browser_key, duration="one_day") is None
+
+
+def test_first_browser_claim_expires_without_trusting_a_browser(tmp_path) -> None:
+    clock = _Clock()
+    store = McpCredentialStore(secret_manager=_manager(tmp_path), now=clock)
+    access = DashboardAccessService(store=store, now=clock)
+    browser_key = "expiring-browser-key-000000000000000000000000000000000000000000"
+
+    access.open_first_browser_claim(ttl_seconds=60)
+    clock.advance(seconds=61)
+
+    assert access.first_browser_claim_expiry() is None
+    assert access.claim_first_browser(browser_key=browser_key) is None
+
+
+def test_dashboard_enrollment_methods_replace_each_other(tmp_path) -> None:
+    store = McpCredentialStore(secret_manager=_manager(tmp_path))
+
+    store.open_first_dashboard_browser_claim(ttl_seconds=3600)
+    pairing = store.create_pairing_code(ttl_seconds=600)
+
+    assert store.first_dashboard_browser_claim_expiry() is None
+    assert store.consume_pairing_code(pairing.code) is True
+
+
 def test_operator_pair_command_prints_one_time_code_only_to_stdout(tmp_path, capsys) -> None:
     key = os.urandom(32)
     secret_path = tmp_path / "secrets.json"
@@ -193,6 +232,34 @@ def test_operator_pair_command_prints_one_time_code_only_to_stdout(tmp_path, cap
     assert result == 0
     assert store.consume_pairing_code(code) is True
     assert code.encode("utf-8") not in secret_path.read_bytes()
+
+
+def test_operator_pair_first_browser_mode_opens_explicit_claim_window(tmp_path, capsys) -> None:
+    key = os.urandom(32)
+    secret_path = tmp_path / "secrets.json"
+    key_path = tmp_path / "master-key.b64"
+    key_path.write_text(base64.b64encode(key).decode("ascii"), encoding="utf-8")
+
+    result = operator_cli_main(
+        [
+            "pair",
+            "--mode",
+            "first-browser",
+            "--secret-manager-path",
+            str(secret_path),
+            "--master-key-file",
+            str(key_path),
+            "--dashboard-url",
+            "http://127.0.0.1:8766/operators/dashboard/react#settings",
+        ]
+    )
+
+    output = capsys.readouterr().out
+    store = McpCredentialStore(secret_manager=FileSecretManager(path=secret_path, master_key=key))
+    assert result == 0
+    assert "first-browser claim window opened" in output
+    assert "Code:" not in output
+    assert store.first_dashboard_browser_claim_expiry() is not None
 
 
 def test_operator_pair_module_entrypoint_runs_main(tmp_path) -> None:

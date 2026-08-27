@@ -111,11 +111,17 @@ def _label_argument(value: str) -> str:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Operate one local AiDN Hypervisor")
     commands = parser.add_subparsers(dest="command", required=True)
-    pair = commands.add_parser("pair", help="create a one-time dashboard pairing code")
+    pair = commands.add_parser("pair", help="open a bounded Dashboard browser binding method")
     _add_secret_options(pair)
     _add_runtime_options(pair)
     pair.add_argument("--dashboard-url", required=True)
     pair.add_argument("--ttl-seconds", type=int, default=600)
+    pair.add_argument(
+        "--mode",
+        choices=("code", "first-browser"),
+        default="code",
+        help="code prints a one-time value; first-browser opens an explicit claim window",
+    )
 
     wallet = commands.add_parser("wallet", help="inspect or bootstrap the owner wallet")
     wallet_commands = wallet.add_subparsers(dest="wallet_command", required=True)
@@ -544,13 +550,19 @@ def main(argv: list[str] | None = None) -> int:
             if args.ttl_seconds <= 0:
                 raise ValueError("--ttl-seconds must be positive")
             manager = _secret_manager(args)
-            pairing = McpCredentialStore(secret_manager=manager).create_pairing_code(
-                ttl_seconds=args.ttl_seconds
-            )
-            print("Dashboard pairing code created.")
-            print(f"Open: {args.dashboard_url}")
-            print(f"Expires: {pairing.expires_at}")
-            print(f"Code: {pairing.code}")
+            store = McpCredentialStore(secret_manager=manager)
+            if args.mode == "code":
+                pairing = store.create_pairing_code(ttl_seconds=args.ttl_seconds)
+                print("Dashboard pairing code created.")
+                print(f"Open: {args.dashboard_url}")
+                print(f"Expires: {pairing.expires_at}")
+                print(f"Code: {pairing.code}")
+            else:
+                claim = store.open_first_dashboard_browser_claim(ttl_seconds=args.ttl_seconds)
+                print("Dashboard first-browser claim window opened.")
+                print(f"Open: {args.dashboard_url}")
+                print(f"Expires: {claim.expires_at}")
+                print("Action: open the Dashboard on the trusted browser and select Claim this browser.")
             return 0
         if args.command == "wallet":
             with _runtime_environment(args):

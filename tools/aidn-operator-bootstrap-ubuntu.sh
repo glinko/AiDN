@@ -43,7 +43,7 @@ Options:
   --no-consensus             Disable automatic local CometBFT installation
   --no-start                Install and write the user service, but do not start it
   --wallet-action ACTION    create, import, or skip (interactive default: create)
-  --dashboard-pairing ACTION create or skip (interactive default: create)
+  --dashboard-pairing ACTION code, first_browser, or skip (interactive default: code)
   --agent-action ACTION     guide or skip existing MCP enrollment (default: guide)
   --setup-mode MODE         manual or ai_assisted (interactive default: manual)
   --setup-provider ID       skip, ollama, llama.cpp, or vllm for AI-assisted setup
@@ -1097,7 +1097,7 @@ if [[ "$setup_mode" == 'ai_assisted' && "$non_interactive" != 'true' ]]; then
   recommended_install_dir="${install_dir:-$HOME/aidn/$recommended_operator_id/AiDN}"
   recommended_data_dir="${data_dir:-$HOME/.local/share/aidn/$recommended_operator_id}"
   recommended_wallet_action="${wallet_action:-create}"
-  recommended_pairing_action="${dashboard_pairing_action:-create}"
+  recommended_pairing_action="${dashboard_pairing_action:-code}"
   printf '\nRecommended assisted setup\n' >&2
   printf '  Node name       : %s\n' "$recommended_operator_id" >&2
   printf '  Install path    : %s\n' "$recommended_install_dir" >&2
@@ -1118,7 +1118,7 @@ if [[ "$setup_mode" == 'ai_assisted' && "$non_interactive" != 'true' ]]; then
     consensus_mode_supplied='true'
     [[ "$wallet_action_supplied" == 'true' ]] || wallet_action='create'
     wallet_action_supplied='true'
-    [[ "$dashboard_pairing_supplied" == 'true' ]] || dashboard_pairing_action='create'
+    [[ "$dashboard_pairing_supplied" == 'true' ]] || dashboard_pairing_action='code'
     dashboard_pairing_supplied='true'
     [[ "$agent_action_supplied" == 'true' ]] || agent_action='guide'
     agent_action_supplied='true'
@@ -1192,14 +1192,15 @@ if [[ "$dashboard_pairing_supplied" != 'true' ]]; then
   if [[ "$non_interactive" == 'true' ]]; then
     dashboard_pairing_action='skip'
   else
-    dashboard_pairing_action="$(prompt_choice 'Dashboard pairing (create/skip)' 'create' 'Pairing creates a one-time browser code. It expires after use; skipping keeps the Dashboard locked until you run aidn-operator pair later.' \
-      'create|Создать код pairing|Показать одноразовый URL и код после установки' \
-      'skip|Пропустить|Оставить Dashboard непарным до ручного запуска pair')"
+    dashboard_pairing_action="$(prompt_choice 'Dashboard browser binding (code/first_browser/skip)' 'code' 'Choose how the owner browser is bound after installation. A code is safest; the one-hour first-browser window is only for a trusted LAN and still requires an explicit confirmation in the Dashboard.' \
+      'code|Код из CLI|Показать одноразовый URL и код после установки' \
+      'first_browser|Первый доверенный браузер|Открыть окно на один час: в Dashboard нужно явно нажать привязку этого браузера' \
+      'skip|Позже|Оставить Dashboard непарным до ручного запуска aidn-operator pair')"
   fi
 fi
 case "$dashboard_pairing_action" in
-  create|skip) ;;
-  *) die 'dashboard pairing action must be create or skip' ;;
+  code|first_browser|skip) ;;
+  *) die 'dashboard pairing action must be code, first_browser, or skip' ;;
 esac
 
 if [[ "$agent_action_supplied" != 'true' ]]; then
@@ -1932,13 +1933,23 @@ PY
     wallet_bootstrap_status='status_unavailable'
   fi
 
-  if [[ "$dashboard_pairing_action" == 'create' ]]; then
-    pairing_output="$("$HOME/.local/bin/aidn-operator" pair)"
+  if [[ "$dashboard_pairing_action" == 'code' || "$dashboard_pairing_action" == 'first_browser' ]]; then
+    pairing_mode='code'
+    pairing_ttl_seconds='600'
+    if [[ "$dashboard_pairing_action" == 'first_browser' ]]; then
+      pairing_mode='first-browser'
+      pairing_ttl_seconds='3600'
+    fi
+    pairing_output="$("$HOME/.local/bin/aidn-operator" pair --mode "$pairing_mode" --ttl-seconds "$pairing_ttl_seconds")"
     dashboard_pairing_url="$(printf '%s\n' "$pairing_output" | sed -n 's/^Open: //p')"
     dashboard_pairing_expires="$(printf '%s\n' "$pairing_output" | sed -n 's/^Expires: //p')"
     dashboard_pairing_code="$(printf '%s\n' "$pairing_output" | sed -n 's/^Code: //p')"
     [[ -n "$dashboard_pairing_url" ]] || dashboard_pairing_url="$dashboard_url"
-    dashboard_pairing_status='created_once'
+    if [[ "$dashboard_pairing_action" == 'code' ]]; then
+      dashboard_pairing_status='code_created_once'
+    else
+      dashboard_pairing_status='first_browser_window_open'
+    fi
   else
     dashboard_pairing_status='skipped_by_operator'
   fi
@@ -2211,10 +2222,14 @@ printf '  wallet status     : %s\n' "$wallet_bootstrap_status" >&2
 printf '  wallet ID         : %s\n' "$display_wallet_id" >&2
 printf '  wallet public key : %s\n' "$display_wallet_public_key" >&2
 printf '  dashboard pairing : %s\n' "$dashboard_pairing_status" >&2
-if [[ "$dashboard_pairing_status" == 'created_once' ]]; then
+if [[ "$dashboard_pairing_status" == 'code_created_once' ]]; then
   printf '  pairing URL       : %s\n' "$dashboard_pairing_url" >&2
   printf '  pairing expires   : %s\n' "$display_pairing_expires" >&2
   printf '  one-time code     : %s\n' "$display_pairing_code" >&2
+elif [[ "$dashboard_pairing_status" == 'first_browser_window_open' ]]; then
+  printf '  dashboard URL     : %s\n' "$dashboard_pairing_url" >&2
+  printf '  claim expires     : %s\n' "$display_pairing_expires" >&2
+  printf '  next step         : open Dashboard on the trusted browser and select Claim this browser\n' >&2
 elif [[ "$dashboard_pairing_status" == 'deferred_no_start' ]]; then
   printf '  pairing next step : run aidn-operator pair after starting the service\n' >&2
 else

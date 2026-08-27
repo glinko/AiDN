@@ -64,6 +64,9 @@ def test_release_operator_bootstrap_uses_safe_defaults_and_user_systemd() -> Non
     assert "[PRIVATE MATERIAL — NEVER COPY OR SHARE]" in script
     assert "dashboard_pairing_code" in script
     assert "dashboard_pairing_expires" in script
+    assert "first_browser" in script
+    assert "Claim this browser" in script
+    assert "--mode \"$pairing_mode\"" in script
     assert "print(json.dumps(payload, sort_keys=True))" not in script
     assert "hypervisor-bind-host" in script
     assert "AIDN_HYPERVISOR_RESTART_ON_BIND_CHANGE=true" in script
@@ -209,6 +212,7 @@ api_host_q=127.0.0.1
 api_port_q=8000
 setup_mode_q=ai_assisted
 setup_plan_q=/tmp/aidn-data/installation-plan.json
+node_root_q=/tmp/aidn-data/tooling/node
 operator_id=main
 runtime_broker_socket=/run/user/1000/aidn-provider-runtime.sock
 {fragment}

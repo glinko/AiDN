@@ -154,6 +154,9 @@ export type SoftwareUpdatePayload = {
 export type DashboardAccessStatus = {
   enabled: boolean
   session: { active: boolean; expires_at: string | null }
+  browser_binding: {
+    first_browser_claim: { active: boolean; expires_at: string | null }
+  }
   transport: { insecure_lan: boolean }
   operator_authority: { configured: boolean; fingerprint: string | null }
   network_access: DashboardNetworkAccess
@@ -450,6 +453,7 @@ export const dashboardApi = {
   reconnectCometbft: (payload: { mode: 'non_validator'; chain_id: string; version: string; moniker?: string; rpc_host: '127.0.0.1'; rpc_port: number; p2p_host: '127.0.0.1' | '0.0.0.0'; p2p_port: number; external_address: string; seeds: string; persistent_peers: string; abci_host: '127.0.0.1'; abci_port: number; acknowledge_network_scope: boolean; source_rpc: string; acknowledge_reset: boolean }) => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/cometbft/reconnect', { method: 'POST', body: JSON.stringify(payload) }),
   applyCometbft: () => writeDashboard<DashboardRecord>('/operators/dashboard/access/operations/cometbft/apply', { method: 'POST' }),
   pairDashboard: (code: string, duration: string) => writeDashboard('/operators/dashboard/access/pair', { method: 'POST', body: JSON.stringify({ code, duration }) }),
+  claimFirstBrowser: (duration: string) => writeDashboard('/operators/dashboard/access/claim-first-browser', { method: 'POST', body: JSON.stringify({ duration }) }),
   createAgentCredential: (label: string, scopes?: string[], autoApprovedScopes?: string[]) => writeDashboard<AccessCredential>('/operators/dashboard/access/credentials', { method: 'POST', body: JSON.stringify({ label, ...(scopes ? { scopes } : {}), ...(autoApprovedScopes ? { auto_approved_scopes: autoApprovedScopes } : {}) }) }),
   agentPermissionCatalog: () => writeDashboard<AgentPermissionCatalog>('/operators/dashboard/access/permission-catalog', { method: 'GET' }),
   updateAgentCredentialScopes: (credentialId: string, scopes: string[], autoApprovedScopes: string[]) => writeDashboard<AccessCredential>(`/operators/dashboard/access/credentials/${credentialId}/scopes`, { method: 'PUT', body: JSON.stringify({ scopes, auto_approved_scopes: autoApprovedScopes }) }),

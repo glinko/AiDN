@@ -78,6 +78,10 @@ class PairingRequest(BaseModel):
     duration: str = Field(default="one_day", pattern="^(ten_minutes|one_day|thirty_days|forever)$")
 
 
+class FirstBrowserClaimRequest(BaseModel):
+    duration: str = Field(default="one_day", pattern="^(ten_minutes|one_day|thirty_days|forever)$")
+
+
 class CredentialCreateRequest(BaseModel):
     label: str = Field(min_length=1, max_length=96)
     scopes: list[str] = Field(default_factory=lambda: list(DEFAULT_AGENT_READ_SCOPES), min_length=1, max_length=64)
@@ -985,9 +989,18 @@ def build_operator_access_router(
     @router.get("/status")
     async def status(request: Request) -> dict:
         active = session_expiry(request) is not None
+        first_browser_claim_expiry = (
+            access_service.first_browser_claim_expiry() if access_service is not None else None
+        )
         return {
             "enabled": access_service is not None and credential_store is not None,
             "session": {"active": active, "expires_at": session_expiry(request)},
+            "browser_binding": {
+                "first_browser_claim": {
+                    "active": first_browser_claim_expiry is not None,
+                    "expires_at": first_browser_claim_expiry,
+                },
+            },
             "transport": {"insecure_lan": allow_insecure_lan},
             "operator_authority": {
                 "configured": operator_fingerprint is not None,
@@ -1277,6 +1290,37 @@ def build_operator_access_router(
             max_age=_COOKIE_MAX_AGE[payload.duration],
         )
         return paired
+
+    @router.post("/claim-first-browser", status_code=200)
+    async def claim_first_browser(payload: FirstBrowserClaimRequest, request: Request) -> Response:
+        if access_service is None:
+            return JSONResponse(status_code=404, content={"error": {"code": "DASHBOARD_ACCESS_DISABLED"}})
+        if not allow_insecure_lan and request.url.scheme != "https":
+            return JSONResponse(status_code=426, content={"error": {"code": "DASHBOARD_ACCESS_TLS_REQUIRED"}})
+        session = access_service.claim_first_browser(
+            browser_key=request.headers.get(_BROWSER_KEY_HEADER),
+            duration=payload.duration,
+        )
+        if session is None:
+            return JSONResponse(
+                status_code=409,
+                content={"error": {"code": "DASHBOARD_FIRST_BROWSER_CLAIM_UNAVAILABLE"}},
+            )
+        claimed = JSONResponse(
+            status_code=200,
+            content={"status": "paired", "expires_at": session.expires_at},
+            headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+        )
+        claimed.set_cookie(
+            _COOKIE_NAME,
+            session.session_id,
+            httponly=True,
+            samesite="strict",
+            secure=not allow_insecure_lan,
+            path=_COOKIE_PATH,
+            max_age=_COOKIE_MAX_AGE[payload.duration],
+        )
+        return claimed
 
     @router.post("/credentials", status_code=201)
     async def create_credential(payload: CredentialCreateRequest, request: Request) -> Response:

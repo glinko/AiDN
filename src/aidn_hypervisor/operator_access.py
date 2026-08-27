@@ -7,7 +7,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
-from aidn_hypervisor.mcp.credentials import McpCredentialStore, McpPairingCode
+from aidn_hypervisor.mcp.credentials import (
+    DashboardFirstBrowserClaim,
+    McpCredentialStore,
+    McpPairingCode,
+)
 
 DEFAULT_DASHBOARD_SESSION_TTL_SECONDS = 900
 _DURATION_SECONDS = {
@@ -46,6 +50,12 @@ class DashboardAccessService:
     def create_pairing(self, *, ttl_seconds: int) -> McpPairingCode:
         return self._store.create_pairing_code(ttl_seconds=ttl_seconds)
 
+    def open_first_browser_claim(self, *, ttl_seconds: int) -> DashboardFirstBrowserClaim:
+        return self._store.open_first_dashboard_browser_claim(ttl_seconds=ttl_seconds)
+
+    def first_browser_claim_expiry(self) -> str | None:
+        return self._store.first_dashboard_browser_claim_expiry()
+
     def exchange_pairing_code(
         self, code: str | None, *, browser_key: str | None, duration: str = "one_day"
     ) -> DashboardAccessSession | None:
@@ -58,6 +68,28 @@ class DashboardAccessService:
         expires_at = None if seconds is None else self._current_time() + timedelta(seconds=seconds)
         expiry_text = None if expires_at is None else self._format_timestamp(expires_at)
         if not self._store.create_dashboard_browser_session(
+            session_id=session_id,
+            browser_key=browser_key,
+            expires_at=expiry_text,
+            max_sessions=self._max_sessions,
+        ):
+            return None
+        return DashboardAccessSession(
+            session_id=session_id,
+            expires_at=expiry_text or "never",
+            duration=duration,
+        )
+
+    def claim_first_browser(
+        self, *, browser_key: str | None, duration: str = "one_day"
+    ) -> DashboardAccessSession | None:
+        if duration not in _DURATION_SECONDS or not isinstance(browser_key, str) or not (32 <= len(browser_key) <= 128):
+            return None
+        session_id = "das-" + secrets.token_urlsafe(24)
+        seconds = _DURATION_SECONDS[duration]
+        expires_at = None if seconds is None else self._current_time() + timedelta(seconds=seconds)
+        expiry_text = None if expires_at is None else self._format_timestamp(expires_at)
+        if not self._store.claim_first_dashboard_browser(
             session_id=session_id,
             browser_key=browser_key,
             expires_at=expiry_text,

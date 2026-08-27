@@ -199,6 +199,35 @@ def test_credential_mutation_requires_pairing_and_reveals_only_new_value(tmp_pat
     assert client.post("/operators/dashboard/access/logout").status_code == 204
 
 
+def test_first_browser_claim_is_visible_but_requires_explicit_post(tmp_path) -> None:
+    manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
+    credentials = McpCredentialStore(secret_manager=manager)
+    access = DashboardAccessService(store=credentials)
+    access.open_first_browser_claim(ttl_seconds=3600)
+    app = FastAPI()
+    app.include_router(
+        build_operator_access_router(
+            access_service=access,
+            credential_store=credentials,
+            allow_insecure_lan=True,
+        )
+    )
+    client = TestClient(app)
+    client.headers.update(_BROWSER_HEADERS)
+
+    status = client.get("/operators/dashboard/access/status")
+    assert status.status_code == 200
+    assert status.json()["browser_binding"]["first_browser_claim"]["active"] is True
+    assert client.get("/operators/dashboard/access/status").json()["session"]["active"] is False
+
+    claimed = client.post("/operators/dashboard/access/claim-first-browser", json={"duration": "one_day"})
+    assert claimed.status_code == 200
+    assert claimed.json()["status"] == "paired"
+    assert "aidn_dashboard_access=" in claimed.headers["set-cookie"]
+    assert client.get("/operators/dashboard/access/status").json()["session"]["active"] is True
+    assert client.post("/operators/dashboard/access/claim-first-browser", json={}).status_code == 409
+
+
 def test_inference_token_requires_local_agent_opt_in(tmp_path) -> None:
     manager = FileSecretManager(path=tmp_path / "secrets.json", master_key=os.urandom(32))
     credentials = McpCredentialStore(secret_manager=manager)
