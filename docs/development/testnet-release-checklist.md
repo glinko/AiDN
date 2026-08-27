@@ -12,8 +12,11 @@ an active network profile.
 3. Publish the trusted public-key registry separately from the candidate
    profile. The profile must not trust its own embedded keys.
 4. Replace the hashes and peer/state-sync endpoints in
-   `config/network-profiles/aidn-testnet.toml.example`, then package it as
-   `/etc/aidn/testnet/network-profile.toml` with the two verified artifacts.
+   `config/network-profiles/aidn-testnet.toml.example`, then package it as a
+   portable directory whose profile refers to its sibling `genesis.json` and
+   `public-multivalidator-profile.json` by relative path. Install it through
+   `aidn-operator-bootstrap-ubuntu.sh --network-profile ...` with the separate
+   trusted signer registry.
 5. Replace `active_from_epoch` in
    `config/testnet-participation.example.toml` with the finalized activation
    Epoch, copy it outside the repository, and protect it from Dashboard edits.

@@ -9,9 +9,9 @@ network_id = "aidn-testnet"
 chain_id = "aidn-testnet-1"
 environment = "testnet"
 protocol_version = "0.1"
-genesis_file = "/etc/aidn/testnet/genesis.json"
+genesis_file = "genesis.json"
 genesis_sha256 = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
-public_profile_file = "/etc/aidn/testnet/public-multivalidator-profile.json"
+public_profile_file = "public-multivalidator-profile.json"
 public_profile_sha256 = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
 
 [network.cometbft]
