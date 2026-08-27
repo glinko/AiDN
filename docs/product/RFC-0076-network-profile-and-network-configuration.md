@@ -104,6 +104,41 @@ The service consumes a selected profile through `AIDN_NETWORK_PROFILE_PATH`.
 An environment variable may fill a missing local setting, but cannot override
 a consensus-bound value with a different value.
 
+## 4.1 Portable Release Bundle And First Join
+
+A public Network Profile is distributed as a small portable bundle, not as a
+bare TOML file. A release bundle contains:
+
+```text
+network-profile.toml
+genesis.json
+public-multivalidator-profile.json
+```
+
+The trusted release-authority registry is supplied separately as an operator
+trust anchor. A candidate bundle must never be trusted merely because it also
+contains a file claiming which keys signed it.
+
+The supported installation boundary is:
+
+```text
+aidn-operator-bootstrap-ubuntu.sh \
+  --network-profile /reviewed-release/network-profile.toml \
+  --network-profile-signers /reviewed-release/trusted-profile-signers.json
+```
+
+The bootstrap verifies the bundle before copying it into the node data
+directory, verifies Genesis and the signed public profile again at the final
+location, then projects the verified network identity, CometBFT peer list, and
+Genesis into the local runtime. The CometBFT installer refuses to replace an
+existing different Genesis.
+
+Installing or running a local CometBFT process does not by itself make the
+operator an active Validator. Validator membership and voting power are
+canonical Validator Set state and require the applicable consensus/governance
+process. A joining node may first synchronize as a non-voting network node and
+be admitted as a Validator only through that separate path.
+
 ## 5. Upgrade rule
 
 Changing a consensus-bound field creates a new profile identity and requires

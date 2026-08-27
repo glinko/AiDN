@@ -19,6 +19,7 @@ import os
 import shutil
 import tempfile
 import tomllib
+import uuid
 from collections.abc import Mapping, MutableMapping
 from pathlib import Path
 from typing import Literal
@@ -29,6 +30,8 @@ NETWORK_PROFILE_ENV = "AIDN_NETWORK_PROFILE_PATH"
 NETWORK_PROFILE_SIGNERS_ENV = "AIDN_NETWORK_PROFILE_SIGNERS_PATH"
 NETWORK_PROFILE_VERSION = "aidn.network-profile.v1"
 MAX_NETWORK_PROFILE_BYTES = 128 * 1024
+NETWORK_PROFILE_BUNDLE_NAME = "network-profile.toml"
+NETWORK_PROFILE_SIGNERS_NAME = "trusted-profile-signers.json"
 
 
 class NetworkProfileError(ValueError):
@@ -48,6 +51,26 @@ def _canonical_hash(value: object) -> str:
         value, ensure_ascii=True, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _bundle_relative_path(value: str, *, field: str) -> Path:
+    """Accept only portable, bundle-relative profile assets.
+
+    A release profile must not be able to make the installer copy an arbitrary
+    host file just because that file appears in ``genesis_file``.  Absolute
+    paths are valid for a manually managed local profile, but intentionally
+    unsupported for a portable bundle.
+    """
+
+    path = Path(value)
+    if (
+        value.startswith(("/", "\\"))
+        or path.is_absolute()
+        or any(part == ".." for part in path.parts)
+        or str(path) in {"", "."}
+    ):
+        raise NetworkProfileError(f"NETWORK_PROFILE_BUNDLE_ASSET_PATH_INVALID:{field}")
+    return path
 
 
 class NetworkCometBftConfig(BaseModel, frozen=True):
@@ -355,6 +378,101 @@ def activate_network_profile(
     )
 
 
+def install_network_profile_bundle(
+    source: str | Path,
+    destination_dir: str | Path,
+    *,
+    trusted_signers_source: str | Path,
+) -> NetworkProfileVerification:
+    """Verify and atomically install a portable, release-owned profile bundle.
+
+    ``trusted_signers_source`` is deliberately a separate trust anchor.  A
+    candidate bundle is never allowed to define which signatures make itself
+    trustworthy.  The resulting directory contains only the profile, its
+    referenced Genesis/public-profile assets, and the operator-supplied trust
+    registry needed for later service restarts.
+    """
+
+    source_path = Path(source).expanduser().resolve()
+    source_root = source_path.parent
+    profile = load_network_profile(source_path)
+    genesis_relative = _bundle_relative_path(
+        profile.network.genesis_file, field="genesis_file"
+    )
+    public_relative = (
+        _bundle_relative_path(
+            profile.network.public_profile_file, field="public_profile_file"
+        )
+        if profile.network.public_profile_file
+        else None
+    )
+    trusted_path = Path(trusted_signers_source).expanduser().resolve()
+    trusted_signers = load_network_profile_signers(trusted_path)
+    if profile.network.environment in {"testnet", "mainnet"} and not trusted_signers:
+        raise NetworkProfileError("NETWORK_PROFILE_TRUSTED_SIGNERS_REQUIRED")
+
+    verification = verify_network_profile(
+        source_path, trusted_profile_signers=trusted_signers
+    )
+    if not verification.valid:
+        raise NetworkProfileError(
+            "network profile bundle verification failed: " + ",".join(verification.errors)
+        )
+
+    target_dir = Path(destination_dir).expanduser().resolve()
+    target_parent = target_dir.parent
+    target_parent.mkdir(parents=True, exist_ok=True)
+    temporary_dir: Path | None = Path(
+        tempfile.mkdtemp(prefix=f".{target_dir.name}-", dir=target_parent)
+    )
+    backup_dir: Path | None = None
+    try:
+        assets = [(source_path, Path(NETWORK_PROFILE_BUNDLE_NAME))]
+        assets.append((source_root / genesis_relative, genesis_relative))
+        if public_relative is not None:
+            assets.append((source_root / public_relative, public_relative))
+        assets.append((trusted_path, Path(NETWORK_PROFILE_SIGNERS_NAME)))
+        for source_asset, relative_target in assets:
+            if not source_asset.is_file() or source_asset.is_symlink():
+                raise NetworkProfileError(
+                    f"NETWORK_PROFILE_BUNDLE_ASSET_UNAVAILABLE:{relative_target.as_posix()}"
+                )
+            target_asset = temporary_dir / relative_target
+            target_asset.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source_asset, target_asset)
+            os.chmod(target_asset, 0o600)
+
+        staged_profile = temporary_dir / NETWORK_PROFILE_BUNDLE_NAME
+        staged_signers = load_network_profile_signers(
+            temporary_dir / NETWORK_PROFILE_SIGNERS_NAME
+        )
+        staged = verify_network_profile(
+            staged_profile, trusted_profile_signers=staged_signers
+        )
+        if not staged.valid:
+            raise NetworkProfileError(
+                "network profile bundle cannot be installed: " + ",".join(staged.errors)
+            )
+
+        if target_dir.exists():
+            backup_dir = target_parent / f".{target_dir.name}-previous-{uuid.uuid4().hex}"
+            os.replace(target_dir, backup_dir)
+        os.replace(temporary_dir, target_dir)
+        temporary_dir = None
+        if backup_dir is not None:
+            shutil.rmtree(backup_dir)
+        return verify_network_profile(
+            target_dir / NETWORK_PROFILE_BUNDLE_NAME,
+            trusted_profile_signers=staged_signers,
+        )
+    except BaseException:
+        if temporary_dir is not None and temporary_dir.exists():
+            shutil.rmtree(temporary_dir, ignore_errors=True)
+        if backup_dir is not None and backup_dir.exists() and not target_dir.exists():
+            os.replace(backup_dir, target_dir)
+        raise
+
+
 def resolve_network_profile_path(
     path: str | Path | None = None,
     *,
@@ -370,12 +488,15 @@ def resolve_network_profile_path(
 __all__ = [
     "MAX_NETWORK_PROFILE_BYTES",
     "NETWORK_PROFILE_ENV",
+    "NETWORK_PROFILE_BUNDLE_NAME",
+    "NETWORK_PROFILE_SIGNERS_NAME",
     "NETWORK_PROFILE_SIGNERS_ENV",
     "NETWORK_PROFILE_VERSION",
     "NetworkProfile",
     "NetworkProfileError",
     "NetworkProfileVerification",
     "activate_network_profile",
+    "install_network_profile_bundle",
     "apply_network_profile_environment",
     "load_network_profile",
     "load_network_profile_signers",

@@ -23,6 +23,7 @@ from aidn_hypervisor.network_profile import (
     NETWORK_PROFILE_SIGNERS_ENV,
     NetworkProfileError,
     activate_network_profile,
+    install_network_profile_bundle,
     load_network_profile,
     load_network_profile_signers,
     resolve_network_profile_path,
@@ -179,6 +180,24 @@ def _build_parser() -> argparse.ArgumentParser:
         "--profiles-dir",
         default=None,
         help="directory containing <name>.toml profiles",
+    )
+    network_install = network_commands.add_parser(
+        "install", help="verify and install one portable Network Profile bundle"
+    )
+    network_install.add_argument(
+        "--source",
+        required=True,
+        help="release-owned Network Profile TOML; its assets must be beside it",
+    )
+    network_install.add_argument(
+        "--destination-dir",
+        required=True,
+        help="local directory for the verified profile bundle",
+    )
+    network_install.add_argument(
+        "--trusted-signers-source",
+        required=True,
+        help="separate trusted release-authority registry, never taken from the bundle",
     )
 
     participation = commands.add_parser(
@@ -460,6 +479,19 @@ def _enrollment_command(args: argparse.Namespace) -> int:
 
 
 def _network_command(args: argparse.Namespace) -> int:
+    if args.network_command == "install":
+        result = install_network_profile_bundle(
+            args.source,
+            args.destination_dir,
+            trusted_signers_source=args.trusted_signers_source,
+        )
+        payload = result.model_dump(mode="json")
+        payload["profile_path"] = str(
+            Path(args.destination_dir).expanduser()
+            / "network-profile.toml"
+        )
+        print(_bounded_json(payload))
+        return 0
     selected = resolve_network_profile_path(args.profile_path)
     trusted_signers = load_network_profile_signers(
         args.trusted_signers_path or os.getenv(NETWORK_PROFILE_SIGNERS_ENV)

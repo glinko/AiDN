@@ -37,6 +37,8 @@ Options:
   --network-id ID           Network ID (default: aidn)
   --chain-id ID             Chain ID (default: aidn-testnet-1)
   --network-revision REV    Network revision (default: 1.0)
+  --network-profile PATH    Verified Network Profile TOML for an existing network
+  --network-profile-signers PATH  Separate trusted release-authority registry
   --consensus-mode MODE     validator, non_validator, or disabled (default: validator)
   --consensus-rpc URL       Verified private RPC for non_validator mode (required)
   --cometbft-version TAG   CometBFT release tag (default: v0.38.19)
@@ -834,6 +836,8 @@ advertise_host=''
 network_id='aidn'
 chain_id='aidn-testnet-1'
 network_revision='1.0'
+network_profile_source=''
+network_profile_signers_source=''
 consensus_mode='validator'
 consensus_rpc=''
 cometbft_version='v0.38.19'
@@ -957,6 +961,16 @@ while [[ $# -gt 0 ]]; do
     --network-revision)
       require_value "$1" "$@"
       network_revision="$2"
+      shift 2
+      ;;
+    --network-profile)
+      require_value "$1" "$@"
+      network_profile_source="$2"
+      shift 2
+      ;;
+    --network-profile-signers)
+      require_value "$1" "$@"
+      network_profile_signers_source="$2"
       shift 2
       ;;
     --consensus-mode)
@@ -1153,6 +1167,16 @@ if [[ -z "$data_dir" ]]; then
 fi
 valid_path "$install_dir" || die 'install directory must be an absolute path'
 valid_path "$data_dir" || die 'data directory must be an absolute path'
+if [[ -n "$network_profile_source" || -n "$network_profile_signers_source" ]]; then
+  [[ -n "$network_profile_source" && -n "$network_profile_signers_source" ]] || \
+    die '--network-profile and --network-profile-signers must be supplied together'
+  valid_path "$network_profile_source" || die '--network-profile must be an absolute path'
+  valid_path "$network_profile_signers_source" || die '--network-profile-signers must be an absolute path'
+  [[ -f "$network_profile_source" && ! -L "$network_profile_source" ]] || \
+    die '--network-profile must be a readable regular file'
+  [[ -f "$network_profile_signers_source" && ! -L "$network_profile_signers_source" ]] || \
+    die '--network-profile-signers must be a readable regular file'
+fi
 
 if [[ "$non_interactive" != 'true' && "$consensus_mode_supplied" != 'true' ]]; then
   consensus_mode="$(prompt_choice 'Consensus mode (validator/non_validator/disabled)' "$consensus_mode" 'This controls whether the node participates in CometBFT consensus. Validator uses local ports and storage; non-validator follows a trusted private RPC; disabled skips local consensus integration.' \
@@ -1414,6 +1438,47 @@ bash "$install_dir/tools/build-operator-dashboard.sh" \
 
 mkdir -p "$data_dir"
 chmod 700 "$data_dir"
+network_profile_path=''
+network_profile_signers_path=''
+network_profile_genesis_file=''
+network_profile_p2p_host=''
+network_profile_p2p_port=''
+network_profile_rpc_host=''
+network_profile_rpc_port=''
+network_profile_seeds=''
+network_profile_persistent_peers=''
+if [[ -n "$network_profile_source" ]]; then
+  network_profile_root="$data_dir/network-profile"
+  "$python_bin" -m aidn_hypervisor.operator_cli network install \
+    --source "$network_profile_source" \
+    --destination-dir "$network_profile_root" \
+    --trusted-signers-source "$network_profile_signers_source" >/dev/null
+  network_profile_path="$network_profile_root/network-profile.toml"
+  network_profile_signers_path="$network_profile_root/trusted-profile-signers.json"
+  IFS=$'\t' read -r network_id chain_id network_profile_genesis_file network_profile_p2p_host network_profile_p2p_port \
+    network_profile_rpc_host network_profile_rpc_port network_profile_seeds \
+    network_profile_persistent_peers < <("$python_bin" - "$network_profile_path" <<'PY'
+import sys
+from aidn_hypervisor.network_profile import load_network_profile
+
+profile = load_network_profile(sys.argv[1])
+comet = profile.network.cometbft
+print("\t".join((
+    profile.network.network_id,
+    profile.network.chain_id,
+    profile.network.genesis_file,
+    comet.p2p_host,
+    str(comet.p2p_port),
+    comet.rpc_host,
+    str(comet.rpc_port),
+    ",".join(comet.seeds),
+    ",".join(comet.persistent_peers),
+)))
+PY
+)
+  [[ -n "$network_id" && -n "$chain_id" && -n "$network_profile_genesis_file" && -n "$network_profile_p2p_host" && -n "$network_profile_p2p_port" ]] || \
+    die 'verified Network Profile did not provide complete CometBFT settings'
+fi
 operator_kit="$data_dir/operator-kit"
 if [[ ! -f "$operator_kit/README.md" ]]; then
   "$uv_bin" --directory "$install_dir" run python tools/prepare-independent-operator-kit.py init \
@@ -1439,8 +1504,22 @@ chmod 600 "$resource_capacity_path"
 consensus_service_name=''
 consensus_home=''
 consensus_binary_path=''
-consensus_rpc_host='127.0.0.1'
-consensus_rpc_port='26657'
+consensus_rpc_host="${network_profile_rpc_host:-127.0.0.1}"
+consensus_rpc_port="${network_profile_rpc_port:-26657}"
+consensus_p2p_host="${network_profile_p2p_host:-127.0.0.1}"
+consensus_p2p_port="${network_profile_p2p_port:-26656}"
+consensus_genesis_file=''
+consensus_peer_args=()
+if [[ -n "$network_profile_path" ]]; then
+  consensus_genesis_file="$data_dir/network-profile/$network_profile_genesis_file"
+  consensus_peer_args=(--genesis-file "$consensus_genesis_file")
+  if [[ -n "$network_profile_seeds" ]]; then
+    consensus_peer_args+=(--seeds "$network_profile_seeds")
+  fi
+  if [[ -n "$network_profile_persistent_peers" ]]; then
+    consensus_peer_args+=(--persistent-peers "$network_profile_persistent_peers")
+  fi
+fi
 consensus_rpc_endpoint=''
 consensus_transport='disabled'
 consensus_abci_host='127.0.0.1'
@@ -1466,8 +1545,9 @@ if [[ "$consensus_mode" == 'validator' ]]; then
     --moniker "$operator_id" \
     --rpc-host "$consensus_rpc_host" \
     --rpc-port "$consensus_rpc_port" \
-    --p2p-host '127.0.0.1' \
-    --p2p-port '26656' \
+    --p2p-host "$consensus_p2p_host" \
+    --p2p-port "$consensus_p2p_port" \
+    "${consensus_peer_args[@]}" \
     --abci-host "$consensus_abci_host" \
     --abci-port "$consensus_abci_port" \
     "${consensus_abci_args[@]}" \
@@ -1537,6 +1617,8 @@ setup_plan_path="$data_dir/installation-plan.json"
 setup_plan_q="$(shell_quote "$setup_plan_path")"
 operator_config_path="$data_dir/operator-config.toml"
 operator_config_q="$(shell_quote "$operator_config_path")"
+network_profile_path_q="$(shell_quote "$network_profile_path")"
+network_profile_signers_path_q="$(shell_quote "$network_profile_signers_path")"
 steward_model_path_q="$(shell_quote "$steward_model_path")"
 steward_model_sha256_q="$(shell_quote "$steward_model_sha256")"
 node_root_q="$(shell_quote "$node_root")"
@@ -1565,6 +1647,10 @@ export AIDN_HYPERVISOR_BIND_HOST_PATH="\$bind_host_path"
 export AIDN_HYPERVISOR_RESTART_ON_BIND_CHANGE=true
 export AIDN_HYPERVISOR_RESTART_ON_CONFIG_CHANGE=true
 export AIDN_CONFIG_FILE="\$config_path"
+if [[ -n ${network_profile_path_q:-} ]]; then
+  export AIDN_NETWORK_PROFILE_PATH=${network_profile_path_q:-}
+  export AIDN_NETWORK_PROFILE_SIGNERS_PATH=${network_profile_signers_path_q:-}
+fi
 export AIDN_UPDATE_REPOSITORY_URL='https://github.com/glinko/AiDN.git'
 export AIDN_UPDATE_REF=$(shell_quote "${ref:-main}")
 export AIDN_UPDATE_NODE_ROOT=$node_root_q
@@ -1716,6 +1802,10 @@ export AIDN_HYPERVISOR_BUNDLES_PATH=$(shell_quote "$data_dir/bundles.json")
 export AIDN_CONFIG_FILE=$(shell_quote "$operator_config_path")
 export AIDN_NODE_ID=$(shell_quote "$operator_id")
 export AIDN_OPERATOR_ID=$(shell_quote "$operator_id")
+if [[ -n ${network_profile_path_q:-} ]]; then
+  export AIDN_NETWORK_PROFILE_PATH=${network_profile_path_q:-}
+  export AIDN_NETWORK_PROFILE_SIGNERS_PATH=${network_profile_signers_path_q:-}
+fi
 export AIDN_MCP_REMOTE_ENABLED=true
 if [[ -z "\${AIDN_SECRET_MANAGER_MASTER_KEY:-}" ]]; then
   export AIDN_SECRET_MANAGER_MASTER_KEY="\$(tr -d '\r\n' < $(shell_quote "$registry_root/master-key.b64"))"

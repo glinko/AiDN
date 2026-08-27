@@ -16,6 +16,7 @@ Options:
   --binary-path PATH      Installed binary path (required)
   --service-name NAME     user-systemd unit name (required)
   --chain-id ID            Chain ID for a new local genesis (required)
+  --genesis-file PATH      Verified Genesis JSON to install for an existing network
   --moniker NAME          CometBFT moniker (required)
   --rpc-host HOST         RPC listen host (default: 127.0.0.1)
   --rpc-port PORT         RPC listen port (default: 26657)
@@ -61,6 +62,7 @@ home=''
 binary_path=''
 service_name=''
 chain_id=''
+genesis_file=''
 moniker=''
 rpc_host='127.0.0.1'
 rpc_port='26657'
@@ -82,6 +84,7 @@ while [[ $# -gt 0 ]]; do
     --binary-path) require_value "$1" "$@"; binary_path="$2"; shift 2 ;;
     --service-name) require_value "$1" "$@"; service_name="$2"; shift 2 ;;
     --chain-id) require_value "$1" "$@"; chain_id="$2"; shift 2 ;;
+    --genesis-file) require_value "$1" "$@"; genesis_file="$2"; shift 2 ;;
     --moniker) require_value "$1" "$@"; moniker="$2"; shift 2 ;;
     --rpc-host) require_value "$1" "$@"; rpc_host="$2"; shift 2 ;;
     --rpc-port) require_value "$1" "$@"; rpc_port="$2"; shift 2 ;;
@@ -107,6 +110,9 @@ source /etc/os-release
 [[ -n "$binary_path" ]] && valid_path "$binary_path" || die '--binary-path must be an absolute path without spaces'
 [[ -n "$service_name" ]] && valid_identifier "${service_name%.service}" || die '--service-name contains unsupported characters'
 [[ -n "$chain_id" ]] && valid_identifier "$chain_id" || die '--chain-id contains unsupported characters'
+if [[ -n "$genesis_file" ]]; then
+  [[ "$genesis_file" == /* && -f "$genesis_file" && ! -L "$genesis_file" ]] || die '--genesis-file must be a readable regular absolute file'
+fi
 [[ -n "$moniker" ]] && valid_identifier "$moniker" || die '--moniker contains unsupported characters'
 [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || die '--version must look like v0.38.19'
 for port in "$rpc_port" "$p2p_port" "$abci_port"; do
@@ -214,7 +220,10 @@ consensus_root="$(dirname "$home")"
 genesis_path="$home/config/genesis.json"
 if [[ ! -f "$genesis_path" ]]; then
   "$binary_path" init --home "$home" >/dev/null
-  python3 - "$genesis_path" "$chain_id" <<'PY'
+  if [[ -n "$genesis_file" ]]; then
+    install -m 0600 "$genesis_file" "$genesis_path"
+  else
+    python3 - "$genesis_path" "$chain_id" <<'PY'
 import json
 import os
 import sys
@@ -229,7 +238,11 @@ with open(path, "w", encoding="utf-8") as stream:
     stream.write("\n")
 os.chmod(path, 0o600)
 PY
+  fi
 else
+  if [[ -n "$genesis_file" ]] && ! cmp --silent "$genesis_file" "$genesis_path"; then
+    die 'existing CometBFT genesis differs from --genesis-file; refusing to replace it'
+  fi
   python3 - "$genesis_path" "$chain_id" <<'PY'
 import json
 import sys

@@ -54,6 +54,11 @@ def test_systemd_replication_installer_keeps_master_key_out_of_unit() -> None:
 def test_release_operator_bootstrap_uses_safe_defaults_and_user_systemd() -> None:
     script = Path("tools/aidn-operator-bootstrap-ubuntu.sh").read_text(encoding="utf-8")
 
+    assert "--network-profile PATH" in script
+    assert "--network-profile-signers PATH" in script
+    assert "aidn_hypervisor.operator_cli network install" in script
+    assert "AIDN_NETWORK_PROFILE_PATH" in script
+    assert "--genesis-file \"$consensus_genesis_file\"" in script
     assert "exec 3</dev/tty" in script
     assert "--non-interactive" in script
     assert "--allow-public-api" in script
@@ -292,6 +297,9 @@ def test_cometbft_installer_is_pinned_idempotent_and_preserves_genesis() -> None
     assert "ProtectSystem=strict" in script
     assert "ReadWritePaths=$home" in script
     assert "--no-start" in script
+    assert "--genesis-file PATH" in script
+    assert "refusing to replace it" in script
+    assert "existing CometBFT genesis differs from --genesis-file" in script
     assert "--no-abci" in script
     assert 'else "noop"' in script
     assert "priv_validator_state.json" in script

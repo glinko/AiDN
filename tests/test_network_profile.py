@@ -10,6 +10,7 @@ from aidn_hypervisor.network_profile import (
     NetworkProfileError,
     activate_network_profile,
     apply_network_profile_environment,
+    install_network_profile_bundle,
     load_network_profile,
     verify_network_profile,
 )
@@ -150,3 +151,67 @@ def test_activation_refuses_profile_whose_relative_assets_do_not_exist_at_destin
     with pytest.raises(NetworkProfileError, match="cannot be activated"):
         activate_network_profile(source, destination)
     assert not destination.exists()
+
+
+def test_portable_bundle_install_verifies_then_copies_all_required_assets(
+    tmp_path: Path, capsys
+) -> None:
+    release_dir = tmp_path / "release"
+    release_dir.mkdir()
+    source = _profile(release_dir, name="aidn-testnet")
+    # _profile writes a development profile, which intentionally has no public
+    # signing requirement; the separate file still exercises the trust-anchor
+    # boundary used by real testnet/mainnet releases.
+    trusted_signers = source.parent / "trusted-signers.json"
+    trusted_signers.write_text("{}\n", encoding="utf-8")
+    destination = tmp_path / "installed" / "aidn-testnet"
+
+    result = install_network_profile_bundle(
+        source,
+        destination,
+        trusted_signers_source=trusted_signers,
+    )
+
+    assert result.valid is True
+    assert (destination / "network-profile.toml").is_file()
+    assert (destination / "genesis.json").is_file()
+    assert (destination / "trusted-profile-signers.json").read_text(
+        encoding="utf-8"
+    ) == "{}\n"
+    assert verify_network_profile(destination / "network-profile.toml").valid is True
+
+    assert (
+        operator_cli_main(
+            [
+                "network",
+                "install",
+                "--source",
+                str(source),
+                "--destination-dir",
+                str(destination),
+                "--trusted-signers-source",
+                str(trusted_signers),
+            ]
+        )
+        == 0
+    )
+    assert '"profile_path":' in capsys.readouterr().out
+
+
+def test_portable_bundle_rejects_absolute_asset_paths(tmp_path: Path) -> None:
+    source = _profile(tmp_path, name="unsafe")
+    source.write_text(
+        source.read_text(encoding="utf-8").replace(
+            'genesis_file = "genesis.json"', 'genesis_file = "/etc/aidn/genesis.json"'
+        ),
+        encoding="utf-8",
+    )
+    trusted_signers = tmp_path / "trusted-signers.json"
+    trusted_signers.write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(NetworkProfileError, match="BUNDLE_ASSET_PATH_INVALID"):
+        install_network_profile_bundle(
+            source,
+            tmp_path / "installed",
+            trusted_signers_source=trusted_signers,
+        )
