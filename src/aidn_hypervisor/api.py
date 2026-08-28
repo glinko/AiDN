@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -79,6 +79,9 @@ from aidn_hypervisor.session_read_models import (
 )
 from aidn_hypervisor.sessions.models import SessionAmendmentKind, SessionContractExchange
 from aidn_hypervisor.state import HypervisorStateSnapshot
+from aidn_hypervisor.testnet_participation_status import (
+    build_testnet_participation_status_payload,
+)
 from aidn_hypervisor.validation_read_models import (
     build_endpoint_proof_payload,
     build_endpoint_validation_history_payload,
@@ -1990,6 +1993,14 @@ def build_api_router(
             validation_service=validation_service,
         )
         return build_journey_payload(service, endpoint_items=endpoint_payload.get("items", []))
+
+    @router.get("/operators/dashboard/testnet-participation")
+    async def operator_dashboard_testnet_participation(request: Request) -> dict:
+        """Expose only the reviewed, non-secret participation settlement state."""
+
+        return build_testnet_participation_status_payload(
+            getattr(request.app.state, "testnet_participation_settlement_monitor", None)
+        )
 
     @router.get("/operators/dashboard/readiness")
     async def operator_dashboard_readiness() -> dict:

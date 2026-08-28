@@ -274,7 +274,7 @@ function App() {
   const nodeIdentity = data.home.data?.bootstrap.node_identity ?? data.fleet.data?.node
   const nodeName = getText(nodeIdentity, 'node_id') || 'Local Hypervisor'
   const readinessPercent = data.readiness.data?.progress.percent ?? 0
-  const hasRefreshError = [data.home, data.journey, data.readiness, data.cometbft, data.cometbftInstall, data.fleet, data.bundles, data.endpoints, data.wallet, data.providers, data.runtimeOperations, data.residentAgent, data.residentInference, data.stewardActionPolicy, data.installationPlan, data.installs, data.sessions, data.market, data.remoteEndpoints, data.events, data.hooks, data.hookMetrics, data.hookDeliveries, data.hookDeadLetters].some(
+  const hasRefreshError = [data.home, data.journey, data.readiness, data.cometbft, data.cometbftInstall, data.fleet, data.bundles, data.endpoints, data.wallet, data.providers, data.runtimeOperations, data.residentAgent, data.residentInference, data.stewardActionPolicy, data.installationPlan, data.testnetParticipation, data.installs, data.sessions, data.market, data.remoteEndpoints, data.events, data.hooks, data.hookMetrics, data.hookDeliveries, data.hookDeadLetters].some(
     (query) => query.isError,
   )
 
@@ -315,6 +315,7 @@ function App() {
       data.stewardActionPolicy.refetch(),
       data.residentInference.refetch(),
       data.installationPlan.refetch(),
+      data.testnetParticipation.refetch(),
       data.installs.refetch(),
       data.sessions.refetch(),
       data.market.refetch(),
@@ -349,7 +350,7 @@ function App() {
       <TopBar
         nodeName={nodeName}
         advanced={advanced}
-                isRefreshing={data.home.isFetching || data.journey.isFetching || data.readiness.isFetching || data.runtimeOperations.isFetching || data.resourceBroker.isFetching || data.residentAgent.isFetching || data.escalations.isFetching || data.stewardActionPolicy.isFetching || data.residentInference.isFetching || data.installationPlan.isFetching || data.events.isFetching || data.hooks.isFetching}
+                isRefreshing={data.home.isFetching || data.journey.isFetching || data.readiness.isFetching || data.runtimeOperations.isFetching || data.resourceBroker.isFetching || data.residentAgent.isFetching || data.escalations.isFetching || data.stewardActionPolicy.isFetching || data.residentInference.isFetching || data.installationPlan.isFetching || data.testnetParticipation.isFetching || data.events.isFetching || data.hooks.isFetching}
         refreshError={hasRefreshError}
         refreshFeedback={refreshFeedback}
         onRefresh={refreshAll}
@@ -379,7 +380,7 @@ function App() {
 
         <main className="min-w-0 flex-1 lg:pl-5">
           {activeScreen === 'overview' ? (
-            <JourneyPage graph={data.journey.data} residentAgent={data.residentAgent.data} installationPlan={data.installationPlan.data} isLoading={data.journey.isLoading} error={data.journey.error} onRefresh={refreshAll} onNavigate={navigate} onApplyInstallationPlan={async (planHash, action: AssistedInstallationAction = 'prepare_review') => {
+            <JourneyPage graph={data.journey.data} residentAgent={data.residentAgent.data} installationPlan={data.installationPlan.data} participation={data.testnetParticipation.data} isLoading={data.journey.isLoading} error={data.journey.error} onRefresh={refreshAll} onNavigate={navigate} onApplyInstallationPlan={async (planHash, action: AssistedInstallationAction = 'prepare_review') => {
               try {
                 await dashboardApi.applyInstallationPlan({ plan_hash: planHash, action, idempotency_key: `dashboard-${action}-${planHash}` })
                 pushNotification(action === 'prepare_review' ? 'Assisted installation review prepared.' : `Assisted setup action completed: ${action.replaceAll('_', ' ')}.`)

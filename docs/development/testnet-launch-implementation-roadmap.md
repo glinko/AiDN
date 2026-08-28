@@ -34,19 +34,15 @@ The ordered implementation and public-launch execution plan is maintained in
 
 1. Wire the finalized Registry/Consensus bridge to write the evidence store;
    Dashboard observations and mutable Registry advertisements remain ineligible.
-2. Add a read-only participation status endpoint and Dashboard Journey card.
-   It must show only the protected runtime mode, last finalised source Epoch,
-   eligibility/accounting outcome and sanitized errors; it must expose no
-   Treasury key, signer material, secret handle value or mutable reward input.
-3. Publish the signed `aidn-testnet-1` genesis and public multi-validator
+2. Publish the signed `aidn-testnet-1` genesis and public multi-validator
    profile, then package a verified TOML profile in the release.
-4. Expose participation status, qualification countdown, eligible windows,
+3. Extend participation status with qualification countdown, eligible windows,
    estimated daily accrual, last finalized payment, and program sunset in the
    Dashboard Journey.
-5. Run multi-node acceptance: missing/duplicate/late heartbeat, version skew,
+4. Run multi-node acceptance: missing/duplicate/late heartbeat, version skew,
    node restart, day-boundary failover, duplicate settlement, retired/banned
    node, treasury exhaustion, snapshot restore, and Mainnet sunset.
-6. Before any economically significant reward programme, harden participation
+5. Before any economically significant reward programme, harden participation
    evidence beyond self-reported heartbeat: require signed peer/validator
    reachability attestations, bounded endpoint probes, failure-history review,
    and programme-appropriate anti-Sybil signals. These inputs must be bound

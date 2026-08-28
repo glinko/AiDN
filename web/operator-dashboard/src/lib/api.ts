@@ -151,6 +151,44 @@ export type SoftwareUpdatePayload = {
   error: string | null
 }
 
+export type TestnetParticipationDashboard = {
+  available: boolean
+  runtime: { enabled: boolean; mode: 'disabled' | 'inspect' | 'dry_run' | 'submit' | string }
+  program: {
+    program_id: string
+    network_id: string
+    chain_id: string
+    policy_hash: string
+    participation_window_seconds: number
+    settlement_period_seconds: number
+    reward_per_eligible_window_q_atoms: number
+  } | null
+  monitor: { scan_count: number; transition_count: number; processed_count: number }
+  last_settlement: {
+    state: 'disabled' | 'not_due' | 'processed' | string
+    source_epoch_transition_operation_id: string
+    closing_epoch: number
+    period_start: string | null
+    detail: string | null
+    accounting: {
+      settlement_id: string
+      settlement_hash: string
+      program_policy_hash: string
+      period_end: string
+      eligible_node_count: number
+      eligible_window_count: number
+      total_reward_q_atoms: number
+    } | null
+    payout: {
+      mode: string
+      batch_status: string | null
+      transfer_count: number
+      submitted_operation_id: string | null
+    } | null
+  } | null
+  last_error_code: string | null
+}
+
 export type DashboardAccessStatus = {
   enabled: boolean
   session: { active: boolean; expires_at: string | null }
@@ -278,6 +316,7 @@ export type HookMetrics = {
 
 const dashboardRecordSchema = z.record(z.string(), z.unknown())
 const numberValue = z.coerce.number().catch(0)
+const stringValue = z.string().catch('')
 const providerArtifactInventorySchema = z.union([
   z.array(dashboardRecordSchema),
   dashboardRecordSchema,
@@ -300,6 +339,48 @@ const providerWorkspaceSchema = z.object({
 const modelInstallWorkspaceSchema = z.object({
   items: z.array(z.record(z.string(), z.unknown())).default([]),
   summary: z.record(z.string(), z.unknown()).default({}),
+}).passthrough()
+
+const testnetParticipationDashboardSchema = z.object({
+  available: z.boolean().catch(false),
+  runtime: z.object({ enabled: z.boolean().catch(false), mode: stringValue }).passthrough(),
+  program: z.object({
+    program_id: stringValue,
+    network_id: stringValue,
+    chain_id: stringValue,
+    policy_hash: stringValue,
+    participation_window_seconds: numberValue,
+    settlement_period_seconds: numberValue,
+    reward_per_eligible_window_q_atoms: numberValue,
+  }).passthrough().nullable(),
+  monitor: z.object({
+    scan_count: numberValue,
+    transition_count: numberValue,
+    processed_count: numberValue,
+  }).passthrough(),
+  last_settlement: z.object({
+    state: stringValue,
+    source_epoch_transition_operation_id: stringValue,
+    closing_epoch: numberValue,
+    period_start: z.string().nullable().catch(null),
+    detail: z.string().nullable().catch(null),
+    accounting: z.object({
+      settlement_id: stringValue,
+      settlement_hash: stringValue,
+      program_policy_hash: stringValue,
+      period_end: stringValue,
+      eligible_node_count: numberValue,
+      eligible_window_count: numberValue,
+      total_reward_q_atoms: numberValue,
+    }).passthrough().nullable(),
+    payout: z.object({
+      mode: stringValue,
+      batch_status: z.string().nullable().catch(null),
+      transfer_count: numberValue,
+      submitted_operation_id: z.string().nullable().catch(null),
+    }).passthrough().nullable(),
+  }).passthrough().nullable(),
+  last_error_code: z.string().nullable().catch(null),
 }).passthrough()
 
 const hookEventFilterSchema = z.object({
@@ -430,6 +511,7 @@ export const dashboardApi = {
   stewardActionPolicy: (signal?: AbortSignal): Promise<StewardActionPolicy> => readDashboard('/operators/dashboard/steward/action-policy', dashboardSchemas.stewardActionPolicy, signal),
   residentInference: (signal?: AbortSignal): Promise<ResidentInference> => readDashboard('/operators/dashboard/steward/inference', dashboardSchemas.residentInference, signal),
   installationPlan: (signal?: AbortSignal): Promise<InstallationPlan> => readDashboard('/operators/dashboard/installation-plan', dashboardSchemas.installationPlan, signal),
+  testnetParticipation: (signal?: AbortSignal): Promise<TestnetParticipationDashboard> => readDashboard('/operators/dashboard/testnet-participation', testnetParticipationDashboardSchema, signal),
   installs: (signal?: AbortSignal): Promise<ModelInstallWorkspace> => readDashboard('/operators/dashboard/installs', modelInstallWorkspaceSchema, signal),
   sessions: (signal?: AbortSignal): Promise<SessionDashboard> => readDashboard('/operators/dashboard/sessions', dashboardSchemas.sessions, signal),
   market: (signal?: AbortSignal): Promise<MarketDashboard> => readDashboard('/operators/dashboard/market', dashboardSchemas.market, signal),

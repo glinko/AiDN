@@ -184,6 +184,10 @@ The service-lifecycle bridge now loads only an explicitly named runtime
 profile, resolves a `secret://` Treasury signer through the local encrypted
 secret manager, and observes finalised ledger transitions for recovery and
 delivery. Without `AIDN_TESTNET_PARTICIPATION_RUNTIME_CONFIG`, or with the
-release-default `enabled = false`, it does nothing. The next active slice is a
-read-only participation-status API for the Dashboard; items 3–7 remain
-deliberately inactive until the preceding exit conditions are met.
+release-default `enabled = false`, it does nothing. A read-only Dashboard API
+and Journey panel now expose the runtime mode, last finalised source Epoch,
+eligibility/accounting outcome and sanitised error code, without returning
+Treasury identity, signer material, secret handle, transfer envelope or mutable
+evidence. The next active slice is item 4: the verifiable public release
+package; items 4–7 remain deliberately inactive until their preceding exit
+conditions are met.

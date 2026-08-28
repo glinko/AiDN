@@ -109,6 +109,12 @@ export function useDashboardData() {
     staleTime: staleTimeMs,
     refetchInterval: refetchIntervalMs,
   })
+  const testnetParticipation = useQuery({
+    queryKey: ['operator-dashboard', 'testnet-participation'],
+    queryFn: ({ signal }) => dashboardApi.testnetParticipation(signal),
+    staleTime: staleTimeMs,
+    refetchInterval: refetchIntervalMs,
+  })
   const installs = useQuery({
     queryKey: ['operator-dashboard', 'installs'],
     queryFn: ({ signal }) => dashboardApi.installs(signal),
@@ -164,5 +170,5 @@ export function useDashboardData() {
     refetchInterval: refetchIntervalMs,
   })
 
-  return { home, journey, readiness, cometbft, cometbftInstall, fleet, bundles, endpoints, wallet, providers, runtimeOperations, resourceBroker, residentAgent, escalations, stewardActionPolicy, residentInference, installationPlan, installs, sessions, market, remoteEndpoints, events, hooks, hookMetrics, hookDeliveries, hookDeadLetters }
+  return { home, journey, readiness, cometbft, cometbftInstall, fleet, bundles, endpoints, wallet, providers, runtimeOperations, resourceBroker, residentAgent, escalations, stewardActionPolicy, residentInference, installationPlan, testnetParticipation, installs, sessions, market, remoteEndpoints, events, hooks, hookMetrics, hookDeliveries, hookDeadLetters }
 }
