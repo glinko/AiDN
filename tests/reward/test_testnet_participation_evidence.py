@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from aidn_hypervisor.consensus.finality import ConsensusFinalityEvidence
 from aidn_hypervisor.testnet_participation import (
     TestnetParticipantEnrollment as ParticipantEnrollment,
 )
@@ -13,9 +14,13 @@ from aidn_hypervisor.testnet_participation import (
 )
 from aidn_hypervisor.testnet_participation import (
     build_testnet_heartbeat_evidence,
+    build_testnet_participation_heartbeat_envelope,
 )
 from aidn_hypervisor.testnet_participation_evidence import (
     TestnetParticipationEvidenceStore as EvidenceStore,
+)
+from aidn_hypervisor.testnet_participation_finality import (
+    ParticipationFinalityBridge,
 )
 
 START = datetime(2026, 9, 1, tzinfo=UTC)
@@ -137,3 +142,66 @@ def test_settlement_inputs_are_period_bounded_and_only_include_finalized_evidenc
 
     assert len(enrollments) == 1
     assert [item.evidence_id for item in heartbeats] == ["heartbeat-1"]
+
+
+class _FinalitySource:
+    def __init__(self, evidence: ConsensusFinalityEvidence | None) -> None:
+        self.evidence = evidence
+
+    def finality_evidence(self, operation_id: str) -> ConsensusFinalityEvidence | None:
+        if self.evidence is None or self.evidence.operation_id != operation_id:
+            return None
+        return self.evidence
+
+
+def test_finality_bridge_persists_the_exact_consensus_receipt(tmp_path) -> None:
+    key = Ed25519PrivateKey.generate()
+    store = EvidenceStore(tmp_path / "evidence.sqlite")
+    store.register_enrollment(
+        _enrollment(),
+        public_key=_public_key(key),
+        binding_operation_id="operator-wallet-bind:node-1",
+    )
+    envelope = build_testnet_participation_heartbeat_envelope(_heartbeat(key))
+    finality = ConsensusFinalityEvidence(
+        operation_id=envelope.operation_id,
+        operation_type="TESTNET_PARTICIPATION_HEARTBEAT",
+        chain_id="aidn-testnet-1",
+        block_height=42,
+        block_id="block-42",
+        app_hash="app-hash",
+        commit_hash="commit-hash",
+        finalized_at=START.isoformat(),
+        verifier_id="test-finality",
+    )
+
+    stored = ParticipationFinalityBridge(
+        active_chain_id="aidn-testnet-1",
+        finality_source=_FinalitySource(finality),
+        evidence_store=store,
+    ).ingest(envelope)
+
+    assert stored.identity_signature_verified is True
+    receipt = store.heartbeat_finality_receipt(stored.evidence_id)
+    assert receipt is not None
+    assert receipt["operation_id"] == envelope.operation_id
+    assert '"block_height":42' in receipt["finality_json"]
+
+
+def test_finality_bridge_rejects_missing_or_wrong_receipt(tmp_path) -> None:
+    key = Ed25519PrivateKey.generate()
+    store = EvidenceStore(tmp_path / "evidence.sqlite")
+    store.register_enrollment(
+        _enrollment(),
+        public_key=_public_key(key),
+        binding_operation_id="operator-wallet-bind:node-1",
+    )
+    envelope = build_testnet_participation_heartbeat_envelope(_heartbeat(key))
+    bridge = ParticipationFinalityBridge(
+        active_chain_id="aidn-testnet-1",
+        finality_source=_FinalitySource(None),
+        evidence_store=store,
+    )
+
+    with pytest.raises(ValueError, match="NOT_VERIFIED"):
+        bridge.ingest(envelope)

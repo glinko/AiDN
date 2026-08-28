@@ -69,6 +69,7 @@ TREASURY_FUND_OPERATION = "TREASURY_FUND"
 TREASURY_MANIFEST_BIND_OPERATION = "TREASURY_MANIFEST_BIND"
 EPOCH_SCHEDULE_COMMIT_OPERATION = "EPOCH_SCHEDULE_COMMIT"
 OPERATOR_WALLET_BIND_OPERATION = "OPERATOR_WALLET_BIND"
+TESTNET_PARTICIPATION_HEARTBEAT_OPERATION = "TESTNET_PARTICIPATION_HEARTBEAT"
 WALLET_IDENTITY_REGISTER_OPERATION = "WALLET_IDENTITY_REGISTER"
 ENDPOINT_PUBLISH_OPERATION = "ENDPOINT_PUBLISH"
 VALIDATION_REPORT_COMMIT_OPERATION = "VALIDATION_REPORT_COMMIT"
@@ -2296,6 +2297,88 @@ class LedgerOperationService:
         return self.record_admitted_envelope(
             envelope,
             emitted_events=["OperatorWalletBound"],
+        )
+
+    def validate_consensus_testnet_participation_heartbeat(
+        self,
+        envelope: "LedgerOperationEnvelope",
+    ) -> dict:
+        """Validate a signed, fee-free participation heartbeat commitment.
+
+        This operation is deliberately evidence-triggered rather than wallet
+        originated: a 30-second heartbeat cannot consume a wallet nonce or a
+        network fee.  The node owner's Wallet key instead signs the immutable
+        heartbeat body, and the key is resolved only from the canonical
+        ``OPERATOR_WALLET_BIND`` operation.
+        """
+
+        from aidn_hypervisor.testnet_participation import TestnetHeartbeatEvidence
+
+        if envelope.operation_type != TESTNET_PARTICIPATION_HEARTBEAT_OPERATION:
+            raise ValueError(
+                "testnet participation heartbeat requires TESTNET_PARTICIPATION_HEARTBEAT"
+            )
+        if envelope.origin_type != "evidence_triggered":
+            raise ValueError("participation heartbeat requires evidence-triggered origin")
+        if (
+            envelope.sender_wallet is not None
+            or envelope.sender_sequence is not None
+            or envelope.fee_payer is not None
+        ):
+            raise ValueError("participation heartbeat cannot carry wallet payment fields")
+        if envelope.fee_class != "protocol_sponsored":
+            raise ValueError("participation heartbeat requires protocol-sponsored fee class")
+        if envelope.signatures:
+            raise ValueError("participation heartbeat signature must be embedded in evidence")
+        if set(envelope.payload) != {"heartbeat"}:
+            raise ValueError("participation heartbeat payload is invalid")
+        try:
+            heartbeat = TestnetHeartbeatEvidence.model_validate(envelope.payload["heartbeat"])
+        except ValueError as error:
+            raise ValueError("participation heartbeat evidence is invalid") from error
+        if envelope.initiator_id != heartbeat.node_id:
+            raise ValueError("participation heartbeat initiator does not match node")
+        if envelope.created_at != heartbeat.observed_at:
+            raise ValueError("participation heartbeat timestamp does not match envelope")
+        if envelope.protocol_version != heartbeat.protocol_version:
+            raise ValueError("participation heartbeat protocol version does not match envelope")
+        if not heartbeat.finalized:
+            raise ValueError("participation heartbeat must request finalization")
+        if not heartbeat.identity_signature.startswith("ed25519:"):
+            raise ValueError("participation heartbeat identity signature is required")
+
+        binding = self.canonical_operator_wallet_binding(heartbeat.node_id)
+        if binding is None:
+            raise ValueError("participation heartbeat node wallet binding is not finalized")
+        try:
+            public_key = bytes.fromhex(str(binding["public_key"])[8:])
+            signature = bytes.fromhex(heartbeat.identity_signature.removeprefix("ed25519:"))
+            Ed25519PublicKey.from_public_bytes(public_key).verify(
+                signature,
+                heartbeat.signing_bytes(),
+            )
+        except (ValueError, InvalidSignature) as error:
+            raise ValueError("participation heartbeat identity signature is invalid") from error
+
+        for operation in self._operations:
+            if operation.get("operation_type") != TESTNET_PARTICIPATION_HEARTBEAT_OPERATION:
+                continue
+            payload = operation.get("payload") or {}
+            existing = payload.get("heartbeat")
+            if isinstance(existing, dict) and existing.get("evidence_id") == heartbeat.evidence_id:
+                raise ValueError("participation heartbeat evidence is already committed")
+        return {"heartbeat": heartbeat}
+
+    def apply_consensus_testnet_participation_heartbeat(
+        self,
+        envelope: "LedgerOperationEnvelope",
+    ) -> dict:
+        """Persist one immutable participation heartbeat commitment."""
+
+        self.validate_consensus_testnet_participation_heartbeat(envelope)
+        return self.record_admitted_envelope(
+            envelope,
+            emitted_events=["TestnetParticipationHeartbeatCommitted"],
         )
 
     def canonical_wallet_identity(self, wallet_id: str) -> dict | None:

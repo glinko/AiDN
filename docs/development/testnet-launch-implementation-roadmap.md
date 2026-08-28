@@ -1,5 +1,8 @@
 # Public Testnet Launch Implementation Roadmap
 
+The ordered implementation and public-launch execution plan is maintained in
+[Public Testnet Alpha: Execution Plan](public-testnet-alpha-execution-plan.md).
+
 ## Implemented in the first slice
 
 - RFC-0076 local Network Profile model, hashing, verification, atomic

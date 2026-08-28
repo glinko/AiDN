@@ -12,6 +12,7 @@ import json
 import sqlite3
 from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -60,6 +61,12 @@ class TestnetParticipationEvidenceStore:
                 );
                 CREATE INDEX IF NOT EXISTS participation_heartbeat_period_idx
                     ON participation_heartbeats(observed_at, node_id);
+                CREATE TABLE IF NOT EXISTS participation_heartbeat_finality (
+                    evidence_id TEXT PRIMARY KEY,
+                    operation_id TEXT NOT NULL UNIQUE,
+                    finality_json TEXT NOT NULL,
+                    FOREIGN KEY (evidence_id) REFERENCES participation_heartbeats(evidence_id)
+                );
                 """
             )
 
@@ -140,11 +147,24 @@ class TestnetParticipationEvidenceStore:
     def record_finalized_heartbeat(
         self,
         heartbeat: TestnetHeartbeatEvidence,
+        *,
+        source_operation_id: str | None = None,
+        finality: Any | None = None,
     ) -> TestnetHeartbeatEvidence:
-        """Verify a Node-bound signature, then persist immutable evidence."""
+        """Verify a Node-bound signature, then persist immutable evidence.
+
+        A consensus bridge supplies both ``source_operation_id`` and verified
+        finality.  They are committed atomically with the heartbeat.  The
+        parameter-less form remains useful for deterministic offline fixtures,
+        but is not an eligible public-network ingestion path.
+        """
 
         if not heartbeat.finalized:
             raise ValueError("PARTICIPATION_HEARTBEAT_NOT_FINALIZED")
+        if (source_operation_id is None) != (finality is None):
+            raise ValueError("PARTICIPATION_HEARTBEAT_FINALITY_RECEIPT_INCOMPLETE")
+        if source_operation_id is not None and not source_operation_id.strip():
+            raise ValueError("PARTICIPATION_HEARTBEAT_OPERATION_REQUIRED")
         if not heartbeat.identity_signature.startswith("ed25519:"):
             raise ValueError("PARTICIPATION_HEARTBEAT_SIGNATURE_REQUIRED")
         if not heartbeat.verify_integrity():
@@ -178,6 +198,21 @@ class TestnetParticipationEvidenceStore:
                     existing["evidence_hash"] == verified.evidence_hash
                     and existing["evidence_json"] == encoded
                 ):
+                    if source_operation_id is not None:
+                        receipt = connection.execute(
+                            "SELECT operation_id, finality_json FROM participation_heartbeat_finality "
+                            "WHERE evidence_id = ?",
+                            (verified.evidence_id,),
+                        ).fetchone()
+                        finality_json = json.dumps(
+                            finality.model_dump(), sort_keys=True, separators=(",", ":")
+                        )
+                        if (
+                            receipt is None
+                            or receipt["operation_id"] != source_operation_id
+                            or receipt["finality_json"] != finality_json
+                        ):
+                            raise ValueError("PARTICIPATION_HEARTBEAT_FINALITY_CONFLICT")
                     return verified
                 raise ValueError("PARTICIPATION_HEARTBEAT_ID_CONFLICT")
             connection.execute(
@@ -194,7 +229,32 @@ class TestnetParticipationEvidenceStore:
                     encoded,
                 ),
             )
+            if source_operation_id is not None:
+                finality_json = json.dumps(
+                    finality.model_dump(), sort_keys=True, separators=(",", ":")
+                )
+                connection.execute(
+                    """
+                    INSERT INTO participation_heartbeat_finality (
+                        evidence_id, operation_id, finality_json
+                    ) VALUES (?, ?, ?)
+                    """,
+                    (verified.evidence_id, source_operation_id, finality_json),
+                )
         return verified
+
+    def heartbeat_finality_receipt(self, evidence_id: str) -> dict[str, str] | None:
+        """Return the immutable consensus receipt for an ingested heartbeat."""
+
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT operation_id, finality_json FROM participation_heartbeat_finality "
+                "WHERE evidence_id = ?",
+                (evidence_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {"operation_id": str(row["operation_id"]), "finality_json": str(row["finality_json"])}
 
     def settlement_inputs(
         self,

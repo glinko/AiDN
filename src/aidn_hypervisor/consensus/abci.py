@@ -1443,6 +1443,8 @@ class AIDNABCIApplication:
                 self.ledger.apply_consensus_wallet_identity_register(envelope)
             elif envelope.operation_type == "OPERATOR_WALLET_BIND":
                 self.ledger.apply_consensus_operator_wallet_bind(envelope)
+            elif envelope.operation_type == "TESTNET_PARTICIPATION_HEARTBEAT":
+                self.ledger.apply_consensus_testnet_participation_heartbeat(envelope)
             elif envelope.operation_type == "ENDPOINT_PUBLISH":
                 self.ledger.apply_consensus_endpoint_publish(envelope)
             elif envelope.operation_type == "SESSION_OPEN" and self._strict_operation_coverage:
@@ -1746,6 +1748,8 @@ class AIDNABCIApplication:
                 self.ledger.validate_consensus_wallet_identity_register(envelope)
             elif envelope.operation_type == "OPERATOR_WALLET_BIND":
                 self.ledger.validate_consensus_operator_wallet_bind(envelope)
+            elif envelope.operation_type == "TESTNET_PARTICIPATION_HEARTBEAT":
+                self.ledger.validate_consensus_testnet_participation_heartbeat(envelope)
             elif envelope.operation_type == "ENDPOINT_PUBLISH":
                 self.ledger.validate_consensus_endpoint_publish(envelope)
             elif envelope.operation_type == "SESSION_OPEN" and self._strict_operation_coverage:

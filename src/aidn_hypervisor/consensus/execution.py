@@ -98,6 +98,7 @@ class ExecutionEngine:
     _DEFAULT_GAS_COSTS: dict[str, int] = {
         "WALLET_TRANSFER": 200,
         "OPERATOR_WALLET_BIND": 150,
+        "TESTNET_PARTICIPATION_HEARTBEAT": 80,
         "SESSION_OPEN": 500,
         "DEPOSIT_LOCK": 300,
         "SESSION_ESCROW_LOCK": 300,
@@ -248,6 +249,10 @@ class ExecutionEngine:
                             self.ledger.apply_consensus_wallet_transfer(result.envelope)
                         elif result.envelope.operation_type == "OPERATOR_WALLET_BIND":
                             self.ledger.apply_consensus_operator_wallet_bind(result.envelope)
+                        elif result.envelope.operation_type == "TESTNET_PARTICIPATION_HEARTBEAT":
+                            self.ledger.apply_consensus_testnet_participation_heartbeat(
+                                result.envelope
+                            )
                         elif result.envelope.operation_type == "ENDPOINT_PUBLISH":
                             self.ledger.apply_consensus_endpoint_publish(result.envelope)
                         elif result.envelope.operation_type == "SESSION_OPEN" and self._strict_operation_coverage:
@@ -731,6 +736,23 @@ class ExecutionEngine:
                     )
                 )
                 emitted.append("OperatorWalletBound")
+            elif envelope.operation_type == "TESTNET_PARTICIPATION_HEARTBEAT":
+                heartbeat = self.ledger.validate_consensus_testnet_participation_heartbeat(
+                    envelope
+                )["heartbeat"]
+                state_changes.append(
+                    StateChange(
+                        entity_type="testnet_participation_heartbeat",
+                        entity_id=heartbeat.evidence_id,
+                        change_type="commit",
+                        after={
+                            "node_id": heartbeat.node_id,
+                            "observed_at": heartbeat.observed_at,
+                            "evidence_hash": heartbeat.evidence_hash,
+                        },
+                    )
+                )
+                emitted.append("TestnetParticipationHeartbeatCommitted")
             elif envelope.operation_type == "ENDPOINT_PUBLISH":
                 self.ledger.validate_consensus_endpoint_publish(envelope)
                 publication = envelope.payload["publication"]

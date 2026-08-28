@@ -23,6 +23,7 @@ from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
 from aidn_hypervisor.ledger.service import STANDARD_NETWORK_FEE_Q_ATOMS
 
 TESTNET_PARTICIPATION_VERSION = "aidn.testnet-participation.v1"
+TESTNET_PARTICIPATION_HEARTBEAT_OPERATION = "TESTNET_PARTICIPATION_HEARTBEAT"
 MAX_TESTNET_PARTICIPATION_PROGRAM_BYTES = 128 * 1024
 Q_ATOMS_PER_Q = 1_000_000
 BASIS_POINTS = 10_000
@@ -239,6 +240,34 @@ def build_testnet_heartbeat_evidence(
     return TestnetHeartbeatEvidence(
         **payload,
         evidence_hash=_canonical_hash(evidence_payload),
+    )
+
+
+def build_testnet_participation_heartbeat_envelope(
+    heartbeat: TestnetHeartbeatEvidence,
+) -> LedgerOperationEnvelope:
+    """Build the fee-free consensus commitment for one signed heartbeat.
+
+    The envelope deliberately uses the ``evidence_triggered`` origin.  It is
+    not a wallet payment and therefore must not consume a wallet sequence or
+    ask an operator to pay a transaction fee every 30 seconds.  Its embedded
+    Ed25519 signature is verified against the canonical Node/Wallet binding by
+    consensus before the evidence can be recorded.
+    """
+
+    if not heartbeat.verify_integrity():
+        raise ValueError("PARTICIPATION_HEARTBEAT_INTEGRITY_INVALID")
+    if not heartbeat.identity_signature.startswith("ed25519:"):
+        raise ValueError("PARTICIPATION_HEARTBEAT_SIGNATURE_REQUIRED")
+    return LedgerOperationEnvelope(
+        operation_type=TESTNET_PARTICIPATION_HEARTBEAT_OPERATION,
+        operation_version="1.0.0",
+        protocol_version=heartbeat.protocol_version,
+        origin_type="evidence_triggered",
+        initiator_id=heartbeat.node_id,
+        fee_class="protocol_sponsored",
+        created_at=heartbeat.observed_at,
+        payload={"heartbeat": heartbeat.model_dump(mode="json")},
     )
 
 
