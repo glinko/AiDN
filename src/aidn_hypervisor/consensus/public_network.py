@@ -96,6 +96,11 @@ class PublicValidatorManifest(BaseModel, frozen=True):
     consensus_address: str = Field(min_length=1)
     consensus_public_key: str = Field(min_length=1)
     rpc_endpoint: str = Field(min_length=1)
+    # CometBFT uses this transport identity in ``persistent_peers`` and
+    # ``seeds`` (``node-id@host:port``).  The consensus validator key above
+    # cannot substitute for it, so a public deployment manifest must bind
+    # both identities before it can be used to configure another node.
+    comet_node_id: str = Field(pattern=r"^[0-9a-f]{40}$")
     p2p_endpoint: str = Field(min_length=1)
     app_version: str = Field(min_length=1)
     genesis_hash: str = Field(min_length=1)
@@ -194,10 +199,13 @@ class PublicMultiValidatorNetworkProfile(BaseModel, frozen=True):
             raise ValueError("PUBLIC_MULTIVALIDATOR_OPERATOR_QUORUM_INVALID")
         if self.minimum_distinct_control_groups > len({item.control_group_id for item in manifests}):
             raise ValueError("PUBLIC_MULTIVALIDATOR_CONTROL_GROUP_QUORUM_INVALID")
+        if len({item.app_version for item in manifests}) != 1:
+            raise ValueError("PUBLIC_MULTIVALIDATOR_APP_VERSION_MISMATCH")
         for field_name, values in (
             ("validator_id", [item.validator_id for item in manifests]),
             ("consensus_public_key", [item.consensus_public_key for item in manifests]),
             ("rpc_endpoint", [item.rpc_endpoint.rstrip("/") for item in manifests]),
+            ("comet_node_id", [item.comet_node_id for item in manifests]),
             ("p2p_endpoint", [item.p2p_endpoint for item in manifests]),
         ):
             if len(values) != len(set(values)):

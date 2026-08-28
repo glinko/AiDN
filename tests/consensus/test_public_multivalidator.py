@@ -41,6 +41,7 @@ def _manifest(index: int, operator_key: Ed25519PrivateKey) -> PublicValidatorMan
         consensus_address=hashlib.sha256(raw_consensus_key).digest()[:20].hex().upper(),
         consensus_public_key=public_key,
         rpc_endpoint=f"https://rpc-{index}.example.net",
+        comet_node_id=f"{index + 1:040x}",
         p2p_endpoint=f"validator-{index}.example.net:26656",
         app_version="0.2.0",
         genesis_hash="sha256:genesis-public-testnet",
@@ -231,6 +232,19 @@ def test_public_profile_rejects_duplicate_rpc_and_invalid_profile_signer():
         _rehashed_profile(
             profile,
             validator_manifests=[profile.validator_manifests[0], duplicate_rpc, *profile.validator_manifests[2:]],
+        )
+
+    duplicate_node_id = profile.validator_manifests[1].model_copy(
+        update={"comet_node_id": profile.validator_manifests[0].comet_node_id}
+    )
+    with pytest.raises(ValueError, match="PUBLIC_MULTIVALIDATOR_COMET_NODE_ID_DUPLICATE"):
+        _rehashed_profile(
+            profile,
+            validator_manifests=[
+                profile.validator_manifests[0],
+                duplicate_node_id,
+                *profile.validator_manifests[2:],
+            ],
         )
 
     invalid_report = inspect_public_multivalidator_profile(
