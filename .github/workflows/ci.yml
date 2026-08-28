@@ -51,6 +51,10 @@ jobs:
           uv run ruff check --output-format=github
           --extend-exclude src/aidn_hypervisor/registry/__init__.py
           src tests
+      - name: Verify documentation catalog
+        run: |
+          uv run python tools/generate-docs-index.py
+          git diff --exit-code -- docs/INDEX.md
 
   test:
     name: Hermetic test suite
