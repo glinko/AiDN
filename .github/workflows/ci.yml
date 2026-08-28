@@ -53,6 +53,7 @@ jobs:
           src tests
       - name: Verify documentation catalog
         run: |
+          uv run python tools/verify-docs-links.py
           uv run python tools/generate-docs-index.py
           git diff --exit-code -- docs/INDEX.md
 

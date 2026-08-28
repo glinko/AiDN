@@ -2096,7 +2096,7 @@ The validator production profile is fail-closed for catalog entries without a
 specialized transition. Such an operation is rejected before mempool/proposal
 acceptance rather than being recorded by the generic admitted-envelope path.
 The current implemented and declared-but-unimplemented sets are maintained in
-the [consensus operation coverage matrix](../development/consensus-operation-coverage.md).
+the [consensus operation coverage matrix](../development/reference/consensus-operation-coverage.md).
 
 `SESSION_ESCROW_LOCK` is the first typed Session funding boundary in both
 entrypoints. Its payload carries the complete locked `SessionFundingAccount`,

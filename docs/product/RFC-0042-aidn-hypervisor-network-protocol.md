@@ -1,6 +1,4 @@
-RFC-0042
-
-AiDN Hypervisor Network Protocol and Dispatcher Architecture
+# RFC-0042 — AiDN Hypervisor Network Protocol and Dispatcher Architecture
 
 Status: Draft
 

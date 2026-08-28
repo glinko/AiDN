@@ -181,7 +181,7 @@ library instances and compatibility tests may use the permissive profile, but
 that profile SHALL not be used for a network validator.
 
 The current implementation matrix is maintained in
-`docs/development/consensus-operation-coverage.md`. The matrix is a release
+`docs/development/reference/consensus-operation-coverage.md`. The matrix is a release
 gate: adding a type to the catalog does not make it consensus-ready. A new
 operation requires matching transitions, replay and snapshot behavior, and
 conformance coverage in both entrypoints. A deployment-local custom handler

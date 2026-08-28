@@ -1,6 +1,4 @@
-RFC-0046
-
-AiDN Registry Architecture
+# RFC-0046 — AiDN Registry Architecture
 
 Status: Draft
 

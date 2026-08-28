@@ -1,6 +1,4 @@
-RFC-0040
-
-AiDN Service Verification Framework
+# RFC-0040 — AiDN Service Verification Framework
 
 Status: Draft
 

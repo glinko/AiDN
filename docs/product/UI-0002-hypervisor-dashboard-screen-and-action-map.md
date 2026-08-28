@@ -9,7 +9,7 @@ Depends on:
 - [UI-0001 Hypervisor Dashboard Specification](./UI-0001-hypervisor-dashboard-specification.md)
 - [UX-0001 Hypervisor Operator Journey](./UX-0001-hypervisor-operator-journey.md)
 - [UX-0002 Endpoint Session and Payment Flow](./UX-0002-endpoint-session-and-payment-flow.md)
-- [UX-0003 Operator Readiness Wizard](./UX-0003-operator-readiness-wizard.md)
+- [UX-0004 Operator Readiness Wizard](./UX-0004-operator-readiness-wizard.md)
 - [MCP-0001 Node Control Server Implementation Profile](./MCP-0001-node-control-server-implementation-profile.md)
 
 ## 1. Purpose

@@ -1,6 +1,4 @@
-RFC-0039
-
-Hypervisor Service Model
+# RFC-0039 — Hypervisor Service Model
 
 Status: Draft
 

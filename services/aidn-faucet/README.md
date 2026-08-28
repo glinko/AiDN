@@ -33,7 +33,7 @@ creator-signed release. The CLI accepts `--policy-registry-root` and
 `--policy-release` for this path; direct `--policy` flags remain only as a
 backwards-compatible lab mode and emit a warning. The complete Creator,
 validator and Faucet-host sequence is in
-[`docs/development/faucet-creator-bootstrap.md`](../../docs/development/faucet-creator-bootstrap.md).
+[`docs/operations/faucet-creator-bootstrap.md`](../../docs/operations/faucet-creator-bootstrap.md).
 
 ## Package layout
 

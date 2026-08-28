@@ -221,7 +221,7 @@ def _make_merge_commit(workspace: Path, claim: ContributorWalletClaim) -> tuple[
     base_commit = _git(workspace, "rev-parse", "HEAD")
     feature_branch = "contribution/controlled-localnet-epoch-1"
     _git(workspace, "checkout", "-b", feature_branch)
-    contribution_path = workspace / "docs" / "development" / "controlled-localnet-contribution.md"
+    contribution_path = workspace / "docs" / "evidence" / "controlled-localnet-contribution.md"
     contribution_path.parent.mkdir(parents=True, exist_ok=True)
     contribution_path.write_text(
         "# Controlled Localnet Contribution\n\n"
@@ -232,7 +232,7 @@ def _make_merge_commit(workspace: Path, claim: ContributorWalletClaim) -> tuple[
     claim_path = workspace / ".aidn" / "contributor-wallet.json"
     claim_path.parent.mkdir(parents=True, exist_ok=True)
     claim_path.write_text(json.dumps(claim.model_dump(mode="json"), indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    _git(workspace, "add", "docs/development/controlled-localnet-contribution.md", ".aidn/contributor-wallet.json")
+    _git(workspace, "add", "docs/evidence/controlled-localnet-contribution.md", ".aidn/contributor-wallet.json")
     _git(workspace, "commit", "-m", "Add controlled localnet contribution claim")
     source_commit = _git(workspace, "rev-parse", "HEAD")
     _git(workspace, "checkout", "main")

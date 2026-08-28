@@ -1,6 +1,4 @@
-RFC-0044
-
-AiDN Session Protocol
+# RFC-0044 — AiDN Session Protocol
 
 Status: Draft
 

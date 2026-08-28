@@ -1,6 +1,4 @@
-# RFC-0055
-
-Provider Plugin System and Directory
+# RFC-0055 — Provider Plugin System and Directory
 
 Status: Draft
 

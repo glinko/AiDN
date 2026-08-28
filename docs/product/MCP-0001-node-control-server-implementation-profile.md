@@ -303,5 +303,5 @@ An unsupported operation must not be represented as an implemented capability.
 - `tests/test_mcp_server.py` contains the initial conformance tests.
 - `tests/test_mcp_remote.py` contains remote authentication, session,
   approval, emergency-stop and persistence tests.
-- `docs/development/mcp-server-quickstart.md` contains the local invocation
+- `docs/operations/mcp-server-quickstart.md` contains the local invocation
   and JSON-RPC smoke procedure.

@@ -6,7 +6,7 @@ Version: `0.1`
 
 Type: `Product / UX / Content Specification`
 
-Implementation plan: [WEB-0001 Implementation Plan](../development/web-0001-implementation-plan.md)
+Implementation plan: [WEB-0001 Implementation Plan](../development/plans/web-0001-implementation-plan.md)
 
 Target Website API: [WEB-0001 Website API OpenAPI](./WEB-0001-website-api.openapi.yaml)
 

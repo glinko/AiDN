@@ -338,6 +338,6 @@ The first implementation is accepted only after it demonstrates:
 
 The repository's first executable service slice is under
 `services/aidn-faucet` and is documented in
-`docs/development/external-faucet-service.md`. It provides policy, Wallet
+`docs/operations/external-faucet-service.md`. It provides policy, Wallet
 proof, durable idempotency and envelope signing. It does not claim production
 finality until a deployment supplies the verified submitter required above.

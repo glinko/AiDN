@@ -111,7 +111,7 @@ def _init_workspace(args: argparse.Namespace) -> None:
         "# AiDN Independent Operator Workspace\n\n"
         "This workspace contains no secret material. Copy templates to non-template names, "
         "replace every REPLACE_ value, and keep completed configurations outside version control. "
-        "Follow docs/development/independent-operator-onboarding-and-acceptance.md from the release checkout.\n",
+        "Follow docs/operations/independent-operator-onboarding-and-acceptance.md from the release checkout.\n",
     )
     print(json.dumps({"status": "ok", "workspace": str(root), "peer_id": peer_id}, sort_keys=True))
 

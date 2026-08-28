@@ -1,6 +1,4 @@
-# RFC-0056
-
-AiDN Provider Plugin Runtime Interface
+# RFC-0056 — AiDN Provider Plugin Runtime Interface
 
 Status: Draft
 

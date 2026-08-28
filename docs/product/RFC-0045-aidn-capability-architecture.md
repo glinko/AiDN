@@ -1,6 +1,4 @@
-RFC-0045
-
-AiDN Capability Architecture
+# RFC-0045 — AiDN Capability Architecture
 
 Status: Draft
 

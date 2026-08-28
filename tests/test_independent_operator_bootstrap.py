@@ -275,7 +275,7 @@ def test_dashboard_rollout_accepts_the_canonical_image_command() -> None:
 
 
 def test_agent_enrollment_playbook_keeps_secrets_out_of_operator_prompts() -> None:
-    playbook = Path("docs/development/agent-enrollment-operator-playbook.md").read_text(
+    playbook = Path("docs/operations/agent-enrollment-operator-playbook.md").read_text(
         encoding="utf-8"
     )
 

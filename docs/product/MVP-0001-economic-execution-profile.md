@@ -250,7 +250,7 @@ accepted. The acceptance covers signed wallet-identity synchronization with
 pinned peer expectations, live execution against llama.cpp, vLLM and Ollama,
 final Usage reporting, cooperative fixed-price Settlement, and the
 provider-specific restart/recovery tests that assert no duplicate execution
-or payment. See the [acceptance report](../development/mvp-acceptance-2026-08-01.md).
+or payment. See the [acceptance report](../evidence/mvp-acceptance-2026-08-01.md).
 
 The project also accepts `hv-node10` as an independent operator for this MVP
 by explicit project policy. This closes the MVP test gate without changing

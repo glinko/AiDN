@@ -2,7 +2,7 @@
 
 Primary roadmap: see [ROADMAP.md](./ROADMAP.md)
 
-Detailed network architecture spec: see [docs/superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md](./docs/superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md)
+Detailed network architecture spec: see [docs/archive/specifications/2026-06-19-network-registry-wallet-rating-design.md](docs/archive/specifications/2026-06-19-network-registry-wallet-rating-design.md)
 
 Primary operator experience reference: see [docs/product/UX-0001-hypervisor-operator-journey.md](./docs/product/UX-0001-hypervisor-operator-journey.md)
 

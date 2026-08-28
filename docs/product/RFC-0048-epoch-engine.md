@@ -1,6 +1,4 @@
-RFC-0048
-
-Epoch Engine
+# RFC-0048 — Epoch Engine
 
 Status: Draft
 

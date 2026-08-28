@@ -23,6 +23,7 @@ The generated catalog includes repository-root project documents, Markdown under
 | [Terms](../01_TERMS.md) | Canonical vocabulary used across the project. |
 | [Architecture](../02_ARCHITECTURE.md) | High-level canonical stack and migration boundary. |
 | [Design System: AiDN Hypervisor Dashboard](../DESIGN.md) | Dashboard visual system and interaction principles. |
+| [AiDN Documentation System](DOCUMENTATION.md) | Documentation taxonomy, identifier rules, and maintenance workflow. |
 | [Product](../PRODUCT.md) | Product positioning, users, principles, and constraints. |
 | [AiDN Hypervisor](../README.md) | Repository entry point, local setup, CI, and primary links. |
 | [AiDN Roadmap](../ROADMAP.md) | Current delivery roadmap, gates, and milestones. |
@@ -47,21 +48,21 @@ The generated catalog includes repository-root project documents, Markdown under
 | [RFC-0035 Validation Escrow System](product/RFC-0035-validation-escrow-system.md) | Normative product, economics, UX, or protocol specification. |
 | [RFC-0036 AiDN Ledger State Machine](product/RFC-0036-aidn-ledger-state-machine.md) | Normative product, economics, UX, or protocol specification. |
 | [RFC-0037 AiDN Settlement and Escrow Engine](product/RFC-0037-settlement-engine.md) | Normative product, economics, UX, or protocol specification. |
-| [RFC 0039 hypervisor service model](product/RFC-0039-hypervisor-service-model.md) | Normative product, economics, UX, or protocol specification. |
-| [RFC 0040 aidn service verification framework](product/RFC-0040-aidn-service-verification-framework.md) | Normative product, economics, UX, or protocol specification. |
+| [RFC-0039 — Hypervisor Service Model](product/RFC-0039-hypervisor-service-model.md) | Normative product, economics, UX, or protocol specification. |
+| [RFC-0040 — AiDN Service Verification Framework](product/RFC-0040-aidn-service-verification-framework.md) | Normative product, economics, UX, or protocol specification. |
 | [RFC-0041 Reputation Profile Engine](product/RFC-0041-reputation-profile-engine.md) | Normative product, economics, UX, or protocol specification. |
-| [Part II - Network Dispatcher](product/RFC-0042-aidn-hypervisor-network-protocol.md) | Normative product, economics, UX, or protocol specification. |
-| [RFC 0044 aidn session protocol](product/RFC-0044-aidn-session-protocol.md) | Normative product, economics, UX, or protocol specification. |
-| [RFC 0045 aidn capability architecture](product/RFC-0045-aidn-capability-architecture.md) | Normative product, economics, UX, or protocol specification. |
-| [RFC 0046 aidn registry architecture](product/RFC-0046-aidn-registry-architecture.md) | Normative product, economics, UX, or protocol specification. |
+| [RFC-0042 — AiDN Hypervisor Network Protocol and Dispatcher Architecture](product/RFC-0042-aidn-hypervisor-network-protocol.md) | Normative product, economics, UX, or protocol specification. |
+| [RFC-0044 — AiDN Session Protocol](product/RFC-0044-aidn-session-protocol.md) | Normative product, economics, UX, or protocol specification. |
+| [RFC-0045 — AiDN Capability Architecture](product/RFC-0045-aidn-capability-architecture.md) | Normative product, economics, UX, or protocol specification. |
+| [RFC-0046 — AiDN Registry Architecture](product/RFC-0046-aidn-registry-architecture.md) | Normative product, economics, UX, or protocol specification. |
 | [RFC-0047 CometBFT Consensus Integration](product/RFC-0047-cometbft-consensus-integration.md) | Normative product, economics, UX, or protocol specification. |
-| [RFC 0048 epoch engine](product/RFC-0048-epoch-engine.md) | Normative product, economics, UX, or protocol specification. |
-| [RFC 0049 distributed marketplace and endpoint advertisement registry](product/RFC-0049-distributed-marketplace-and-endpoint-advertisement-registry.md) | Normative product, economics, UX, or protocol specification. |
+| [RFC-0048 — Epoch Engine](product/RFC-0048-epoch-engine.md) | Normative product, economics, UX, or protocol specification. |
+| [RFC-0049 — Distributed Marketplace and Endpoint Advertisement Registry](product/RFC-0049-distributed-marketplace-and-endpoint-advertisement-registry.md) | Normative product, economics, UX, or protocol specification. |
 | [RFC-0051 Usage Reporting, Accounting Evidence and Verification Protocol](product/RFC-0051-usage-reporting-and-verification-protocol.md) | Normative product, economics, UX, or protocol specification. |
 | [RFC-0053 AiDN Capability Runtime Specification](product/RFC-0053-capability-runtime-specification.md) | Normative product, economics, UX, or protocol specification. |
 | [RFC-0054 AiDN Capability Runtime Protocol](product/RFC-0054-capability-runtime-protocol.md) | Normative product, economics, UX, or protocol specification. |
-| [RFC-0055](product/RFC-0055-provider-plugin-system-and-directory.md) | Normative product, economics, UX, or protocol specification. |
-| [RFC-0056](product/RFC-0056-provider-plugin-runtime-interface.md) | Normative product, economics, UX, or protocol specification. |
+| [RFC-0055 — Provider Plugin System and Directory](product/RFC-0055-provider-plugin-system-and-directory.md) | Normative product, economics, UX, or protocol specification. |
+| [RFC-0056 — AiDN Provider Plugin Runtime Interface](product/RFC-0056-provider-plugin-runtime-interface.md) | Normative product, economics, UX, or protocol specification. |
 | [RFC-0057 Validation Report Specification](product/RFC-0057-validation-report-specification.md) | Normative product, economics, UX, or protocol specification. |
 | [RFC-0058 Participant Eligibility and Sybil Resistance](product/RFC-0058-participant-eligibility-and-sybil-resistance.md) | Normative product, economics, UX, or protocol specification. |
 | [RFC-0059 Ledger Operation Catalog](product/RFC-0059-ledger-operation-catalog.md) | Normative product, economics, UX, or protocol specification. |
@@ -85,7 +86,7 @@ The generated catalog includes repository-root project documents, Markdown under
 | [UX-0001 Hypervisor Operator Journey](product/UX-0001-hypervisor-operator-journey.md) | Normative product, economics, UX, or protocol specification. |
 | [UX-0002 Endpoint Session and Payment Flow](product/UX-0002-endpoint-session-and-payment-flow.md) | Normative product, economics, UX, or protocol specification. |
 | [UX-0003 — Node Journey / Setup Graph](product/UX-0003-node-journey-setup-graph.md) | Normative product, economics, UX, or protocol specification. |
-| [UX-0003 Operator Readiness Wizard](product/UX-0003-operator-readiness-wizard.md) | Normative product, economics, UX, or protocol specification. |
+| [UX-0004 — Operator Readiness Wizard](product/UX-0004-operator-readiness-wizard.md) | Normative product, economics, UX, or protocol specification. |
 | [WEB-0001 AiDN Public Website and Web Application Specification](product/WEB-0001-public-website-and-web-application-specification.md) | Normative product, economics, UX, or protocol specification. |
 | [WEB-0001 Website API OpenAPI](product/WEB-0001-website-api.openapi.yaml) | Machine-readable API contract for a product surface. |
 
@@ -99,213 +100,213 @@ The generated catalog includes repository-root project documents, Markdown under
 
 | Document | What it is |
 | --- | --- |
-| [Agent Enrollment Operator Playbook](development/agent-enrollment-operator-playbook.md) | Engineering reference, integration guide, or operator runbook. |
-| [Authorized Epoch Transition Builder](development/authorized-epoch-transition-builder.md) | Engineering reference, integration guide, or operator runbook. |
-| [Consensus Operation Coverage](development/consensus-operation-coverage.md) | Engineering reference, integration guide, or operator runbook. |
-| [Controlled LAN Testnet](development/controlled-lan-testnet.md) | Engineering reference, integration guide, or operator runbook. |
-| [Controlled Localnet Contributor Wallet Profile](development/controlled-localnet-contributor-wallet-profile.md) | Engineering reference, integration guide, or operator runbook. |
-| [Controlled Localnet Epoch Schedule Rebase](development/controlled-localnet-epoch-schedule-rebase.md) | Engineering reference, integration guide, or operator runbook. |
-| [Development Contribution Reward Bridge](development/development-contribution-reward-bridge.md) | Engineering reference, integration guide, or operator runbook. |
-| [ECO-0007 Activation Scope Extension](development/eco-0007-activation-scope-extension.md) | Engineering reference, integration guide, or operator runbook. |
-| [ECO-0007 Production Reward Batch](development/eco-0007-production-reward-batch.md) | Engineering reference, integration guide, or operator runbook. |
-| [Epoch Transition Input Readiness](development/epoch-transition-input-readiness.md) | Engineering reference, integration guide, or operator runbook. |
-| [Resident Steward Escalation Tasks](development/escalation-tasks.md) | Engineering reference, integration guide, or operator runbook. |
-| [External Faucet Service Runbook](development/external-faucet-service.md) | Engineering reference, integration guide, or operator runbook. |
-| [Faucet Deployment Instructions for an AiDN Agent](development/faucet-agent-deployment-instructions.md) | Engineering reference, integration guide, or operator runbook. |
-| [Faucet Treasury Creator Bootstrap](development/faucet-creator-bootstrap.md) | Engineering reference, integration guide, or operator runbook. |
-| [Interactive Hypervisor installation](development/interactive-hypervisor-installation.md) | Engineering reference, integration guide, or operator runbook. |
-| [Local-agent inference payload limits](development/local-agent-inference-payload-limits.md) | Engineering reference, integration guide, or operator runbook. |
-| [Local Agent Runbook: AiDN Node 127 MCP Control](development/local-agent-node127-mcp-runbook.md) | Engineering reference, integration guide, or operator runbook. |
-| [Managed Whisper Runtime](development/managed-whisper-runtime.md) | Engineering reference, integration guide, or operator runbook. |
-| [MCP Server Quickstart](development/mcp-server-quickstart.md) | Engineering reference, integration guide, or operator runbook. |
-| [Model onboarding and runtime policy](development/model-onboarding-runtime-policy.md) | Engineering reference, integration guide, or operator runbook. |
-| [MVP Operator Independence Assumption](development/mvp-operator-independence-assumption.md) | Engineering reference, integration guide, or operator runbook. |
-| [Operator Consensus Provisioning](development/operator-consensus-provisioning.md) | Engineering reference, integration guide, or operator runbook. |
-| [AiDN Ubuntu Operator Release Package](development/operator-release-package.md) | Engineering reference, integration guide, or operator runbook. |
-| [Plugin Host Container Deployment](development/plugin-host-container-deployment.md) | Engineering reference, integration guide, or operator runbook. |
-| [Protocol Authority and Epoch Transition Operations](development/protocol-authority-and-epoch-transition-operations.md) | Engineering reference, integration guide, or operator runbook. |
-| [Protocol Authority Policy](development/protocol-authority-policy.md) | Engineering reference, integration guide, or operator runbook. |
-| [Four-Validator Public Testnet Launch](development/public-testnet-cloud-launch.md) | Engineering reference, integration guide, or operator runbook. |
-| [Public testnet: four-validator launch ceremony](development/public-testnet-four-validator-ceremony.md) | Engineering reference, integration guide, or operator runbook. |
-| [Public Testnet Node Preflight](development/public-testnet-node-preflight.md) | Engineering reference, integration guide, or operator runbook. |
-| [React Dashboard Migration](development/react-dashboard-migration.md) | Engineering reference, integration guide, or operator runbook. |
-| [Real Provider Conformance](development/real-provider-conformance.md) | Engineering reference, integration guide, or operator runbook. |
-| [Reasoning Router and Intelligence Provider Registry](development/reasoning-router.md) | Engineering reference, integration guide, or operator runbook. |
-| [Registry Replication Operator Deployment](development/registry-replication-operator-deployment.md) | Engineering reference, integration guide, or operator runbook. |
-| [Remote Snapshot Trust Anchor Deployment](development/remote-trust-anchor-deployment.md) | Engineering reference, integration guide, or operator runbook. |
-| [Resident Inference Adapter](development/resident-inference-adapter.md) | Engineering reference, integration guide, or operator runbook. |
-| [RFC-0075 Resident Node Agent — implementation profile](development/resident-node-agent.md) | Engineering reference, integration guide, or operator runbook. |
-| [Resident Steward event-to-action guard](development/resident-steward-automation-guard.md) | Engineering reference, integration guide, or operator runbook. |
-| [Runtime Readiness And Provider Broker Pipeline](development/runtime-readiness-and-provider-broker.md) | Engineering reference, integration guide, or operator runbook. |
-| [Testnet Release Checklist](development/testnet-release-checklist.md) | Engineering reference, integration guide, or operator runbook. |
-| [Validator Reprovision and State Reconciliation Runbook](development/validator-reprovision-and-state-reconciliation-runbook.md) | Engineering reference, integration guide, or operator runbook. |
+| [Authorized Epoch Transition Builder](development/reference/authorized-epoch-transition-builder.md) | Current engineering reference, technical contract, or implementation note. |
+| [Consensus Operation Coverage](development/reference/consensus-operation-coverage.md) | Current engineering reference, technical contract, or implementation note. |
+| [Controlled Localnet Contributor Wallet Profile](development/reference/controlled-localnet-contributor-wallet-profile.md) | Current engineering reference, technical contract, or implementation note. |
+| [Controlled Localnet Epoch Schedule Rebase](development/reference/controlled-localnet-epoch-schedule-rebase.md) | Current engineering reference, technical contract, or implementation note. |
+| [Development Contribution Reward Bridge](development/reference/development-contribution-reward-bridge.md) | Current engineering reference, technical contract, or implementation note. |
+| [ECO-0007 Activation Scope Extension](development/reference/eco-0007-activation-scope-extension.md) | Current engineering reference, technical contract, or implementation note. |
+| [ECO-0007 Production Reward Batch](development/reference/eco-0007-production-reward-batch.md) | Current engineering reference, technical contract, or implementation note. |
+| [Epoch Transition Input Readiness](development/reference/epoch-transition-input-readiness.md) | Current engineering reference, technical contract, or implementation note. |
+| [Resident Steward Escalation Tasks](development/reference/escalation-tasks.md) | Current engineering reference, technical contract, or implementation note. |
+| [Local-agent inference payload limits](development/reference/local-agent-inference-payload-limits.md) | Current engineering reference, technical contract, or implementation note. |
+| [Managed Whisper Runtime](development/reference/managed-whisper-runtime.md) | Current engineering reference, technical contract, or implementation note. |
+| [Model onboarding and runtime policy](development/reference/model-onboarding-runtime-policy.md) | Current engineering reference, technical contract, or implementation note. |
+| [MVP Operator Independence Assumption](development/reference/mvp-operator-independence-assumption.md) | Current engineering reference, technical contract, or implementation note. |
+| [Protocol Authority and Epoch Transition Operations](development/reference/protocol-authority-and-epoch-transition-operations.md) | Current engineering reference, technical contract, or implementation note. |
+| [Protocol Authority Policy](development/reference/protocol-authority-policy.md) | Current engineering reference, technical contract, or implementation note. |
+| [React Dashboard Migration](development/reference/react-dashboard-migration.md) | Current engineering reference, technical contract, or implementation note. |
+| [Real Provider Conformance](development/reference/real-provider-conformance.md) | Current engineering reference, technical contract, or implementation note. |
+| [Reasoning Router and Intelligence Provider Registry](development/reference/reasoning-router.md) | Current engineering reference, technical contract, or implementation note. |
+| [Repository Structure Audit — 2026-08-28](development/reference/repository-structure-audit-2026-08-28.md) | Current engineering reference, technical contract, or implementation note. |
+| [Resident Inference Adapter](development/reference/resident-inference-adapter.md) | Current engineering reference, technical contract, or implementation note. |
+| [RFC-0075 Resident Node Agent — implementation profile](development/reference/resident-node-agent.md) | Current engineering reference, technical contract, or implementation note. |
+| [Resident Steward event-to-action guard](development/reference/resident-steward-automation-guard.md) | Current engineering reference, technical contract, or implementation note. |
+| [RFC-0068 Evidence Mode](development/reference/rfc-0068-evidence-mode.md) | Current engineering reference, technical contract, or implementation note. |
+| [Runtime Readiness And Provider Broker Pipeline](development/reference/runtime-readiness-and-provider-broker.md) | Current engineering reference, technical contract, or implementation note. |
+| [Agent Enrollment Operator Playbook](operations/agent-enrollment-operator-playbook.md) | Current installation, deployment, recovery, or operator guide. |
+| [Controlled LAN Testnet](operations/controlled-lan-testnet.md) | Current installation, deployment, recovery, or operator guide. |
+| [External Faucet Service Runbook](operations/external-faucet-service.md) | Current installation, deployment, recovery, or operator guide. |
+| [Faucet Deployment Instructions for an AiDN Agent](operations/faucet-agent-deployment-instructions.md) | Current installation, deployment, recovery, or operator guide. |
+| [Faucet Treasury Creator Bootstrap](operations/faucet-creator-bootstrap.md) | Current installation, deployment, recovery, or operator guide. |
+| [Independent Operator Onboarding and Acceptance](operations/independent-operator-onboarding-and-acceptance.md) | Current installation, deployment, recovery, or operator guide. |
+| [Interactive Hypervisor installation](operations/interactive-hypervisor-installation.md) | Current installation, deployment, recovery, or operator guide. |
+| [Local Agent Runbook: AiDN Node 127 MCP Control](operations/local-agent-node127-mcp-runbook.md) | Current installation, deployment, recovery, or operator guide. |
+| [MCP Server Quickstart](operations/mcp-server-quickstart.md) | Current installation, deployment, recovery, or operator guide. |
+| [Operator Consensus Provisioning](operations/operator-consensus-provisioning.md) | Current installation, deployment, recovery, or operator guide. |
+| [AiDN Ubuntu Operator Release Package](operations/operator-release-package.md) | Current installation, deployment, recovery, or operator guide. |
+| [Plugin Host Container Deployment](operations/plugin-host-container-deployment.md) | Current installation, deployment, recovery, or operator guide. |
+| [Protocol Authority Policy Rollout](operations/protocol-authority-policy-rollout.md) | Current installation, deployment, recovery, or operator guide. |
+| [Public Multi-Validator Rollout](operations/public-multivalidator-rollout.md) | Current installation, deployment, recovery, or operator guide. |
+| [Four-Validator Public Testnet Launch](operations/public-testnet-cloud-launch.md) | Current installation, deployment, recovery, or operator guide. |
+| [Public testnet: four-validator launch ceremony](operations/public-testnet-four-validator-ceremony.md) | Current installation, deployment, recovery, or operator guide. |
+| [Public Testnet Node Preflight](operations/public-testnet-node-preflight.md) | Current installation, deployment, recovery, or operator guide. |
+| [Registry Replication Operator Deployment](operations/registry-replication-operator-deployment.md) | Current installation, deployment, recovery, or operator guide. |
+| [Remote Snapshot Trust Anchor Deployment](operations/remote-trust-anchor-deployment.md) | Current installation, deployment, recovery, or operator guide. |
+| [Testnet Release Checklist](operations/testnet-release-checklist.md) | Current installation, deployment, recovery, or operator guide. |
+| [Validator Reprovision and State Reconciliation Runbook](operations/validator-reprovision-and-state-reconciliation-runbook.md) | Current installation, deployment, recovery, or operator guide. |
 
 ## Executable specifications and operator runbooks
 
 | Document | What it is |
 | --- | --- |
-| [EVD-0001 — AiDN Public Evidence Bundle Format](development/executable-spec-pack/EVD-0001-public-evidence-bundle-format.md) | Executable implementation profile, release gate, migration, or operator procedure. |
-| [FIX-0001 — AiDN Consensus Transition Fixtures](development/executable-spec-pack/FIX-0001-consensus-transition-fixtures.md) | Executable implementation profile, release gate, migration, or operator procedure. |
-| [GATE-0001 — AiDN Release Gate Checklist](development/executable-spec-pack/GATE-0001-release-gate-checklist.md) | Executable implementation profile, release gate, migration, or operator procedure. |
-| [IMP-0001 — AiDN Implementation Profile](development/executable-spec-pack/IMP-0001-aiDN-implementation-profile.md) | Executable implementation profile, release gate, migration, or operator procedure. |
-| [MIG-0001 — AiDN Migration and Compatibility Notes](development/executable-spec-pack/MIG-0001-migration-and-compatibility-notes.md) | Executable implementation profile, release gate, migration, or operator procedure. |
-| [OPS-0001 — AiDN Public Validator Operator Runbook](development/executable-spec-pack/OPS-0001-public-validator-operator-runbook.md) | Executable implementation profile, release gate, migration, or operator procedure. |
-| [AiDN Executable Specification Pack](development/executable-spec-pack/README.md) | Executable implementation profile, release gate, migration, or operator procedure. |
+| [EVD-0001 — AiDN Public Evidence Bundle Format](operations/spec-pack/EVD-0001-public-evidence-bundle-format.md) | Executable implementation profile, release gate, migration, or operator procedure. |
+| [FIX-0001 — AiDN Consensus Transition Fixtures](operations/spec-pack/FIX-0001-consensus-transition-fixtures.md) | Executable implementation profile, release gate, migration, or operator procedure. |
+| [GATE-0001 — AiDN Release Gate Checklist](operations/spec-pack/GATE-0001-release-gate-checklist.md) | Executable implementation profile, release gate, migration, or operator procedure. |
+| [IMP-0001 — AiDN Implementation Profile](operations/spec-pack/IMP-0001-aiDN-implementation-profile.md) | Executable implementation profile, release gate, migration, or operator procedure. |
+| [MIG-0001 — AiDN Migration and Compatibility Notes](operations/spec-pack/MIG-0001-migration-and-compatibility-notes.md) | Executable implementation profile, release gate, migration, or operator procedure. |
+| [OPS-0001 — AiDN Public Validator Operator Runbook](operations/spec-pack/OPS-0001-public-validator-operator-runbook.md) | Executable implementation profile, release gate, migration, or operator procedure. |
+| [AiDN Executable Specification Pack](operations/spec-pack/README.md) | Executable implementation profile, release gate, migration, or operator procedure. |
 
 ## Development plans
 
 | Document | What it is |
 | --- | --- |
-| [Market Frontend Implementation Plan](development/market-frontend-implementation-plan.md) | Implementation plan or roadmap for a defined slice. |
-| [Public Testnet Alpha: Execution Plan](development/public-testnet-alpha-execution-plan.md) | Implementation plan or roadmap for a defined slice. |
-| [Repository Structure Audit — 2026-08-28](development/repository-structure-audit-2026-08-28.md) | Current repository health assessment and refactoring plan. |
-| [Resident Steward LLM Routing And Local Intelligence Roadmap](development/steward-llm-routing-implementation-roadmap.md) | Implementation plan or roadmap for a defined slice. |
-| [Public Testnet Launch Implementation Roadmap](development/testnet-launch-implementation-roadmap.md) | Implementation plan or roadmap for a defined slice. |
-| [AiDN Wallet Workspace and Transfer Flow](development/wallet-frontend-implementation-plan.md) | Implementation plan or roadmap for a defined slice. |
-| [WEB-0001 Website Implementation Plan](development/web-0001-implementation-plan.md) | Implementation plan or roadmap for a defined slice. |
+| [Market Frontend Implementation Plan](development/plans/market-frontend-implementation-plan.md) | Implementation plan or roadmap for a defined slice. |
+| [Public Testnet Alpha: Execution Plan](development/plans/public-testnet-alpha-execution-plan.md) | Implementation plan or roadmap for a defined slice. |
+| [Resident Steward LLM Routing And Local Intelligence Roadmap](development/plans/steward-llm-routing-implementation-roadmap.md) | Implementation plan or roadmap for a defined slice. |
+| [Public Testnet Launch Implementation Roadmap](development/plans/testnet-launch-implementation-roadmap.md) | Implementation plan or roadmap for a defined slice. |
+| [AiDN Wallet Workspace and Transfer Flow](development/plans/wallet-frontend-implementation-plan.md) | Implementation plan or roadmap for a defined slice. |
+| [WEB-0001 Website Implementation Plan](development/plans/web-0001-implementation-plan.md) | Implementation plan or roadmap for a defined slice. |
 
 ## Historical acceptance and evidence
 
 | Document | What it is |
 | --- | --- |
-| [Architecture Map, Refactor Plan, and CI Bootstrap](development/2026-07-22-architecture-map-and-ci-bootstrap.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [External CometBFT Testnet Acceptance](development/cometbft-external-testnet-acceptance.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [Controlled LAN Consensus Acceptance Evidence](development/cometbft-lan-acceptance-2026-08-02.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [Four-Validator CometBFT Acceptance Drill](development/cometbft-multivalidator-acceptance-drill.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [Controlled Localnet Epoch 0 Manifest and Transition Acceptance](development/controlled-localnet-epoch-0-manifest-transition-acceptance-2026-08-13.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [Controlled Localnet Epoch 1 ECO-0005/ECO-0007 Acceptance](development/controlled-localnet-epoch-1-eco0005-acceptance-2026-08-13.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [Controlled Localnet Epoch 1 RFC-0068 / ECO-0007 Live Payout Acceptance](development/controlled-localnet-epoch-1-eco0007-live-payout-acceptance-2026-08-13.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [Controlled Localnet Epoch 1 ECO-0007 Wallet 127 Payout Acceptance](development/controlled-localnet-epoch-1-eco0007-wallet127-live-payout-acceptance-2026-08-14.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [Controlled Localnet Epoch Schedule Acceptance](development/controlled-localnet-epoch-schedule-acceptance-2026-08-13.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [ECO-0007 Simulation Profile](development/eco-0007-simulation.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [ECO-0007 Validator Rollout Acceptance](development/eco-0007-validator-rollout-acceptance-2026-08-12.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [Epoch Schedule Commitment Gate Rollout Acceptance](development/epoch-schedule-commit-gate-rollout-acceptance-2026-08-13.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [Epoch Transition Input Query Rollout Acceptance](development/epoch-transition-input-query-rollout-acceptance-2026-08-13.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [Faucet Live Payout and Finality Acceptance](development/faucet-live-payout-finality-acceptance-2026-08-12.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [G3 Multi-Validator Acceptance](development/g3-multivalidator-acceptance-2026-08-04.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [G5 Replacement and Fault-Recovery Acceptance](development/g5-reprovision-acceptance-2026-08-04.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [Independent Operator Onboarding and Acceptance](development/independent-operator-onboarding-and-acceptance.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [MCP TLS Rotation Acceptance](development/mcp-tls-rotation-acceptance-2026-08-04.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [AiDN Functional MVP Acceptance Report](development/mvp-acceptance-2026-08-01.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [Plugin Host Docker Boundary Acceptance](development/plugin-host-egress-acceptance-2026-08-02.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [Protocol Authority Policy Rollout](development/protocol-authority-policy-rollout.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [Protocol Authority Readiness Rollout Acceptance](development/protocol-authority-readiness-rollout-acceptance-2026-08-12.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [Protocol Authority Boundary Rollout Acceptance](development/protocol-authority-rollout-acceptance-2026-08-12.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [Public Multi-Validator Rollout](development/public-multivalidator-rollout.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [Release Gate Operational Evidence](development/release-gate-operational-evidence.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [RFC-0068 Evidence Mode](development/rfc-0068-evidence-mode.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
-| [Wallet Bootstrap Recovery Acceptance - 2026-08-08](development/wallet-bootstrap-recovery-acceptance-2026-08-08.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [Architecture Map, Refactor Plan, and CI Bootstrap](evidence/2026-07-22-architecture-map-and-ci-bootstrap.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [External CometBFT Testnet Acceptance](evidence/cometbft-external-testnet-acceptance.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [Controlled LAN Consensus Acceptance Evidence](evidence/cometbft-lan-acceptance-2026-08-02.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [Four-Validator CometBFT Acceptance Drill](evidence/cometbft-multivalidator-acceptance-drill.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [Controlled Localnet Epoch 0 Manifest and Transition Acceptance](evidence/controlled-localnet-epoch-0-manifest-transition-acceptance-2026-08-13.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [Controlled Localnet Epoch 1 ECO-0005/ECO-0007 Acceptance](evidence/controlled-localnet-epoch-1-eco0005-acceptance-2026-08-13.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [Controlled Localnet Epoch 1 RFC-0068 / ECO-0007 Live Payout Acceptance](evidence/controlled-localnet-epoch-1-eco0007-live-payout-acceptance-2026-08-13.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [Controlled Localnet Epoch 1 ECO-0007 Wallet 127 Payout Acceptance](evidence/controlled-localnet-epoch-1-eco0007-wallet127-live-payout-acceptance-2026-08-14.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [Controlled Localnet Epoch Schedule Acceptance](evidence/controlled-localnet-epoch-schedule-acceptance-2026-08-13.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [ECO-0007 Simulation Profile](evidence/eco-0007-simulation.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [ECO-0007 Validator Rollout Acceptance](evidence/eco-0007-validator-rollout-acceptance-2026-08-12.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [Epoch Schedule Commitment Gate Rollout Acceptance](evidence/epoch-schedule-commit-gate-rollout-acceptance-2026-08-13.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [Epoch Transition Input Query Rollout Acceptance](evidence/epoch-transition-input-query-rollout-acceptance-2026-08-13.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [Faucet Live Payout and Finality Acceptance](evidence/faucet-live-payout-finality-acceptance-2026-08-12.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [G3 Multi-Validator Acceptance](evidence/g3-multivalidator-acceptance-2026-08-04.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [G5 Replacement and Fault-Recovery Acceptance](evidence/g5-reprovision-acceptance-2026-08-04.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [MCP TLS Rotation Acceptance](evidence/mcp-tls-rotation-acceptance-2026-08-04.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [AiDN Functional MVP Acceptance Report](evidence/mvp-acceptance-2026-08-01.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [Plugin Host Docker Boundary Acceptance](evidence/plugin-host-egress-acceptance-2026-08-02.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [Protocol Authority Readiness Rollout Acceptance](evidence/protocol-authority-readiness-rollout-acceptance-2026-08-12.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [Protocol Authority Boundary Rollout Acceptance](evidence/protocol-authority-rollout-acceptance-2026-08-12.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [Release Gate Operational Evidence](evidence/release-gate-operational-evidence.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
+| [Wallet Bootstrap Recovery Acceptance - 2026-08-08](evidence/wallet-bootstrap-recovery-acceptance-2026-08-08.md) | Dated acceptance record, rollout evidence, simulation, or operational drill. |
 
 ## Historical plans
 
 | Document | What it is |
 | --- | --- |
-| [Design QA](../design-qa.md) | Milestone plan retained as implementation history; use ROADMAP for current priority. |
-| [M10: Snapshot & State Sync Protocol (RFC-0062)](../M10-PLAN.md) | Milestone plan retained as implementation history; use ROADMAP for current priority. |
-| [M11: Rating, Validation Bond & Epoch Rewards — Execution Plan](../M11-PLAN.md) | Milestone plan retained as implementation history; use ROADMAP for current priority. |
-| [M7: CometBFT Consensus And Ledger Finality — План реализации](../M7-PLAN.md) | Milestone plan retained as implementation history; use ROADMAP for current priority. |
-| [M8: Federated/Distributed Registry — План реализации](../M8-PLAN.md) | Milestone plan retained as implementation history; use ROADMAP for current priority. |
-| [M9: Network Transport + Registry Replication Protocol](../M9-PLAN.md) | Milestone plan retained as implementation history; use ROADMAP for current priority. |
+| [M10: Snapshot & State Sync Protocol (RFC-0062)](archive/milestone-plans/M10-PLAN.md) | Milestone plan retained as implementation history; use ROADMAP for current priority. |
+| [M11: Rating, Validation Bond & Epoch Rewards — Execution Plan](archive/milestone-plans/M11-PLAN.md) | Milestone plan retained as implementation history; use ROADMAP for current priority. |
+| [M7: CometBFT Consensus And Ledger Finality — План реализации](archive/milestone-plans/M7-PLAN.md) | Milestone plan retained as implementation history; use ROADMAP for current priority. |
+| [M8: Federated/Distributed Registry — План реализации](archive/milestone-plans/M8-PLAN.md) | Milestone plan retained as implementation history; use ROADMAP for current priority. |
+| [M9: Network Transport + Registry Replication Protocol](archive/milestone-plans/M9-PLAN.md) | Milestone plan retained as implementation history; use ROADMAP for current priority. |
 
 ## Archived implementation plans
 
 | Document | What it is |
 | --- | --- |
-| [Hypervisor MVP Implementation Plan](superpowers/plans/2026-06-18-hypervisor-mvp.md) | Historical implementation plan retained for context and traceability. |
-| [Agent Allocation Contract Implementation Plan](superpowers/plans/2026-06-19-agent-allocation-contract.md) | Historical implementation plan retained for context and traceability. |
-| [Agent Resource Discovery And Model Onboarding Implementation Plan](superpowers/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md) | Historical implementation plan retained for context and traceability. |
-| [Allocation Lease TTL And Gating Implementation Plan](superpowers/plans/2026-06-19-allocation-lease-ttl-and-gating.md) | Historical implementation plan retained for context and traceability. |
-| [M2 Centralized Registry And Discovery Implementation Plan](superpowers/plans/2026-06-19-m2-centralized-registry-and-discovery.md) | Historical implementation plan retained for context and traceability. |
-| [M3 Wallet Pricing And Usage Metering Plan](superpowers/plans/2026-06-19-m3-wallet-pricing-and-usage-metering.md) | Historical implementation plan retained for context and traceability. |
-| [Operator Dashboard First Slice Implementation Plan](superpowers/plans/2026-06-20-operator-dashboard-first-slice.md) | Historical implementation plan retained for context and traceability. |
-| [Operator Dashboard Terminal Redesign Implementation Plan](superpowers/plans/2026-06-20-operator-dashboard-terminal-redesign.md) | Historical implementation plan retained for context and traceability. |
-| [Operator Requests Workspace Implementation Plan](superpowers/plans/2026-06-20-operator-requests-workspace.md) | Historical implementation plan retained for context and traceability. |
-| [M3 Settlement Lifecycle Hardening Implementation Plan](superpowers/plans/2026-06-21-m3-settlement-lifecycle-hardening.md) | Historical implementation plan retained for context and traceability. |
-| [AiDN_0.1 Implementation Alignment Audit](superpowers/plans/2026-06-28-aidn-0-1-implementation-alignment.md) | Historical implementation plan retained for context and traceability. |
-| [M3 Operator-Gated Settlement Readiness Implementation Plan](superpowers/plans/2026-06-28-m3-operator-gated-settlement-readiness.md) | Historical implementation plan retained for context and traceability. |
-| [Endpoint-First Transition Implementation Plan](superpowers/plans/2026-06-29-endpoint-first-transition.md) | Historical implementation plan retained for context and traceability. |
-| [Endpoint Configuration Publication Implementation Plan](superpowers/plans/2026-06-30-endpoint-configuration-publication.md) | Historical implementation plan retained for context and traceability. |
-| [Endpoint Session And Payment Flow Implementation Plan](superpowers/plans/2026-07-01-endpoint-session-payment-flow.md) | Historical implementation plan retained for context and traceability. |
-| [M5 Validation Bond And Escrow Implementation Plan](superpowers/plans/2026-07-02-m5-validation-bond-and-escrow.md) | Historical implementation plan retained for context and traceability. |
-| [M5 Validation Epochs And Summary Implementation Plan](superpowers/plans/2026-07-02-m5-validation-epochs-and-summary.md) | Historical implementation plan retained for context and traceability. |
-| [Proxy Session Propagation Implementation Plan](superpowers/plans/2026-07-02-proxy-session-propagation.md) | Historical implementation plan retained for context and traceability. |
-| [Dual-Layer Trust Propagation Implementation Plan](superpowers/plans/2026-07-03-dual-layer-trust-propagation.md) | Historical implementation plan retained for context and traceability. |
-| [Endpoint-First Operator Shell Consolidation Implementation Plan](superpowers/plans/2026-07-03-endpoint-first-operator-shell-consolidation.md) | Historical implementation plan retained for context and traceability. |
-| [Guided Dashboard Onboarding Implementation Plan](superpowers/plans/2026-07-04-guided-dashboard-onboarding.md) | Historical implementation plan retained for context and traceability. |
-| [Canonical Registry Market Dual Payload Implementation Plan](superpowers/plans/2026-07-05-canonical-registry-market-dual-payload.md) | Historical implementation plan retained for context and traceability. |
-| [Canonical Service Capability Overlay Implementation Plan](superpowers/plans/2026-07-05-canonical-service-capability-overlay.md) | Historical implementation plan retained for context and traceability. |
-| [Endpoint-First Migration Implementation Plan](superpowers/plans/2026-07-05-endpoint-first-migration.md) | Historical implementation plan retained for context and traceability. |
-| [Canonical Advertisement Publication Implementation Plan](superpowers/plans/2026-07-06-canonical-advertisement-publication.md) | Historical implementation plan retained for context and traceability. |
-| [Endpoint-First Shell Contract Consolidation Implementation Plan](superpowers/plans/2026-07-06-endpoint-first-shell-contract-consolidation.md) | Historical implementation plan retained for context and traceability. |
-| [Endpoint Guided Proxy Flow Implementation Plan](superpowers/plans/2026-07-06-endpoint-guided-proxy-flow.md) | Historical implementation plan retained for context and traceability. |
-| [Validation Philosophy Refactor Implementation Plan](superpowers/plans/2026-07-09-validation-philosophy-refactor.md) | Historical implementation plan retained for context and traceability. |
-| [ECO-0005 Epoch Reward Accounting Foundation Implementation Plan](superpowers/plans/2026-07-10-eco-0005-epoch-reward-accounting-foundation.md) | Historical implementation plan retained for context and traceability. |
-| [Endpoint Proxy Detach Lifecycle Implementation Plan](superpowers/plans/2026-07-10-endpoint-proxy-detach-lifecycle.md) | Historical implementation plan retained for context and traceability. |
-| [Guarded Remote Endpoint Detach Implementation Plan](superpowers/plans/2026-07-10-guarded-remote-endpoint-detach.md) | Historical implementation plan retained for context and traceability. |
-| [M5 Reputation And Rating Read-Model Implementation Plan](superpowers/plans/2026-07-10-m5-reputation-rating-read-model.md) | Historical implementation plan retained for context and traceability. |
-| [RFC-0051 Accounting Foundation Implementation Plan](superpowers/plans/2026-07-10-rfc-0051-accounting-foundation.md) | Historical implementation plan retained for context and traceability. |
-| [RFC-0051 Checkpoint Acknowledgement Implementation Plan](superpowers/plans/2026-07-10-rfc-0051-checkpoint-acknowledgement.md) | Historical implementation plan retained for context and traceability. |
-| [RFC-0051 Maximum Request Charge Guard Implementation Plan](superpowers/plans/2026-07-10-rfc-0051-maximum-request-charge.md) | Historical implementation plan retained for context and traceability. |
-| [RFC-0051 Checkpoint Acknowledgement And Ledger Hooks Implementation Plan](superpowers/plans/2026-07-11-rfc-0051-checkpoint-acknowledgement-ledger-hooks.md) | Historical implementation plan retained for context and traceability. |
-| [RFC-0059 Ledger Operation Foundation Implementation Plan](superpowers/plans/2026-07-11-rfc-0059-ledger-operation-foundation.md) | Historical implementation plan retained for context and traceability. |
-| [RFC Cross-Sync Implementation Plan](superpowers/plans/2026-07-12-rfc-cross-sync.md) | Historical implementation plan retained for context and traceability. |
-| [Accounting Contract Registry Object Implementation Plan](superpowers/plans/2026-07-13-accounting-contract-registry-object.md) | Historical implementation plan retained for context and traceability. |
-| [Capability Profile Foundation](superpowers/plans/2026-07-13-capability-profile-foundation.md) | Historical implementation plan retained for context and traceability. |
-| [Marketplace Contract Slice Implementation Plan](superpowers/plans/2026-07-13-marketplace-contract-slice.md) | Historical implementation plan retained for context and traceability. |
-| [Registry Local Completeness Summary Implementation Plan](superpowers/plans/2026-07-13-registry-local-completeness-summary.md) | Historical implementation plan retained for context and traceability. |
-| [Registry Object Durable Persistence Implementation Plan](superpowers/plans/2026-07-13-registry-object-durable-persistence.md) | Historical implementation plan retained for context and traceability. |
-| [Registry Object Envelope](superpowers/plans/2026-07-13-registry-object-envelope.md) | Historical implementation plan retained for context and traceability. |
-| [Registry Object Payload Retrieval](superpowers/plans/2026-07-13-registry-object-payload-retrieval.md) | Historical implementation plan retained for context and traceability. |
-| [Registry Object Persistence And Query](superpowers/plans/2026-07-13-registry-object-persistence-query.md) | Historical implementation plan retained for context and traceability. |
-| [Registry Object Persistence Implementation Plan](superpowers/plans/2026-07-13-registry-object-persistence.md) | Historical implementation plan retained for context and traceability. |
-| [Session Contract Object Implementation Plan](superpowers/plans/2026-07-13-session-contract-object.md) | Historical implementation plan retained for context and traceability. |
-| [Provider Plugin System MVP Implementation Plan](superpowers/plans/2026-07-14-provider-plugin-system-mvp.md) | Historical implementation plan retained for context and traceability. |
-| [Provider Install Approval and Apply Flow Implementation Plan](superpowers/plans/2026-07-15-provider-install-approval-flow.md) | Historical implementation plan retained for context and traceability. |
-| [Provider Plugin Directory and Declarative Install Plans Implementation Plan](superpowers/plans/2026-07-15-provider-plugin-directory-install-plan.md) | Historical implementation plan retained for context and traceability. |
-| [Network Dispatcher Implementation Plan](superpowers/plans/2026-07-18-network-dispatcher.md) | Historical implementation plan retained for context and traceability. |
-| [Validation Report Custody Implementation Plan](superpowers/plans/2026-07-18-validation-report-custody.md) | Historical implementation plan retained for context and traceability. |
-| [Operator MCP Access Implementation Plan](superpowers/plans/2026-08-09-operator-mcp-access.md) | Historical implementation plan retained for context and traceability. |
-| [Provider Deployment, Marketplace Authoring, And Ubuntu Onboarding Implementation Plan](superpowers/plans/2026-08-14-provider-marketplace-bootstrap-slices.md) | Historical implementation plan retained for context and traceability. |
+| [Hypervisor MVP Implementation Plan](archive/plans/2026-06-18-hypervisor-mvp.md) | Historical implementation plan retained for context and traceability. |
+| [Agent Allocation Contract Implementation Plan](archive/plans/2026-06-19-agent-allocation-contract.md) | Historical implementation plan retained for context and traceability. |
+| [Agent Resource Discovery And Model Onboarding Implementation Plan](archive/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md) | Historical implementation plan retained for context and traceability. |
+| [Allocation Lease TTL And Gating Implementation Plan](archive/plans/2026-06-19-allocation-lease-ttl-and-gating.md) | Historical implementation plan retained for context and traceability. |
+| [M2 Centralized Registry And Discovery Implementation Plan](archive/plans/2026-06-19-m2-centralized-registry-and-discovery.md) | Historical implementation plan retained for context and traceability. |
+| [M3 Wallet Pricing And Usage Metering Plan](archive/plans/2026-06-19-m3-wallet-pricing-and-usage-metering.md) | Historical implementation plan retained for context and traceability. |
+| [Operator Dashboard First Slice Implementation Plan](archive/plans/2026-06-20-operator-dashboard-first-slice.md) | Historical implementation plan retained for context and traceability. |
+| [Operator Dashboard Terminal Redesign Implementation Plan](archive/plans/2026-06-20-operator-dashboard-terminal-redesign.md) | Historical implementation plan retained for context and traceability. |
+| [Operator Requests Workspace Implementation Plan](archive/plans/2026-06-20-operator-requests-workspace.md) | Historical implementation plan retained for context and traceability. |
+| [M3 Settlement Lifecycle Hardening Implementation Plan](archive/plans/2026-06-21-m3-settlement-lifecycle-hardening.md) | Historical implementation plan retained for context and traceability. |
+| [AiDN_0.1 Implementation Alignment Audit](archive/plans/2026-06-28-aidn-0-1-implementation-alignment.md) | Historical implementation plan retained for context and traceability. |
+| [M3 Operator-Gated Settlement Readiness Implementation Plan](archive/plans/2026-06-28-m3-operator-gated-settlement-readiness.md) | Historical implementation plan retained for context and traceability. |
+| [Endpoint-First Transition Implementation Plan](archive/plans/2026-06-29-endpoint-first-transition.md) | Historical implementation plan retained for context and traceability. |
+| [Endpoint Configuration Publication Implementation Plan](archive/plans/2026-06-30-endpoint-configuration-publication.md) | Historical implementation plan retained for context and traceability. |
+| [Endpoint Session And Payment Flow Implementation Plan](archive/plans/2026-07-01-endpoint-session-payment-flow.md) | Historical implementation plan retained for context and traceability. |
+| [M5 Validation Bond And Escrow Implementation Plan](archive/plans/2026-07-02-m5-validation-bond-and-escrow.md) | Historical implementation plan retained for context and traceability. |
+| [M5 Validation Epochs And Summary Implementation Plan](archive/plans/2026-07-02-m5-validation-epochs-and-summary.md) | Historical implementation plan retained for context and traceability. |
+| [Proxy Session Propagation Implementation Plan](archive/plans/2026-07-02-proxy-session-propagation.md) | Historical implementation plan retained for context and traceability. |
+| [Dual-Layer Trust Propagation Implementation Plan](archive/plans/2026-07-03-dual-layer-trust-propagation.md) | Historical implementation plan retained for context and traceability. |
+| [Endpoint-First Operator Shell Consolidation Implementation Plan](archive/plans/2026-07-03-endpoint-first-operator-shell-consolidation.md) | Historical implementation plan retained for context and traceability. |
+| [Guided Dashboard Onboarding Implementation Plan](archive/plans/2026-07-04-guided-dashboard-onboarding.md) | Historical implementation plan retained for context and traceability. |
+| [Canonical Registry Market Dual Payload Implementation Plan](archive/plans/2026-07-05-canonical-registry-market-dual-payload.md) | Historical implementation plan retained for context and traceability. |
+| [Canonical Service Capability Overlay Implementation Plan](archive/plans/2026-07-05-canonical-service-capability-overlay.md) | Historical implementation plan retained for context and traceability. |
+| [Endpoint-First Migration Implementation Plan](archive/plans/2026-07-05-endpoint-first-migration.md) | Historical implementation plan retained for context and traceability. |
+| [Canonical Advertisement Publication Implementation Plan](archive/plans/2026-07-06-canonical-advertisement-publication.md) | Historical implementation plan retained for context and traceability. |
+| [Endpoint-First Shell Contract Consolidation Implementation Plan](archive/plans/2026-07-06-endpoint-first-shell-contract-consolidation.md) | Historical implementation plan retained for context and traceability. |
+| [Endpoint Guided Proxy Flow Implementation Plan](archive/plans/2026-07-06-endpoint-guided-proxy-flow.md) | Historical implementation plan retained for context and traceability. |
+| [Validation Philosophy Refactor Implementation Plan](archive/plans/2026-07-09-validation-philosophy-refactor.md) | Historical implementation plan retained for context and traceability. |
+| [ECO-0005 Epoch Reward Accounting Foundation Implementation Plan](archive/plans/2026-07-10-eco-0005-epoch-reward-accounting-foundation.md) | Historical implementation plan retained for context and traceability. |
+| [Endpoint Proxy Detach Lifecycle Implementation Plan](archive/plans/2026-07-10-endpoint-proxy-detach-lifecycle.md) | Historical implementation plan retained for context and traceability. |
+| [Guarded Remote Endpoint Detach Implementation Plan](archive/plans/2026-07-10-guarded-remote-endpoint-detach.md) | Historical implementation plan retained for context and traceability. |
+| [M5 Reputation And Rating Read-Model Implementation Plan](archive/plans/2026-07-10-m5-reputation-rating-read-model.md) | Historical implementation plan retained for context and traceability. |
+| [RFC-0051 Accounting Foundation Implementation Plan](archive/plans/2026-07-10-rfc-0051-accounting-foundation.md) | Historical implementation plan retained for context and traceability. |
+| [RFC-0051 Checkpoint Acknowledgement Implementation Plan](archive/plans/2026-07-10-rfc-0051-checkpoint-acknowledgement.md) | Historical implementation plan retained for context and traceability. |
+| [RFC-0051 Maximum Request Charge Guard Implementation Plan](archive/plans/2026-07-10-rfc-0051-maximum-request-charge.md) | Historical implementation plan retained for context and traceability. |
+| [RFC-0051 Checkpoint Acknowledgement And Ledger Hooks Implementation Plan](archive/plans/2026-07-11-rfc-0051-checkpoint-acknowledgement-ledger-hooks.md) | Historical implementation plan retained for context and traceability. |
+| [RFC-0059 Ledger Operation Foundation Implementation Plan](archive/plans/2026-07-11-rfc-0059-ledger-operation-foundation.md) | Historical implementation plan retained for context and traceability. |
+| [RFC Cross-Sync Implementation Plan](archive/plans/2026-07-12-rfc-cross-sync.md) | Historical implementation plan retained for context and traceability. |
+| [Accounting Contract Registry Object Implementation Plan](archive/plans/2026-07-13-accounting-contract-registry-object.md) | Historical implementation plan retained for context and traceability. |
+| [Capability Profile Foundation](archive/plans/2026-07-13-capability-profile-foundation.md) | Historical implementation plan retained for context and traceability. |
+| [Marketplace Contract Slice Implementation Plan](archive/plans/2026-07-13-marketplace-contract-slice.md) | Historical implementation plan retained for context and traceability. |
+| [Registry Local Completeness Summary Implementation Plan](archive/plans/2026-07-13-registry-local-completeness-summary.md) | Historical implementation plan retained for context and traceability. |
+| [Registry Object Durable Persistence Implementation Plan](archive/plans/2026-07-13-registry-object-durable-persistence.md) | Historical implementation plan retained for context and traceability. |
+| [Registry Object Envelope](archive/plans/2026-07-13-registry-object-envelope.md) | Historical implementation plan retained for context and traceability. |
+| [Registry Object Payload Retrieval](archive/plans/2026-07-13-registry-object-payload-retrieval.md) | Historical implementation plan retained for context and traceability. |
+| [Registry Object Persistence And Query](archive/plans/2026-07-13-registry-object-persistence-query.md) | Historical implementation plan retained for context and traceability. |
+| [Registry Object Persistence Implementation Plan](archive/plans/2026-07-13-registry-object-persistence.md) | Historical implementation plan retained for context and traceability. |
+| [Session Contract Object Implementation Plan](archive/plans/2026-07-13-session-contract-object.md) | Historical implementation plan retained for context and traceability. |
+| [Provider Plugin System MVP Implementation Plan](archive/plans/2026-07-14-provider-plugin-system-mvp.md) | Historical implementation plan retained for context and traceability. |
+| [Provider Install Approval and Apply Flow Implementation Plan](archive/plans/2026-07-15-provider-install-approval-flow.md) | Historical implementation plan retained for context and traceability. |
+| [Provider Plugin Directory and Declarative Install Plans Implementation Plan](archive/plans/2026-07-15-provider-plugin-directory-install-plan.md) | Historical implementation plan retained for context and traceability. |
+| [Network Dispatcher Implementation Plan](archive/plans/2026-07-18-network-dispatcher.md) | Historical implementation plan retained for context and traceability. |
+| [Validation Report Custody Implementation Plan](archive/plans/2026-07-18-validation-report-custody.md) | Historical implementation plan retained for context and traceability. |
+| [Operator MCP Access Implementation Plan](archive/plans/2026-08-09-operator-mcp-access.md) | Historical implementation plan retained for context and traceability. |
+| [Provider Deployment, Marketplace Authoring, And Ubuntu Onboarding Implementation Plan](archive/plans/2026-08-14-provider-marketplace-bootstrap-slices.md) | Historical implementation plan retained for context and traceability. |
 
 ## Archived design specifications
 
 | Document | What it is |
 | --- | --- |
-| [Hypervisor Plugin Runtime Design](superpowers/specs/2026-06-18-hypervisor-plugin-runtime-design.md) | Historical design specification retained for context and traceability. |
-| [M2 Centralized Registry And Discovery Design](superpowers/specs/2026-06-19-m2-centralized-registry-and-discovery-design.md) | Historical design specification retained for context and traceability. |
-| [Network Registry, Wallet, And Rating Design](superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md) | Historical design specification retained for context and traceability. |
-| [Operator Dashboard Terminal Redesign Design](superpowers/specs/2026-06-20-operator-dashboard-terminal-redesign-design.md) | Historical design specification retained for context and traceability. |
-| [Operator Fleet And Market Dashboard Design](superpowers/specs/2026-06-20-operator-fleet-market-dashboard-design.md) | Historical design specification retained for context and traceability. |
-| [Operator Requests Workspace Design](superpowers/specs/2026-06-20-operator-requests-workspace-design.md) | Historical design specification retained for context and traceability. |
-| [M3 Settlement Lifecycle Hardening Design](superpowers/specs/2026-06-21-m3-settlement-lifecycle-hardening-design.md) | Historical design specification retained for context and traceability. |
-| [M3 Operator-Gated Settlement Readiness Design](superpowers/specs/2026-06-28-m3-operator-gated-settlement-readiness-design.md) | Historical design specification retained for context and traceability. |
-| [Endpoint-First Transition Design](superpowers/specs/2026-06-29-endpoint-first-transition-design.md) | Historical design specification retained for context and traceability. |
-| [Endpoint Configuration Publication Design](superpowers/specs/2026-06-30-endpoint-configuration-publication-design.md) | Historical design specification retained for context and traceability. |
-| [Endpoint Session And Payment Flow Design](superpowers/specs/2026-07-01-endpoint-session-payment-flow-design.md) | Historical design specification retained for context and traceability. |
-| [Proxy Session Propagation Design](superpowers/specs/2026-07-02-proxy-session-propagation-design.md) | Historical design specification retained for context and traceability. |
-| [Validation Bond And Escrow Design](superpowers/specs/2026-07-02-validation-bond-and-escrow-design.md) | Historical design specification retained for context and traceability. |
-| [Endpoint-First Operator Shell Consolidation Design](superpowers/specs/2026-07-03-endpoint-first-operator-shell-consolidation-design.md) | Historical design specification retained for context and traceability. |
-| [Guided Dashboard Onboarding Design](superpowers/specs/2026-07-04-guided-dashboard-onboarding-design.md) | Historical design specification retained for context and traceability. |
-| [Canonical Registry Market Dual Payload Design](superpowers/specs/2026-07-05-canonical-registry-market-dual-payload-design.md) | Historical design specification retained for context and traceability. |
-| [Canonical Service Capability Overlay Design](superpowers/specs/2026-07-05-canonical-service-capability-overlay-design.md) | Historical design specification retained for context and traceability. |
-| [Endpoint-First Migration Design](superpowers/specs/2026-07-05-endpoint-first-migration-design.md) | Historical design specification retained for context and traceability. |
-| [Canonical Advertisement Publication Design](superpowers/specs/2026-07-06-canonical-advertisement-publication-design.md) | Historical design specification retained for context and traceability. |
-| [Endpoint-First Shell Contract Consolidation Design](superpowers/specs/2026-07-06-endpoint-first-shell-contract-consolidation-design.md) | Historical design specification retained for context and traceability. |
-| [Endpoint Guided Proxy Flow Design](superpowers/specs/2026-07-06-endpoint-guided-proxy-flow-design.md) | Historical design specification retained for context and traceability. |
-| [Validation Philosophy Refactor Design](superpowers/specs/2026-07-09-validation-philosophy-refactor-design.md) | Historical design specification retained for context and traceability. |
-| [M5 Reputation And Rating Read-Model Design](superpowers/specs/2026-07-10-m5-reputation-rating-read-model-design.md) | Historical design specification retained for context and traceability. |
-| [RFC-0051 Checkpoint Acknowledgement And Ledger Hooks Design](superpowers/specs/2026-07-11-rfc-0051-checkpoint-acknowledgement-ledger-hooks-design.md) | Historical design specification retained for context and traceability. |
-| [RFC Cross-Sync Design](superpowers/specs/2026-07-12-rfc-cross-sync-design.md) | Historical design specification retained for context and traceability. |
-| [Registry Local Completeness Summary Design](superpowers/specs/2026-07-13-registry-local-completeness-summary-design.md) | Historical design specification retained for context and traceability. |
-| [Registry Object Durable Persistence Design](superpowers/specs/2026-07-13-registry-object-durable-persistence-design.md) | Historical design specification retained for context and traceability. |
-| [Registry Object Persistence Design](superpowers/specs/2026-07-13-registry-object-persistence-design.md) | Historical design specification retained for context and traceability. |
-| [RFC Implementation Alignment Audit](superpowers/specs/2026-07-13-rfc-implementation-alignment-audit.md) | Historical design specification retained for context and traceability. |
-| [Session Contract Object Design](superpowers/specs/2026-07-13-session-contract-object-design.md) | Historical design specification retained for context and traceability. |
-| [Provider Plugin System MVP Design](superpowers/specs/2026-07-14-provider-plugin-system-mvp-design.md) | Historical design specification retained for context and traceability. |
-| [Provider Install Approval and Apply Flow Design](superpowers/specs/2026-07-15-provider-install-approval-flow-design.md) | Historical design specification retained for context and traceability. |
-| [Operator MCP Access Design](superpowers/specs/2026-08-09-operator-mcp-access-design.md) | Historical design specification retained for context and traceability. |
-| [Provider Deployment, Marketplace Authoring, And Ubuntu Onboarding Design](superpowers/specs/2026-08-14-provider-marketplace-bootstrap-slices-design.md) | Historical design specification retained for context and traceability. |
-| [Multimodal Usage Pricing V2 Roadmap](superpowers/specs/2026-08-25-multimodal-usage-pricing-v2-roadmap.md) | Historical design specification retained for context and traceability. |
+| [Design QA](archive/design/design-qa.md) | Historical design QA record retained for design context. |
+| [Hypervisor Plugin Runtime Design](archive/specifications/2026-06-18-hypervisor-plugin-runtime-design.md) | Historical design specification retained for context and traceability. |
+| [M2 Centralized Registry And Discovery Design](archive/specifications/2026-06-19-m2-centralized-registry-and-discovery-design.md) | Historical design specification retained for context and traceability. |
+| [Network Registry, Wallet, And Rating Design](archive/specifications/2026-06-19-network-registry-wallet-rating-design.md) | Historical design specification retained for context and traceability. |
+| [Operator Dashboard Terminal Redesign Design](archive/specifications/2026-06-20-operator-dashboard-terminal-redesign-design.md) | Historical design specification retained for context and traceability. |
+| [Operator Fleet And Market Dashboard Design](archive/specifications/2026-06-20-operator-fleet-market-dashboard-design.md) | Historical design specification retained for context and traceability. |
+| [Operator Requests Workspace Design](archive/specifications/2026-06-20-operator-requests-workspace-design.md) | Historical design specification retained for context and traceability. |
+| [M3 Settlement Lifecycle Hardening Design](archive/specifications/2026-06-21-m3-settlement-lifecycle-hardening-design.md) | Historical design specification retained for context and traceability. |
+| [M3 Operator-Gated Settlement Readiness Design](archive/specifications/2026-06-28-m3-operator-gated-settlement-readiness-design.md) | Historical design specification retained for context and traceability. |
+| [Endpoint-First Transition Design](archive/specifications/2026-06-29-endpoint-first-transition-design.md) | Historical design specification retained for context and traceability. |
+| [Endpoint Configuration Publication Design](archive/specifications/2026-06-30-endpoint-configuration-publication-design.md) | Historical design specification retained for context and traceability. |
+| [Endpoint Session And Payment Flow Design](archive/specifications/2026-07-01-endpoint-session-payment-flow-design.md) | Historical design specification retained for context and traceability. |
+| [Proxy Session Propagation Design](archive/specifications/2026-07-02-proxy-session-propagation-design.md) | Historical design specification retained for context and traceability. |
+| [Validation Bond And Escrow Design](archive/specifications/2026-07-02-validation-bond-and-escrow-design.md) | Historical design specification retained for context and traceability. |
+| [Endpoint-First Operator Shell Consolidation Design](archive/specifications/2026-07-03-endpoint-first-operator-shell-consolidation-design.md) | Historical design specification retained for context and traceability. |
+| [Guided Dashboard Onboarding Design](archive/specifications/2026-07-04-guided-dashboard-onboarding-design.md) | Historical design specification retained for context and traceability. |
+| [Canonical Registry Market Dual Payload Design](archive/specifications/2026-07-05-canonical-registry-market-dual-payload-design.md) | Historical design specification retained for context and traceability. |
+| [Canonical Service Capability Overlay Design](archive/specifications/2026-07-05-canonical-service-capability-overlay-design.md) | Historical design specification retained for context and traceability. |
+| [Endpoint-First Migration Design](archive/specifications/2026-07-05-endpoint-first-migration-design.md) | Historical design specification retained for context and traceability. |
+| [Canonical Advertisement Publication Design](archive/specifications/2026-07-06-canonical-advertisement-publication-design.md) | Historical design specification retained for context and traceability. |
+| [Endpoint-First Shell Contract Consolidation Design](archive/specifications/2026-07-06-endpoint-first-shell-contract-consolidation-design.md) | Historical design specification retained for context and traceability. |
+| [Endpoint Guided Proxy Flow Design](archive/specifications/2026-07-06-endpoint-guided-proxy-flow-design.md) | Historical design specification retained for context and traceability. |
+| [Validation Philosophy Refactor Design](archive/specifications/2026-07-09-validation-philosophy-refactor-design.md) | Historical design specification retained for context and traceability. |
+| [M5 Reputation And Rating Read-Model Design](archive/specifications/2026-07-10-m5-reputation-rating-read-model-design.md) | Historical design specification retained for context and traceability. |
+| [RFC-0051 Checkpoint Acknowledgement And Ledger Hooks Design](archive/specifications/2026-07-11-rfc-0051-checkpoint-acknowledgement-ledger-hooks-design.md) | Historical design specification retained for context and traceability. |
+| [RFC Cross-Sync Design](archive/specifications/2026-07-12-rfc-cross-sync-design.md) | Historical design specification retained for context and traceability. |
+| [Registry Local Completeness Summary Design](archive/specifications/2026-07-13-registry-local-completeness-summary-design.md) | Historical design specification retained for context and traceability. |
+| [Registry Object Durable Persistence Design](archive/specifications/2026-07-13-registry-object-durable-persistence-design.md) | Historical design specification retained for context and traceability. |
+| [Registry Object Persistence Design](archive/specifications/2026-07-13-registry-object-persistence-design.md) | Historical design specification retained for context and traceability. |
+| [RFC Implementation Alignment Audit](archive/specifications/2026-07-13-rfc-implementation-alignment-audit.md) | Historical design specification retained for context and traceability. |
+| [Session Contract Object Design](archive/specifications/2026-07-13-session-contract-object-design.md) | Historical design specification retained for context and traceability. |
+| [Provider Plugin System MVP Design](archive/specifications/2026-07-14-provider-plugin-system-mvp-design.md) | Historical design specification retained for context and traceability. |
+| [Provider Install Approval and Apply Flow Design](archive/specifications/2026-07-15-provider-install-approval-flow-design.md) | Historical design specification retained for context and traceability. |
+| [Operator MCP Access Design](archive/specifications/2026-08-09-operator-mcp-access-design.md) | Historical design specification retained for context and traceability. |
+| [Provider Deployment, Marketplace Authoring, And Ubuntu Onboarding Design](archive/specifications/2026-08-14-provider-marketplace-bootstrap-slices-design.md) | Historical design specification retained for context and traceability. |
+| [Multimodal Usage Pricing V2 Roadmap](archive/specifications/2026-08-25-multimodal-usage-pricing-v2-roadmap.md) | Historical design specification retained for context and traceability. |
 
 ## Component documentation
 

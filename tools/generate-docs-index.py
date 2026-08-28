@@ -24,12 +24,6 @@ ROOT_DOCUMENTS = (
     "PRODUCT.md",
     "DESIGN.md",
     "ROADMAP.md",
-    "M7-PLAN.md",
-    "M8-PLAN.md",
-    "M9-PLAN.md",
-    "M10-PLAN.md",
-    "M11-PLAN.md",
-    "design-qa.md",
 )
 ROOT_ROLES = {
     "README.md": ("Start here", "Repository entry point, local setup, CI, and primary links."),
@@ -39,6 +33,7 @@ ROOT_ROLES = {
     "PRODUCT.md": ("Start here", "Product positioning, users, principles, and constraints."),
     "DESIGN.md": ("Start here", "Dashboard visual system and interaction principles."),
     "ROADMAP.md": ("Start here", "Current delivery roadmap, gates, and milestones."),
+    "docs/DOCUMENTATION.md": ("Start here", "Documentation taxonomy, identifier rules, and maintenance workflow."),
 }
 ADDITIONAL_DOCUMENTS = (
     Path("docs/product/WEB-0001-website-api.openapi.yaml"),
@@ -48,9 +43,6 @@ DOCUMENT_TITLES = {
     "02_ARCHITECTURE.md": "Architecture",
     "docs/product/WEB-0001-website-api.openapi.yaml": "WEB-0001 Website API OpenAPI",
 }
-ARCHIVE_MARKERS = ("acceptance", "evidence", "drill", "simulation", "rollout")
-
-
 def title_for(path: Path) -> str:
     """Return the first Markdown heading, falling back to the filename."""
 
@@ -68,34 +60,34 @@ def classify(relative: Path) -> tuple[str, str]:
     """Return a stable catalog section and a concise role description."""
 
     normalized = relative.as_posix()
-    name = relative.name.lower()
     if normalized in ROOT_ROLES:
         return ROOT_ROLES[normalized]
-    if relative.parent == Path("."):
-        return (
-            "Historical plans",
-            "Milestone plan retained as implementation history; use ROADMAP for current priority.",
-        )
     if normalized.startswith("docs/product/"):
         if relative.suffix == ".yaml":
             return "Product and protocol authority", "Machine-readable API contract for a product surface."
         return "Product and protocol authority", "Normative product, economics, UX, or protocol specification."
     if normalized.startswith("docs/configuration/"):
         return "Configuration", "Configuration reference and parameter inventory."
-    if normalized.startswith("docs/development/executable-spec-pack/"):
+    if normalized.startswith("docs/operations/spec-pack/"):
         return "Executable specifications and operator runbooks", "Executable implementation profile, release gate, migration, or operator procedure."
-    if normalized.startswith("docs/development/"):
-        if "repository-structure-audit" in name:
-            return "Development plans", "Current repository health assessment and refactoring plan."
-        if any(marker in name for marker in ARCHIVE_MARKERS) or re.search(r"20\d\d-\d\d-\d\d", name):
-            return "Historical acceptance and evidence", "Dated acceptance record, rollout evidence, simulation, or operational drill."
-        if "plan" in name or "roadmap" in name:
-            return "Development plans", "Implementation plan or roadmap for a defined slice."
-        return "Development and operations", "Engineering reference, integration guide, or operator runbook."
-    if normalized.startswith("docs/superpowers/plans/"):
+    if normalized.startswith("docs/operations/"):
+        return "Development and operations", "Current installation, deployment, recovery, or operator guide."
+    if normalized.startswith("docs/development/plans/"):
+        return "Development plans", "Implementation plan or roadmap for a defined slice."
+    if normalized.startswith("docs/development/reference/"):
+        return "Development and operations", "Current engineering reference, technical contract, or implementation note."
+    if normalized.startswith("docs/evidence/"):
+        return "Historical acceptance and evidence", "Dated acceptance record, rollout evidence, simulation, or operational drill."
+    if normalized.startswith("docs/archive/milestone-plans/"):
+        return "Historical plans", "Milestone plan retained as implementation history; use ROADMAP for current priority."
+    if normalized.startswith("docs/archive/plans/"):
         return "Archived implementation plans", "Historical implementation plan retained for context and traceability."
-    if normalized.startswith("docs/superpowers/specs/"):
+    if normalized.startswith("docs/archive/specifications/"):
         return "Archived design specifications", "Historical design specification retained for context and traceability."
+    if normalized.startswith("docs/archive/mockups/"):
+        return "Archived design specifications", "Historical visual exploration retained for design context."
+    if normalized.startswith("docs/archive/design/"):
+        return "Archived design specifications", "Historical design QA record retained for design context."
     if normalized.startswith("web/"):
         return "Component documentation", "Setup and development guide for a web surface."
     if normalized.startswith("services/"):

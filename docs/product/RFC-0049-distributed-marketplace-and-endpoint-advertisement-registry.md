@@ -1,6 +1,4 @@
-RFC-0049
-
-Distributed Marketplace and Endpoint Advertisement Registry
+# RFC-0049 — Distributed Marketplace and Endpoint Advertisement Registry
 
 Status: Draft
 

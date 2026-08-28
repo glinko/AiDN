@@ -193,7 +193,7 @@ finality.
 ### Resident Steward LLM Routing And Local Intelligence — 2026-08-24
 
 The expanded implementation and evaluation plan is in
-[Resident Steward LLM Routing And Local Intelligence Roadmap](./docs/development/steward-llm-routing-implementation-roadmap.md).
+[Resident Steward LLM Routing And Local Intelligence Roadmap](docs/development/plans/steward-llm-routing-implementation-roadmap.md).
 
 - [~] Keep a small local model as the always-available, CPU-first event/log
   summarizer and offline Steward fallback. A live baseline on controlled node
@@ -254,8 +254,8 @@ The expanded implementation and evaluation plan is in
 
 The next operator-product milestone is split into three ordered vertical slices.
 The detailed design and executable task list are in
-[the three-slice design](./docs/superpowers/specs/2026-08-14-provider-marketplace-bootstrap-slices-design.md)
-and [implementation plan](./docs/superpowers/plans/2026-08-14-provider-marketplace-bootstrap-slices.md).
+[the three-slice design](docs/archive/specifications/2026-08-14-provider-marketplace-bootstrap-slices-design.md)
+and [implementation plan](docs/archive/plans/2026-08-14-provider-marketplace-bootstrap-slices.md).
 
 Started in this slice:
 
@@ -334,7 +334,7 @@ long-running broker work observable to the dashboard and agents.
 - [x] Persist job progress and readiness fields through snapshot/restore and
   preserve the root-owned allowlisted broker as the only host-mutation path.
 - [x] Document the operator/API contract in
-  [runtime readiness and Provider broker](./docs/development/runtime-readiness-and-provider-broker.md).
+  [runtime readiness and Provider broker](docs/development/reference/runtime-readiness-and-provider-broker.md).
 - [x] Replace the in-process worker handoff with durable broker-side job
   identifiers, idempotent request hashes, replay-safe event offsets, restart
   reconciliation for non-terminal jobs, and cooperative cancellation hooks.
@@ -711,7 +711,7 @@ reviewed Provider, model source, private Endpoint action, and handoff target.
   preflight and verifies a downloaded or reused target before atomic cache
   promotion; custom sources retain bounded computed-only integrity.
 - [x] Document the CLI flow in
-  [interactive Hypervisor installation](./docs/development/interactive-hypervisor-installation.md).
+  [interactive Hypervisor installation](docs/operations/interactive-hypervisor-installation.md).
 - [x] Add the read-only Dashboard installation-plan surface and a narrow
   plan-hash-bound “Review assisted setup” apply flow. It only queues a model
   broker job when the selected Provider is already installed; provider install,
@@ -785,7 +785,7 @@ Controlled-localnet live gate completed:
   delta from the post-stage-one balance.
 
 The detailed live evidence is in
-[the Wallet 127 acceptance record](./docs/development/controlled-localnet-epoch-1-eco0007-wallet127-live-payout-acceptance-2026-08-14.md).
+[the Wallet 127 acceptance record](docs/evidence/controlled-localnet-epoch-1-eco0007-wallet127-live-payout-acceptance-2026-08-14.md).
 
 ## 2026-08-13 Canonical Epoch Schedule Commitment
 
@@ -810,10 +810,10 @@ Controlled-localnet acceptance:
 - [x] Finalize the `2-of-3` authority-signed schedule on validators `128`,
   `129` and `130`, with identical commitment references and multi-RPC
   finality. The detailed evidence is in
-  [the controlled-localnet schedule acceptance record](./docs/development/controlled-localnet-epoch-schedule-acceptance-2026-08-13.md).
+  [the controlled-localnet schedule acceptance record](docs/evidence/controlled-localnet-epoch-schedule-acceptance-2026-08-13.md).
 - [x] Produce and finalize the first controlled-localnet no-work Epoch Result
   Manifest only from finalized schedule/rebase anchors and a validator quorum.
-  The acceptance record is [here](./docs/development/controlled-localnet-epoch-0-manifest-transition-acceptance-2026-08-13.md).
+  The acceptance record is [here](docs/evidence/controlled-localnet-epoch-0-manifest-transition-acceptance-2026-08-13.md).
 
 ## 2026-08-13 Controlled Localnet Schedule Recovery
 
@@ -831,20 +831,20 @@ Completed in this slice:
   finalized rebase evidence references.
 - [x] Provide offline prepare/sign/combine tools and a public
   `epoch/schedule-rebase` query. The operator procedure is documented in
-  [the rebase runbook](./docs/development/controlled-localnet-epoch-schedule-rebase.md).
+  [the rebase runbook](docs/development/reference/controlled-localnet-epoch-schedule-rebase.md).
 
 Controlled-localnet recovery is accepted. The first controlled-localnet
 RFC-0068 contribution payout is now finalized. The non-zero Development Pool
 allocation and its ECO-0007 preflight are recorded in
-[the Epoch 1 acceptance record](./docs/development/controlled-localnet-epoch-1-eco0005-acceptance-2026-08-13.md),
+[the Epoch 1 acceptance record](docs/evidence/controlled-localnet-epoch-1-eco0005-acceptance-2026-08-13.md),
 and the complete live payout path is recorded in
-[the live payout acceptance](./docs/development/controlled-localnet-epoch-1-eco0007-live-payout-acceptance-2026-08-13.md).
+[the live payout acceptance](docs/evidence/controlled-localnet-epoch-1-eco0007-live-payout-acceptance-2026-08-13.md).
 
 A repeated controlled-localnet payout to the verified contributor profile for
 `wallet-5320047bb01d` is also finalized. It confirms the same ordered
 RFC-0068/ECO-0007 path, multi-RPC finality, canonical Wallet delta and replay
 behavior without treating the controlled operator Wallet as an independent
-external identity. See [the Wallet 127 acceptance record](./docs/development/controlled-localnet-epoch-1-eco0007-wallet127-live-payout-acceptance-2026-08-14.md).
+external identity. See [the Wallet 127 acceptance record](docs/evidence/controlled-localnet-epoch-1-eco0007-wallet127-live-payout-acceptance-2026-08-14.md).
 
 ## 2026-08-13 Multi-validator Epoch Transition Quorum Gate
 
@@ -871,7 +871,7 @@ Live-network acceptance:
 - [x] Deploy the `epoch/transition-inputs` query and public manifest projection
   to validators `128`, `129` and `130` without resetting state. The rollout
   reached `3/3` report agreement; the evidence is recorded in
-  [the query rollout acceptance record](./docs/development/epoch-transition-input-query-rollout-acceptance-2026-08-13.md).
+  [the query rollout acceptance record](docs/evidence/epoch-transition-input-query-rollout-acceptance-2026-08-13.md).
 - [x] Run the quorum collector and archive a `READY` report with identical
   finalized schedule and manifest references across validators `128`, `129`
   and `130`.
@@ -897,11 +897,11 @@ Live-network acceptance:
   ECO-0007 production reward batch after a real finalized RFC-0068
   contribution and verified Wallet binding. The live payout, validator
   quorum, restart recovery and replay evidence is recorded in the
-  [payout acceptance](./docs/development/controlled-localnet-epoch-1-eco0007-live-payout-acceptance-2026-08-13.md).
+  [payout acceptance](docs/evidence/controlled-localnet-epoch-1-eco0007-live-payout-acceptance-2026-08-13.md).
 - [x] Repeat the controlled-localnet RFC-0068/ECO-0007 batch with the verified
   contributor profile for `wallet-5320047bb01d`, including an immediate
   `1.2712 Q` payout, `1.9068 Q` maturity reserve, `3/3` finality and a clean
-  replay. See [the Wallet 127 acceptance](./docs/development/controlled-localnet-epoch-1-eco0007-wallet127-live-payout-acceptance-2026-08-14.md).
+  replay. See [the Wallet 127 acceptance](docs/evidence/controlled-localnet-epoch-1-eco0007-wallet127-live-payout-acceptance-2026-08-14.md).
 - [ ] Repeat the same batch gate under a production/public authority policy
   and externally operated validator set.
 
@@ -967,23 +967,23 @@ Completed in this slice:
   `EPOCH_TRANSITION` operations. Strict validator mode rejects missing policy,
   mismatched policy hashes, invalid signatures and duplicated signer evidence
   at both `CheckTx` and block execution; deterministic replay execution uses
-  the same boundary. See [protocol authority policy](./docs/development/protocol-authority-policy.md).
+  the same boundary. See [protocol authority policy](docs/development/reference/protocol-authority-policy.md).
 - [x] Roll out commit `8145166` to validators `128`, `129`, and `130` without
   resetting ledger or CometBFT state. The rollout acceptance record is
-  [here](./docs/development/protocol-authority-rollout-acceptance-2026-08-12.md).
+  [here](docs/evidence/protocol-authority-rollout-acceptance-2026-08-12.md).
 - [x] Add the offline-only authorized epoch-transition builder. It validates
   the same Ledger payload rules, binds every signer to the public policy and
   threshold, and never broadcasts or mutates local state. See
-  [the builder runbook](./docs/development/authorized-epoch-transition-builder.md).
+  [the builder runbook](docs/development/reference/authorized-epoch-transition-builder.md).
 - [x] Add a coordinated public-policy rollout helper with dry-run, state-mount
   validation, atomic file installation, per-host health verification, and
-  rollback. See [the rollout runbook](./docs/development/protocol-authority-policy-rollout.md).
+  rollback. See [the rollout runbook](docs/operations/protocol-authority-policy-rollout.md).
 - [x] Add sanitized policy readiness evidence to consensus status and the
   validator ABCI query path so operators and MCP agents can distinguish
   configured authority quorum from fail-closed state without receiving keys.
 - [x] Roll out `ae5d515` to validators `128`, `129`, and `130` and verify the
   same sanitized authority state plus `3/3` ECO-0007 preflight agreement. See
-  [the live acceptance record](./docs/development/protocol-authority-readiness-rollout-acceptance-2026-08-12.md).
+  [the live acceptance record](docs/evidence/protocol-authority-readiness-rollout-acceptance-2026-08-12.md).
 
 Current economic-network gate:
 
@@ -1208,7 +1208,7 @@ Current implementation slice:
   before mempool/proposal/canonical-log processing when
   `AIDN_CONSENSUS_STRICT_OPERATION_COVERAGE` is enabled. Validator bootstrap
   enables that profile by default, while embedded compatibility instances remain
-  permissive. See [consensus operation coverage](./docs/development/consensus-operation-coverage.md).
+  permissive. See [consensus operation coverage](docs/development/reference/consensus-operation-coverage.md).
 - [x] Implement the first previously declared catalog operation,
   `WALLET_TRANSFER`, in both ABCI and deterministic block execution. The MVP
   applies the fixed `0.01Q` standard fee, recycles it, persists the balance
@@ -1233,7 +1233,7 @@ Current implementation slice:
   restarted validator with an unchanged AppHash. The evidence deliberately
   remains `ownership_evidence: NOT_PROVEN_BY_PROTOCOL`; independent operator
   ownership and public-network finality are separate gates. See
-  [the 2026-08-02 acceptance record](./docs/development/cometbft-lan-acceptance-2026-08-02.md).
+  [the 2026-08-02 acceptance record](docs/evidence/cometbft-lan-acceptance-2026-08-02.md).
 - [x] Add a finality-aware Reputation read model. Registry consumers can poll
   `not_found` or `pending_finality` without receiving an unfinalized profile
   root, and receive the immutable `consensus_finalized` projection only after
@@ -1259,8 +1259,8 @@ Product alignment summary:
 - the canonical Ledger operation inventory is now documented in `RFC-0059`, so consensus, settlement, reward, external Faucet Treasury funding, validation, and suspension work can land on one state-transition catalog instead of duplicating operation semantics across RFCs;
 - the Capability Runtime service model is now documented in `RFC-0053`, so future runtime packaging, runtime authorization, runtime replacement, and multi-runtime capability work can share one architectural contract before wire-level protocol details;
 - the Hypervisor-to-Runtime boundary is now documented in `RFC-0054`, and its first durable protocol core now enforces approved Binding/route identity, handshake version negotiation, semantic replay protection, Request admission/idempotency, Usage chains and explicit recovery plans/results;
-- the first `MCP-0001` node-control slice is now implemented as a local stdio JSON-RPC server plus an opt-in bearer-token HTTP gateway over the existing Hypervisor service. It exposes scope-filtered read models, Bundle plan/apply mutations, Endpoint create/publish, Hook/Event, Resource Broker/Scheduler and Steward surfaces with persistent Control Sessions, refreshable tool catalogs, atomic plans/idempotency, revision checks, hash-linked audit events, a separate operator approval channel, and an operator emergency stop. The production HTTP profile adds mandatory mTLS, TLS 1.2+, HTTPS enforcement, private-key permission checks, a single-worker launcher, Secret Manager-backed TLS handles, hash-only rotation detection, valid-bundle gating, and graceful certificate reload; generic shell execution, Wallet signing, consensus writes, and the complete RFC-0074 lifecycle tool family remain deferred. See [the MCP implementation profile](./docs/product/MCP-0001-node-control-server-implementation-profile.md) and [the quickstart](./docs/development/mcp-server-quickstart.md);
-- the production MCP TLS profile has controlled Ubuntu acceptance on `192.168.88.127`: a real client certificate, encrypted Secret Manager handles, certificate serial rotation, graceful restart, stale transport-session rejection and new-session reconnect all passed. The evidence is [MCP TLS rotation acceptance](./docs/development/mcp-tls-rotation-acceptance-2026-08-04.md); it is technical interoperability evidence only and does not prove organizational independence;
+- the first `MCP-0001` node-control slice is now implemented as a local stdio JSON-RPC server plus an opt-in bearer-token HTTP gateway over the existing Hypervisor service. It exposes scope-filtered read models, Bundle plan/apply mutations, Endpoint create/publish, Hook/Event, Resource Broker/Scheduler and Steward surfaces with persistent Control Sessions, refreshable tool catalogs, atomic plans/idempotency, revision checks, hash-linked audit events, a separate operator approval channel, and an operator emergency stop. The production HTTP profile adds mandatory mTLS, TLS 1.2+, HTTPS enforcement, private-key permission checks, a single-worker launcher, Secret Manager-backed TLS handles, hash-only rotation detection, valid-bundle gating, and graceful certificate reload; generic shell execution, Wallet signing, consensus writes, and the complete RFC-0074 lifecycle tool family remain deferred. See [the MCP implementation profile](./docs/product/MCP-0001-node-control-server-implementation-profile.md) and [the quickstart](docs/operations/mcp-server-quickstart.md);
+- the production MCP TLS profile has controlled Ubuntu acceptance on `192.168.88.127`: a real client certificate, encrypted Secret Manager handles, certificate serial rotation, graceful restart, stale transport-session rejection and new-session reconnect all passed. The evidence is [MCP TLS rotation acceptance](docs/evidence/mcp-tls-rotation-acceptance-2026-08-04.md); it is technical interoperability evidence only and does not prove organizational independence;
 - registry replication is now documented in `RFC-0061`, so future Full Registry eligibility, anti-entropy, completeness proofs, challenge evidence, and repair synchronization can build on one deterministic storage and retrieval model instead of scattered service-local heuristics;
 - snapshot and fast State Sync are now documented in `RFC-0062`, so future node bootstrap, corruption recovery, trusted checkpoint handling, and portable state restoration can build on one verification-first protocol instead of ad hoc database-copy assumptions;
 - validation, marketplace, remote execution, and paid sessions should stay explicit operator actions layered on top of that core flow, not replace it.
@@ -1367,7 +1367,7 @@ What is still missing in the current stage:
 - bind derived canonical Settlement terms (including scaled `audio_input_seconds` milliseconds) into a separately accepted variable-price Session profile; the current public `MVP-0001` profile remains fixed-price;
 - RFC-0051/RFC-0037 alignment remains partial beyond the new evidence and deterministic Settlement cores: legacy Session reports and float-Q close paths are still compatibility projections, while canonical bridge ingestion, network proposal/acceptance, consensus Ledger finality, Checkpoint/correction/dispute workflows, statistics and Marketplace transparency remain incomplete;
 - rating publication, reputation policy, and validation economics implementation;
-- Validation Report custody migration: deterministic compact commitments, report hashes, stable logical locators with Endpoint/Configuration scope checks, snapshot metadata, a controlled local content-addressed report store, opt-in Ed25519 Storage Receipts, Assignment-bound validator transfer identity, a persisted canonical validator-key registry, opt-in grace/failure Certification lifecycle, access-aware retrieval, persisted local custody challenge evidence, a durable Endpoint-retirement queue, local RFC-0042 VALIDATION custody retrieval and body-free `VALIDATION_REPORT_CUSTODY_CHALLENGE` routes, origin/mirror-separated quorum evidence, and evidence-only consensus projections for report/receipt/failure/availability/release commitments now exist alongside legacy local reports; full report custody still duplicates compatibility data in the general Hypervisor state snapshot, submission still derives Certification in one call, while cross-host transport acceptance and canonical Reputation finality remain under `docs/superpowers/plans/2026-07-18-validation-report-custody.md`;
+- Validation Report custody migration: deterministic compact commitments, report hashes, stable logical locators with Endpoint/Configuration scope checks, snapshot metadata, a controlled local content-addressed report store, opt-in Ed25519 Storage Receipts, Assignment-bound validator transfer identity, a persisted canonical validator-key registry, opt-in grace/failure Certification lifecycle, access-aware retrieval, persisted local custody challenge evidence, a durable Endpoint-retirement queue, local RFC-0042 VALIDATION custody retrieval and body-free `VALIDATION_REPORT_CUSTODY_CHALLENGE` routes, origin/mirror-separated quorum evidence, and evidence-only consensus projections for report/receipt/failure/availability/release commitments now exist alongside legacy local reports; full report custody still duplicates compatibility data in the general Hypervisor state snapshot, submission still derives Certification in one call, while cross-host transport acceptance and canonical Reputation finality remain under `docs/archive/plans/2026-07-18-validation-report-custody.md`;
 - Validation Report custody now also has a local evidence-only quorum projection, durable epoch/seed scheduler and an explicit opt-in Reputation adapter: repeated challenges are idempotent, Known Control Groups collapse to one independent observation, observer identity is carried in availability evidence, scheduled tasks survive restart, and custody outcomes can be projected into availability, retention, integrity and disclosure events without mutating Reputation until an operator explicitly applies them; network dispatch, canonical Reputation finality and cross-host transport acceptance remain open;
 - `REPUTATION_PROFILE_UPDATE` is now a consensus-finalized, evidence-only profile-root commitment with fixed-point metric deltas, strict effective-epoch hash chaining, finalized-evidence references, ABCI/deterministic execution coverage and replay-safe tests; a read-only `ReputationProfileFinalityAdapter` exposes the root only after matching operation-bound consensus evidence, while score calculation, canonical cross-host scheduling and external acceptance remain outside this local boundary;
 - network-visible custom model onboarding workflow.
@@ -1684,7 +1684,7 @@ Immediate priorities:
    regression on `aa1b1bb`. This drill also found and corrected an actual
    `CheckTx(RECHECK)` bug that could make CometBFT evict a valid transaction
    before proposal. The reproducible command is documented in
-   `docs/development/cometbft-multivalidator-acceptance-drill.md` and is an
+   `docs/evidence/cometbft-multivalidator-acceptance-drill.md` and is an
    opt-in release-verification workflow gate.
    The production finality factory still requires an operator-approved trusted
    checkpoint and exact local ABCI commitment. The ABCI application now
@@ -1712,7 +1712,7 @@ Immediate priorities:
    multi-RPC finality deployment only after out-of-band independence evidence
    is present; it does not claim that cryptographic RPC agreement proves
    organizational independence. See
-   `docs/development/public-multivalidator-rollout.md`.
+   `docs/operations/public-multivalidator-rollout.md`.
 
 ## Milestones
 
@@ -2001,8 +2001,8 @@ Order of work right now:
 1. Operator deployment configuration and encrypted local Secret Manager-backed certificate/signing-key handles now compose the explicitly injected Registry replication runtime. Automated local acceptance proves real mTLS, signed peer authentication, inventory exchange and object transfer between distinct local secret stores, and fixed timeout/sequence/concurrent-close defects. A host-separated Windows-to-Linux acceptance harness now proves the same flow over an SSH-forwarded mTLS connection with independently generated test credentials. A production verifier now runs the actual configured runtime against its durable Registry snapshot, requires authenticated inventory exchange and can require a declared immutable object transfer; its report explicitly does not claim organizational independence. A peer owned by an independent operator remains required before a directory trust claim.
 2. Obtain independent-operator Registry peer evidence before allowing directory trust claims; the host-separated acceptance harness is ready.
 3. Deploy signed remote-snapshot anchoring against an independently operated multi-validator testnet before making public network-finality claims. The controlled four-validator RPC/Merkle/restart drill is now passing; it is not independent-operator evidence. A controlled LAN deployment has now also proven one CometBFT v0.38.19 validator and one AiDN ABCI process on each of four distinct Ubuntu hosts: all four nodes reached the same height and application hash, each held three P2P peers, and the external transaction/Merkle/restart drill passed while one physical validator restarted. The controlled-LAN verifier now gates further drills on four private RPC views, unique validator identities, P2P quorum, synchronized height and one application hash; its output explicitly excludes independent-ownership claims. A separate read-only external-testnet verifier now requires at least two HTTPS RPC views, an operator-provided trusted checkpoint and one exact finalized operation; it cryptographically checks the transaction, Merkle proof and validator transition before rejecting divergent endpoint evidence. Independent validator ownership still requires out-of-band operator evidence.
-4. Complete external acceptance of the declared-egress Plugin Host boundary on the Ubuntu operator node, then keep unsupported `PRIVATE_ONLY`, `MODEL_STORAGE_ONLY` and arbitrary `CONTROLLED_PATHS` policies blocked until their own enforcement backends exist. Controlled acceptance on `192.168.88.127` now passes both the no-network/scoped-data and declared-public-egress Docker harnesses, including cleanup verification; evidence is recorded in [plugin-host-egress-acceptance-2026-08-02.md](./docs/development/plugin-host-egress-acceptance-2026-08-02.md) and does not claim independent operator ownership.
-5. Use the independent-operator onboarding kit for the preceding Registry and finality evidence: [guide](./docs/development/independent-operator-onboarding-and-acceptance.md), one-command Ubuntu loopback bootstrap, secret-free workspace generator, read-only acceptance runner, and reviewed systemd template. Its reports intentionally do not establish independent ownership by themselves.
+4. Complete external acceptance of the declared-egress Plugin Host boundary on the Ubuntu operator node, then keep unsupported `PRIVATE_ONLY`, `MODEL_STORAGE_ONLY` and arbitrary `CONTROLLED_PATHS` policies blocked until their own enforcement backends exist. Controlled acceptance on `192.168.88.127` now passes both the no-network/scoped-data and declared-public-egress Docker harnesses, including cleanup verification; evidence is recorded in [plugin-host-egress-acceptance-2026-08-02.md](docs/evidence/plugin-host-egress-acceptance-2026-08-02.md) and does not claim independent operator ownership.
+5. Use the independent-operator onboarding kit for the preceding Registry and finality evidence: [guide](docs/operations/independent-operator-onboarding-and-acceptance.md), one-command Ubuntu loopback bootstrap, secret-free workspace generator, read-only acceptance runner, and reviewed systemd template. Its reports intentionally do not establish independent ownership by themselves.
 6. Controlled testnet peer identity provisioning, systemd-managed replication-enabled Hypervisors, and restart/reconnect evidence on `hv-node10` and `node4` are complete. The remaining step is to collect production Registry acceptance evidence from an independently operated peer; a verifier run must use a dedicated listener or an idle peer because one Registry peer identity permits one active transport session at a time.
 
 ## Post-MVP Protocol Work
@@ -2011,8 +2011,8 @@ Order of work right now:
 
 This work is intentionally outside the functional MVP. It must not alter current Endpoint economics, escrow, or Validator rewards until its independent Governance and tokenomics decisions are approved.
 
-1. Implement [RFC-0068](./docs/product/RFC-0068-development-contribution-accounting-and-attribution-protocol.md) with an evidence-first boundary: eligible repositories, protected-branch merge verification, Contributor Identity, signed Wallet binding, immutable merged-commit Wallet claims, contribution attestations, ECU/CU calculation, contributor groups, role allocation, challenge windows, and maturity records. The executable slice is documented in [rfc-0068-evidence-mode.md](./docs/development/rfc-0068-evidence-mode.md); GitHub evidence still cannot mint Q.
-2. Approve [ECO-0007](./docs/product/ECO-0007-development-reward-pool-and-distribution-policy.md) before any development-reward transfer. The fixed-point simulator, deterministic launch matrix, and RFC-0068-to-ECO-0007 preview/consensus-plan bridge are implemented and documented in [development-contribution-reward-bridge.md](./docs/development/development-contribution-reward-bridge.md); activation still requires Governance approval and parameter selection.
+1. Implement [RFC-0068](./docs/product/RFC-0068-development-contribution-accounting-and-attribution-protocol.md) with an evidence-first boundary: eligible repositories, protected-branch merge verification, Contributor Identity, signed Wallet binding, immutable merged-commit Wallet claims, contribution attestations, ECU/CU calculation, contributor groups, role allocation, challenge windows, and maturity records. The executable slice is documented in [rfc-0068-evidence-mode.md](docs/development/reference/rfc-0068-evidence-mode.md); GitHub evidence still cannot mint Q.
+2. Approve [ECO-0007](./docs/product/ECO-0007-development-reward-pool-and-distribution-policy.md) before any development-reward transfer. The fixed-point simulator, deterministic launch matrix, and RFC-0068-to-ECO-0007 preview/consensus-plan bridge are implemented and documented in [development-contribution-reward-bridge.md](docs/development/reference/development-contribution-reward-bridge.md); activation still requires Governance approval and parameter selection.
 3. Implemented the non-emitting Governance activation gate in `reward/development_activation.py`. It binds an exact ECO-0007 policy hash to an effective epoch, authority set, quorum, and Ed25519 approvals; it rejects missing approvals, mismatched policy versions, premature epochs, revoked approvals, and invalid signatures before any Ledger integration.
 4. The non-emitting dry-run commitment builder is implemented for policy, pool, allocation, schedule, and payment-state roots; it remains explicitly simulation-only and cannot reserve or transfer Q.
 5. `DEVELOPMENT_REWARD_CALCULATE` now commits a self-contained, activation-bound calculation as non-emitting Ledger evidence in both ABCI and deterministic execution; it cannot reserve, mint or transfer Q.
@@ -2029,7 +2029,7 @@ This work is intentionally outside the functional MVP. It must not alter current
 16. Signed public multi-validator profile/acceptance infrastructure is implemented: validator manifests, CometBFT checkpoint binding, profile-signature quorum, static acceptance reports, and finality-config projection. It does not claim live public deployment or organizational independence. Live HTTPS RPC observations, a canonical genesis/trust-anchor release bundle, production deployment/fault-drill evidence, and out-of-band operator attestations remain explicit public-network gates.
 
 17. Added the executable implementation and operator specification pack under
-    [docs/development/executable-spec-pack](./docs/development/executable-spec-pack/README.md).
+    [executable specification pack](docs/operations/spec-pack/README.md).
     It is the bridge from architecture RFCs to implementation claims, fixture
     coverage, migration rules, release gates, and public evidence. The pack is
     Draft: command names and fixture manifests become release-authoritative only
@@ -2100,7 +2100,7 @@ This work is intentionally outside the functional MVP. It must not alter current
     references, contribution and Q caps, then emits an inspectable ordered
     consensus plan without submitting transactions or minting Q. The operator
     workflow is documented in
-    `docs/development/eco-0007-production-reward-batch.md`.
+    `docs/development/reference/eco-0007-production-reward-batch.md`.
 27. Added the idempotent ECO-0007 production batch executor. It accepts only
     the exact hash-bound batch envelopes, persists the current envelope before
     submission, waits for verified consensus finality after every predecessor,
@@ -2114,7 +2114,7 @@ This work is intentionally outside the functional MVP. It must not alter current
     snapshot. The production batch now embeds a typed, hash-bound quorum
     preflight and rejects source-operation, budget-reference or allocation
     amount substitution. The controlled three-validator rollout is recorded in
-    `docs/development/eco-0007-validator-rollout-acceptance-2026-08-12.md`;
+    `docs/evidence/eco-0007-validator-rollout-acceptance-2026-08-12.md`;
     the payout gate remains closed until the live query reports a finalized
     epoch transition and pool budget.
 29. Added the operator execution CLI for ECO-0007 production batches. It
@@ -2146,7 +2146,7 @@ This work is intentionally outside the functional MVP. It must not alter current
 35. Verified executor restart/reconciliation and clean replay for that batch.
     Recovery reused the original operation IDs, cleared pending state, and
     did not create a second payment. Full evidence is in the
-    [live payout acceptance](./docs/development/controlled-localnet-epoch-1-eco0007-live-payout-acceptance-2026-08-13.md).
+    [live payout acceptance](docs/evidence/controlled-localnet-epoch-1-eco0007-live-payout-acceptance-2026-08-13.md).
 36. Added the controlled-localnet contributor Wallet profile for
     `wallet-5320047bb01d` and made the RFC-0068 acceptance runner support an
     externally stored, public-key-verified Wallet seed. The profile is bound to
@@ -2161,7 +2161,7 @@ This work is intentionally outside the functional MVP. It must not alter current
     operation and exact extension evidence. The builder, Ledger, ABCI and
     deterministic execution paths have targeted regression coverage. The
     operator procedure is documented in
-    [the scope-extension runbook](./docs/development/eco-0007-activation-scope-extension.md).
+    [the scope-extension runbook](docs/development/reference/eco-0007-activation-scope-extension.md).
 
 ### Current post-MVP implementation gate
 
@@ -2188,7 +2188,7 @@ This work is intentionally outside the functional MVP. It must not alter current
   CheckTx errors remain rejected, and the upgrade helper prevents stale
   `site-packages` copies from shadowing the reviewed checkout.
 - [x] Verify Treasury activation and one payout against a live canonical
-  multi-validator network; see [Faucet live payout/finality acceptance](./docs/development/faucet-live-payout-finality-acceptance-2026-08-12.md).
+  multi-validator network; see [Faucet live payout/finality acceptance](docs/evidence/faucet-live-payout-finality-acceptance-2026-08-12.md).
 - [x] Prove Faucet payout finality across at least two validators, including
   restart/reconciliation and exact-envelope RPC failover evidence. The
   controlled-localnet result is recorded in the acceptance report; it does not
@@ -2225,10 +2225,10 @@ This work is intentionally outside the functional MVP. It must not alter current
 - [x] Roll out the ECO-0007-aware ABCI image sequentially to the controlled
   validators and verify health, preserved state mounts, rollback containers,
   CometBFT quorum and the live read-only preflight; see
-  [validator rollout acceptance](./docs/development/eco-0007-validator-rollout-acceptance-2026-08-12.md).
+  [validator rollout acceptance](docs/evidence/eco-0007-validator-rollout-acceptance-2026-08-12.md).
 - [x] Activate the controlled-localnet ECO-0007 reward profile and execute a
   finalized contribution payout batch against the real `250 Q` epoch pool;
-  see [live payout acceptance](./docs/development/controlled-localnet-epoch-1-eco0007-live-payout-acceptance-2026-08-13.md).
+  see [live payout acceptance](docs/evidence/controlled-localnet-epoch-1-eco0007-live-payout-acceptance-2026-08-13.md).
 - [ ] Activate a production/public ECO-0007 reward profile and execute a
   finalized contribution payout batch against a production/public epoch pool.
 - [x] Public multi-validator profiles are signed, hash-bound, quorum-checked, and projected into the existing CometBFT finality configuration.
@@ -2289,44 +2289,44 @@ This work is intentionally outside the functional MVP. It must not alter current
 - Deletion and reset implementation profile: [docs/product/IMP-0002-deletion-decommissioning-and-reset-implementation-profile.md](./docs/product/IMP-0002-deletion-decommissioning-and-reset-implementation-profile.md)
 - Node Intelligence Architecture: [docs/product/RFC-0075-node-intelligence-architecture.md](./docs/product/RFC-0075-node-intelligence-architecture.md)
 - Node Journey and Setup Graph: [docs/product/UX-0003-node-journey-setup-graph.md](./docs/product/UX-0003-node-journey-setup-graph.md)
-- M5 validation bond and escrow design: [docs/superpowers/specs/2026-07-02-validation-bond-and-escrow-design.md](./docs/superpowers/specs/2026-07-02-validation-bond-and-escrow-design.md)
-- Current hypervisor execution plan: [docs/superpowers/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md](./docs/superpowers/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md)
-- Network architecture spec: [docs/superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md](./docs/superpowers/specs/2026-06-19-network-registry-wallet-rating-design.md)
-- M2 registry contract: [docs/superpowers/specs/2026-06-19-m2-centralized-registry-and-discovery-design.md](./docs/superpowers/specs/2026-06-19-m2-centralized-registry-and-discovery-design.md)
-- Operator dashboard spec: [docs/superpowers/specs/2026-06-20-operator-fleet-market-dashboard-design.md](./docs/superpowers/specs/2026-06-20-operator-fleet-market-dashboard-design.md)
-- Operator dashboard terminal redesign spec: [docs/superpowers/specs/2026-06-20-operator-dashboard-terminal-redesign-design.md](./docs/superpowers/specs/2026-06-20-operator-dashboard-terminal-redesign-design.md)
-- Operator dashboard terminal redesign plan: [docs/superpowers/plans/2026-06-20-operator-dashboard-terminal-redesign.md](./docs/superpowers/plans/2026-06-20-operator-dashboard-terminal-redesign.md)
-- M3 pricing and metering plan: [docs/superpowers/plans/2026-06-19-m3-wallet-pricing-and-usage-metering.md](./docs/superpowers/plans/2026-06-19-m3-wallet-pricing-and-usage-metering.md)
-- M4 endpoint session and payment design: [docs/superpowers/specs/2026-07-01-endpoint-session-payment-flow-design.md](./docs/superpowers/specs/2026-07-01-endpoint-session-payment-flow-design.md)
-- M4 endpoint session and payment plan: [docs/superpowers/plans/2026-07-01-endpoint-session-payment-flow.md](./docs/superpowers/plans/2026-07-01-endpoint-session-payment-flow.md)
-- Provider plugin system MVP plan: [docs/superpowers/plans/2026-07-14-provider-plugin-system-mvp.md](./docs/superpowers/plans/2026-07-14-provider-plugin-system-mvp.md)
-- Provider install approval and apply flow plan: [docs/superpowers/plans/2026-07-15-provider-install-approval-flow.md](./docs/superpowers/plans/2026-07-15-provider-install-approval-flow.md)
+- M5 validation bond and escrow design: [docs/archive/specifications/2026-07-02-validation-bond-and-escrow-design.md](docs/archive/specifications/2026-07-02-validation-bond-and-escrow-design.md)
+- Current hypervisor execution plan: [docs/archive/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md](docs/archive/plans/2026-06-19-agent-resource-discovery-and-model-onboarding.md)
+- Network architecture spec: [docs/archive/specifications/2026-06-19-network-registry-wallet-rating-design.md](docs/archive/specifications/2026-06-19-network-registry-wallet-rating-design.md)
+- M2 registry contract: [docs/archive/specifications/2026-06-19-m2-centralized-registry-and-discovery-design.md](docs/archive/specifications/2026-06-19-m2-centralized-registry-and-discovery-design.md)
+- Operator dashboard spec: [docs/archive/specifications/2026-06-20-operator-fleet-market-dashboard-design.md](docs/archive/specifications/2026-06-20-operator-fleet-market-dashboard-design.md)
+- Operator dashboard terminal redesign spec: [docs/archive/specifications/2026-06-20-operator-dashboard-terminal-redesign-design.md](docs/archive/specifications/2026-06-20-operator-dashboard-terminal-redesign-design.md)
+- Operator dashboard terminal redesign plan: [docs/archive/plans/2026-06-20-operator-dashboard-terminal-redesign.md](docs/archive/plans/2026-06-20-operator-dashboard-terminal-redesign.md)
+- M3 pricing and metering plan: [docs/archive/plans/2026-06-19-m3-wallet-pricing-and-usage-metering.md](docs/archive/plans/2026-06-19-m3-wallet-pricing-and-usage-metering.md)
+- M4 endpoint session and payment design: [docs/archive/specifications/2026-07-01-endpoint-session-payment-flow-design.md](docs/archive/specifications/2026-07-01-endpoint-session-payment-flow-design.md)
+- M4 endpoint session and payment plan: [docs/archive/plans/2026-07-01-endpoint-session-payment-flow.md](docs/archive/plans/2026-07-01-endpoint-session-payment-flow.md)
+- Provider plugin system MVP plan: [docs/archive/plans/2026-07-14-provider-plugin-system-mvp.md](docs/archive/plans/2026-07-14-provider-plugin-system-mvp.md)
+- Provider install approval and apply flow plan: [docs/archive/plans/2026-07-15-provider-install-approval-flow.md](docs/archive/plans/2026-07-15-provider-install-approval-flow.md)
 
 ## Latest Acceptance Update
 
 - Registry replication now starts inventory exchange automatically after every authenticated inbound or outbound connection, scopes outbox flushing to the intended peer, and exposes sanitized runtime diagnostics at `GET /registry/replication/status`.
 - The controlled LAN profile was extended to `hv-node10` (`192.168.88.126`) and `node3-independent` (`192.168.88.128`) with one outbound initiator, bidirectional object convergence, and restart/re-authentication evidence. Snapshot persistence is serialized to prevent concurrent peer handlers from racing on the shared temporary file. This remains technical evidence under one operator context, not proof of organizational independence.
-- MVP acceptance policy (2026-08-01): the project explicitly accepts `hv-node10` (`192.168.88.126`) as an independent operator for the functional controlled-testnet MVP. This closes the MVP operator-independence gate and waives additional external-operator testing for MVP. It does not change protocol verification: reports continue to use `ownership_evidence: NOT_PROVEN_BY_PROTOCOL`, and public directory trust or public multi-validator finality still require separate evidence and Governance approval. See [MVP Operator Independence Assumption](./docs/development/mvp-operator-independence-assumption.md).
-- Functional `MVP-0001` acceptance (2026-08-01): signed wallet-identity sync is pinned, reconciled and restart-persistent; live llama.cpp, vLLM and Ollama conformance passed; provider-specific restart/recovery tests passed without duplicate execution or payment. The detailed evidence is in [MVP Acceptance Report](./docs/development/mvp-acceptance-2026-08-01.md).
+- MVP acceptance policy (2026-08-01): the project explicitly accepts `hv-node10` (`192.168.88.126`) as an independent operator for the functional controlled-testnet MVP. This closes the MVP operator-independence gate and waives additional external-operator testing for MVP. It does not change protocol verification: reports continue to use `ownership_evidence: NOT_PROVEN_BY_PROTOCOL`, and public directory trust or public multi-validator finality still require separate evidence and Governance approval. See [MVP Operator Independence Assumption](docs/development/reference/mvp-operator-independence-assumption.md).
+- Functional `MVP-0001` acceptance (2026-08-01): signed wallet-identity sync is pinned, reconciled and restart-persistent; live llama.cpp, vLLM and Ollama conformance passed; provider-specific restart/recovery tests passed without duplicate execution or payment. The detailed evidence is in [MVP Acceptance Report](docs/evidence/mvp-acceptance-2026-08-01.md).
 - Controlled four-validator LAN acceptance (2026-08-02): strict ABCI operation
   coverage, escrow/failure/Session lifecycle and Reputation evidence chains,
   CometBFT Merkle proofs, four-way AppHash convergence and remote validator
   restart continuity all passed on the live Ubuntu hosts. This is controlled
-  lab evidence only; the detailed record is [here](./docs/development/cometbft-lan-acceptance-2026-08-02.md).
+  lab evidence only; the detailed record is [here](docs/evidence/cometbft-lan-acceptance-2026-08-02.md).
 - MCP TLS rotation acceptance (2026-08-04): the actual Secret Manager-backed
   production HTTP launcher passed certificate rotation and MCP reconnect on
-  `192.168.88.127`; the detailed record is [here](./docs/development/mcp-tls-rotation-acceptance-2026-08-04.md).
+  `192.168.88.127`; the detailed record is [here](docs/evidence/mcp-tls-rotation-acceptance-2026-08-04.md).
 - Operator readiness wizard (2026-08-05): the Hypervisor Overview now exposes
   one canonical, read-only readiness projection for Consensus RPC, owner
   Wallet, host capacity, Provider Instance, Model Deployment, Runtime Binding,
   Bundle and Endpoint. It separates local execution readiness from network
   readiness, gives bounded next actions, and explicitly reports unavailable
-  probes instead of guessing. See [UX-0003](./docs/product/UX-0003-operator-readiness-wizard.md).
+  probes instead of guessing. See [UX-0004](./docs/product/UX-0004-operator-readiness-wizard.md).
 - Consensus provisioning (2026-08-05): both Ubuntu operator entry points now
   install and manage CometBFT automatically. Legacy nodes without management
   metadata receive a concrete migration instruction; the dashboard remains
   read-only and does not expose arbitrary host command execution. See
-  [operator consensus provisioning](./docs/development/operator-consensus-provisioning.md).
+  [operator consensus provisioning](docs/operations/operator-consensus-provisioning.md).
 - Validator AppHash compatibility now treats empty post-MVP Ledger extensions as absent during canonical hashing, so upgrades do not invalidate historical snapshots merely by adding empty stake, penalty, checkpoint, dispute, or correction fields; populated extensions remain committed.
 - The functional controlled-testnet MVP gate is now closed. Remaining priorities in this section are public-network/post-MVP claims: independent-operator evidence, public directory authority, external multi-validator finality, and enforceable production trust policy.
 
@@ -2346,10 +2346,10 @@ Every meaningful architecture or milestone change should update this file in the
   operation reference once canonical schedule state exists.
 - [x] Roll out the schedule-commitment gate to validators 128-130 and verify
   3/3 convergence with the expected fail-closed `BLOCKED` report. See
-  [the live rollout acceptance](./docs/development/epoch-schedule-commit-gate-rollout-acceptance-2026-08-13.md).
+  [the live rollout acceptance](docs/evidence/epoch-schedule-commit-gate-rollout-acceptance-2026-08-13.md).
 - [x] For the controlled localnet only, deploy a disposable `2-of-3` public
   authority policy and commit the first canonical RFC-0048 schedule through
-  consensus. See [controlled-localnet epoch schedule acceptance](./docs/development/controlled-localnet-epoch-schedule-acceptance-2026-08-13.md).
+  consensus. See [controlled-localnet epoch schedule acceptance](docs/evidence/controlled-localnet-epoch-schedule-acceptance-2026-08-13.md).
 - [ ] Submit and finalize the first canonical schedule on the live validator
   network under a production/public authority policy.
 - [ ] Approve and distribute one identical public authority policy hash.
@@ -2363,4 +2363,4 @@ Every meaningful architecture or milestone change should update this file in the
 - [ ] Finalize the equivalent `EPOCH_TRANSITION` and ECO-0007 payout under a
   production/public authority policy and externally operated validators.
 
-Operational details are in `docs/development/protocol-authority-and-epoch-transition-operations.md`.
+Operational details are in `docs/development/reference/protocol-authority-and-epoch-transition-operations.md`.
