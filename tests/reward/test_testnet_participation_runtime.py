@@ -117,7 +117,7 @@ def test_dry_run_persists_a_signed_batch_without_submitting(tmp_path) -> None:
             evidence_store_path=str(evidence_path),
             payout_store_path=str(payout_path),
             treasury_wallet="wallet-treasury",
-            treasury_signer_secret_ref="protected:treasury",
+            treasury_signer_secret_ref="secret://testnet/treasury",
         ),
         signer=lambda _: "ed25519:" + "ab" * 64,
         submitter=submitter,
@@ -148,7 +148,7 @@ def test_submit_mode_requires_an_explicit_treasury_integration(tmp_path) -> None
         evidence_store_path=str(tmp_path / "evidence.sqlite"),
         payout_store_path=str(tmp_path / "payout.sqlite"),
         treasury_wallet="wallet-treasury",
-        treasury_signer_secret_ref="protected:treasury",
+        treasury_signer_secret_ref="secret://testnet/treasury",
     )
 
     with pytest.raises(ValueError, match="TREASURY_INTEGRATION_REQUIRED"):
@@ -171,7 +171,7 @@ def test_submit_mode_uses_the_same_persisted_batch_path(tmp_path) -> None:
             evidence_store_path=str(evidence_path),
             payout_store_path=str(tmp_path / "payout.sqlite"),
             treasury_wallet="wallet-treasury",
-            treasury_signer_secret_ref="protected:treasury",
+            treasury_signer_secret_ref="secret://testnet/treasury",
         ),
         signer=lambda _: "ed25519:" + "ab" * 64,
         submitter=submitter,

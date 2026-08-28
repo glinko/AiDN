@@ -76,6 +76,10 @@ class TestnetParticipationRuntimeConfig(BaseModel, frozen=True):
         missing = sorted(name for name, value in required.items() if not value or not value.strip())
         if missing:
             raise ValueError("PARTICIPATION_RUNTIME_REQUIRED: " + ", ".join(missing))
+        if self.mode in {"dry_run", "submit"} and not str(
+            self.treasury_signer_secret_ref
+        ).startswith("secret://"):
+            raise ValueError("PARTICIPATION_RUNTIME_TREASURY_SECRET_REF_INVALID")
         return self
 
 

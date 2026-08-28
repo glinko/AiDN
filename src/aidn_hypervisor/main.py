@@ -1,10 +1,12 @@
+import asyncio
 import hmac
 import json
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -100,6 +102,19 @@ from aidn_hypervisor.snapshot.deployment import (
     load_remote_trust_anchor_deployment_config,
 )
 from aidn_hypervisor.steward_model_profile import steward_runtime_parameter_policy
+from aidn_hypervisor.testnet_participation_consensus import (
+    ConsensusParticipationTransferSubmitter,
+)
+from aidn_hypervisor.testnet_participation_dispatch import (
+    TestnetParticipationSettlementDispatcher,
+)
+from aidn_hypervisor.testnet_participation_monitor import (
+    TestnetParticipationSettlementMonitor,
+)
+from aidn_hypervisor.testnet_participation_runtime import (
+    TestnetParticipationManagedRuntime,
+    load_testnet_participation_runtime_config,
+)
 from aidn_hypervisor.validation.custody_signing import (
     Ed25519ValidationReportCustodySigner,
 )
@@ -109,6 +124,81 @@ from aidn_hypervisor.validation.store import ValidationStore
 from aidn_hypervisor.wallet_reconciliation import reconcile_pending_wallet_transfers
 
 logger = logging.getLogger(__name__)
+
+
+def _protected_ed25519_signer(*, secret_manager, secret_ref: str):
+    """Resolve a 32-byte Treasury seed only inside the protected signer call."""
+
+    def sign(payload: bytes) -> str:
+        raw_seed = secret_manager.get(secret_ref)
+        if len(raw_seed) != 32:
+            raise ValueError("PARTICIPATION_TREASURY_SIGNER_SEED_INVALID")
+        return "ed25519:" + Ed25519PrivateKey.from_private_bytes(raw_seed).sign(payload).hex()
+
+    return sign
+
+
+def _build_default_testnet_participation_monitor(
+    *,
+    hypervisor_service: HypervisorService,
+    consensus_service: ConsensusService | None,
+    finality_source,
+) -> TestnetParticipationSettlementMonitor | None:
+    """Build the opt-in settlement observer without creating a local clock.
+
+    The environment only elects a host to *deliver* canonical settlements. It
+    cannot activate an otherwise-disabled runtime or convert a wall-clock tick
+    into a reward boundary: the dispatcher separately requires a finalised
+    daily ``EPOCH_TRANSITION`` under the committed schedule.
+    """
+
+    config_path = os.getenv("AIDN_TESTNET_PARTICIPATION_RUNTIME_CONFIG")
+    if not config_path:
+        return None
+    runtime_config = load_testnet_participation_runtime_config(Path(config_path))
+    if not runtime_config.enabled:
+        return None
+    if (
+        consensus_service is None
+        or not consensus_service.is_enabled
+        or consensus_service.config.epoch_schedule is None
+    ):
+        raise ValueError(
+            "PARTICIPATION_RUNTIME_REQUIRES_ENABLED_CANONICAL_EPOCH_SCHEDULE"
+        )
+    if finality_source is None:
+        raise ValueError("PARTICIPATION_RUNTIME_REQUIRES_VERIFIED_FINALITY_SOURCE")
+
+    signer = None
+    submitter = None
+    if runtime_config.mode in {"dry_run", "submit"}:
+        secret_manager = load_file_secret_manager_from_environment()
+        if secret_manager is None:
+            raise ValueError("PARTICIPATION_RUNTIME_REQUIRES_SECRET_MANAGER")
+        canonical_balance = hypervisor_service.canonical_wallet_balance_provider
+        if canonical_balance is None:
+            raise ValueError("PARTICIPATION_RUNTIME_REQUIRES_CANONICAL_TREASURY_BALANCE")
+        signer = _protected_ed25519_signer(
+            secret_manager=secret_manager,
+            secret_ref=str(runtime_config.treasury_signer_secret_ref),
+        )
+        submitter = ConsensusParticipationTransferSubmitter(
+            consensus_service=consensus_service,
+            finality_source=finality_source,
+            canonical_balance_q_atoms=canonical_balance,
+        )
+    runtime = TestnetParticipationManagedRuntime(
+        config=runtime_config,
+        signer=signer,
+        submitter=submitter,
+    )
+    return TestnetParticipationSettlementMonitor(
+        dispatcher=TestnetParticipationSettlementDispatcher(
+            runtime=runtime,
+            epoch_schedule=consensus_service.config.epoch_schedule,
+            finality_source=finality_source,
+        )
+    )
 
 
 def build_app(
@@ -214,6 +304,11 @@ def build_app(
         resolved_service.canonical_wallet_sequence_provider = (
             _build_default_canonical_wallet_sequence_provider()
         )
+    participation_settlement_monitor = _build_default_testnet_participation_monitor(
+        hypervisor_service=resolved_service,
+        consensus_service=resolved_consensus_service,
+        finality_source=resolved_finality_source,
+    )
     # Restore and retry durable Wallet transfers before serving the dashboard.
     # Each envelope is handled fail-closed, so a temporarily unavailable
     # external CometBFT quorum cannot prevent the Hypervisor from starting.
@@ -235,6 +330,41 @@ def build_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        participation_monitor_task = None
+        if participation_settlement_monitor is not None:
+            interval_seconds = _env_int(
+                "AIDN_TESTNET_PARTICIPATION_MONITOR_INTERVAL_SECONDS",
+                default=30,
+                minimum=5,
+                maximum=300,
+            )
+
+            async def monitor_finalized_participation_transitions() -> None:
+                while True:
+                    try:
+                        await asyncio.to_thread(
+                            participation_settlement_monitor.reconcile,
+                            resolved_service.ledger_operation_service.snapshot_operations(),
+                        )
+                    except Exception as error:  # pragma: no cover - service boundary
+                        logger.warning(
+                            "Testnet participation settlement monitor scan failed: %s",
+                            type(error).__name__,
+                        )
+                    await asyncio.sleep(interval_seconds)
+
+            # Scan immediately to recover a payout whose daily transition
+            # finalised while this node was restarting. Subsequent polling is
+            # delivery only; the dispatcher still verifies consensus finality
+            # and the immutable EpochSchedule for every positive result.
+            await asyncio.to_thread(
+                participation_settlement_monitor.reconcile,
+                resolved_service.ledger_operation_service.snapshot_operations(),
+            )
+            participation_monitor_task = asyncio.create_task(
+                monitor_finalized_participation_transitions(),
+                name="aidn-testnet-participation-monitor",
+            )
         steward_worker_enabled = _env_bool(
             "AIDN_STEWARD_WORKER_ENABLED",
             default=_env_bool("AIDN_STEWARD_ENABLED", default=False),
@@ -267,6 +397,10 @@ def build_app(
         try:
             yield
         finally:
+            if participation_monitor_task is not None:
+                participation_monitor_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await participation_monitor_task
             if callable(stop_steward_worker):
                 stop_steward_worker()
             if resolved_consensus_service is not None:
@@ -284,6 +418,7 @@ def build_app(
     app.state.hypervisor_service = resolved_service
     app.state.consensus_service = resolved_consensus_service
     app.state.consensus_finality_source = resolved_finality_source
+    app.state.testnet_participation_settlement_monitor = participation_settlement_monitor
     app.state.registry_replication_runtime = resolved_registry_replication_runtime
     app.state.remote_trust_anchor_runtime = resolved_remote_trust_anchor_runtime
     app.state.contribution_service = resolved_contribution_service

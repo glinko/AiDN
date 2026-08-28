@@ -34,9 +34,10 @@ The ordered implementation and public-launch execution plan is maintained in
 
 1. Wire the finalized Registry/Consensus bridge to write the evidence store;
    Dashboard observations and mutable Registry advertisements remain ineligible.
-2. Wire the runtime profile into the managed testnet service lifecycle and its
-   protected Secret Manager resolver. It must run only after a canonical daily
-   `EPOCH_TRANSITION`, never from a host-local timer.
+2. Add a read-only participation status endpoint and Dashboard Journey card.
+   It must show only the protected runtime mode, last finalised source Epoch,
+   eligibility/accounting outcome and sanitized errors; it must expose no
+   Treasury key, signer material, secret handle value or mutable reward input.
 3. Publish the signed `aidn-testnet-1` genesis and public multi-validator
    profile, then package a verified TOML profile in the release.
 4. Expose participation status, qualification countdown, eligible windows,

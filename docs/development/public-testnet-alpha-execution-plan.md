@@ -173,8 +173,17 @@ missing, restart, treasury-exhaustion and restoration drills.
 
 The deterministic policy calculator, signed heartbeat format, SQLite evidence
 store, persistent payout state machine, consensus submitter/finality adapter,
-and disabled-by-default runtime profile already exist. The next active slice
-is the service-lifecycle bridge: resolve the protected signer, invoke the
-runtime only after the canonical daily transition, and expose its read-only
-status. Items 3–7 remain deliberately inactive until the preceding exit
-conditions are met.
+and disabled-by-default runtime profile already exist. The runtime now also
+has a canonical-time dispatcher: it verifies finality of an exact
+`EPOCH_TRANSITION`, binds it to the committed `EpochSchedule`, and processes
+only a transition that closes a whole settlement period. A host polling loop
+may observe finalized operations, but cannot use its own clock to advance a
+day.
+
+The service-lifecycle bridge now loads only an explicitly named runtime
+profile, resolves a `secret://` Treasury signer through the local encrypted
+secret manager, and observes finalised ledger transitions for recovery and
+delivery. Without `AIDN_TESTNET_PARTICIPATION_RUNTIME_CONFIG`, or with the
+release-default `enabled = false`, it does nothing. The next active slice is a
+read-only participation-status API for the Dashboard; items 3–7 remain
+deliberately inactive until the preceding exit conditions are met.
