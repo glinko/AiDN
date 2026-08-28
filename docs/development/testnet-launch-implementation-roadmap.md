@@ -35,7 +35,9 @@ The ordered implementation and public-launch execution plan is maintained in
 1. Wire the finalized Registry/Consensus bridge to write the evidence store;
    Dashboard observations and mutable Registry advertisements remain ineligible.
 2. Publish the signed `aidn-testnet-1` genesis and public multi-validator
-   profile, then package a verified TOML profile in the release.
+   profile, then package a verified TOML profile in the release. The release
+   builder and public-host preflight are ready; this remains blocked on the
+   real four-validator ceremony inputs.
 3. Extend participation status with qualification countdown, eligible windows,
    estimated daily accrual, last finalized payment, and program sunset in the
    Dashboard Journey.

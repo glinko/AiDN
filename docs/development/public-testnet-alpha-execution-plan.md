@@ -188,6 +188,11 @@ release-default `enabled = false`, it does nothing. A read-only Dashboard API
 and Journey panel now expose the runtime mode, last finalised source Epoch,
 eligibility/accounting outcome and sanitised error code, without returning
 Treasury identity, signer material, secret handle, transfer envelope or mutable
-evidence. The next active slice is item 4: the verifiable public release
-package; items 4–7 remain deliberately inactive until their preceding exit
-conditions are met.
+evidence. The release builder now has an explicit public-network mode which
+binds its signed source/package manifest to a verified Network Profile,
+Genesis, and signed public-validator profile. A separate read-only Ubuntu
+preflight reports capacity, clock sync, P2P-port availability, public IPv4,
+the operator-confirmed cloud firewall boundary, and public API TLS posture.
+No actual public release is issued until the four-validator profile and
+Genesis ceremony exist; items 4–7 remain deliberately inactive until their
+preceding exit conditions are met.

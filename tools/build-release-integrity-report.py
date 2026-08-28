@@ -20,6 +20,12 @@ from packaging.markers import Marker, default_environment
 from packaging.utils import canonicalize_name
 
 from aidn_hypervisor.consensus.implementation_profile import verify_implementation_profile
+from aidn_hypervisor.consensus.public_network import PublicMultiValidatorNetworkProfile
+from aidn_hypervisor.network_profile import (
+    load_network_profile,
+    load_network_profile_signers,
+    verify_network_profile,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -225,6 +231,66 @@ def _artifact_records(artifact_dir: Path) -> list[dict[str, Any]]:
     return artifacts
 
 
+def _public_network_release_binding(
+    *,
+    profile_path: Path | None,
+    trusted_signers_path: Path | None,
+    required: bool,
+) -> dict[str, Any] | None:
+    """Return the verified public-network facts bound into a G0 release.
+
+    The Network Profile is the source of the relative paths.  This keeps a
+    release builder from accepting a hand-supplied Genesis hash that happens
+    to describe another chain.  The signer registry remains an independent
+    local trust input and is intentionally not copied into the release facts.
+    """
+
+    if profile_path is None and trusted_signers_path is None:
+        if required:
+            raise ValueError("public release requires --network-profile and --network-profile-signers")
+        return None
+    if profile_path is None or trusted_signers_path is None:
+        raise ValueError("network profile and trusted profile signers must be supplied together")
+
+    profile_target = profile_path.expanduser().resolve()
+    signers = load_network_profile_signers(trusted_signers_path)
+    verification = verify_network_profile(
+        profile_target,
+        trusted_profile_signers=signers,
+    )
+    if not verification.valid:
+        raise ValueError("public network profile verification failed: " + ",".join(verification.errors))
+    profile = load_network_profile(profile_target)
+    if required and profile.network.environment not in {"testnet", "mainnet"}:
+        raise ValueError("public release requires a testnet or mainnet Network Profile")
+    public_profile_file = profile.network.public_profile_file
+    if public_profile_file is None or profile.network.public_profile_sha256 is None:
+        raise ValueError("public release requires the signed public network profile binding")
+    try:
+        public_profile = PublicMultiValidatorNetworkProfile.model_validate_json(
+            (profile_target.parent / public_profile_file).read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError) as error:
+        raise ValueError("public release cannot load the verified public network profile") from error
+    if {
+        validator.genesis_hash for validator in public_profile.validator_manifests
+    } != {profile.network.genesis_sha256}:
+        raise ValueError("public release Genesis does not match every validator manifest")
+    return {
+        "network_id": profile.network.network_id,
+        "chain_id": profile.network.chain_id,
+        "environment": profile.network.environment,
+        "protocol_version": profile.network.protocol_version,
+        "consensus_binding_hash": profile.consensus_binding_hash,
+        "network_profile_sha256": _sha256_file(profile_target),
+        "genesis_file": profile.network.genesis_file,
+        "genesis_sha256": profile.network.genesis_sha256,
+        "public_profile_file": public_profile_file,
+        "public_profile_sha256": profile.network.public_profile_sha256,
+        "public_profile_hash": public_profile.profile_hash,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", type=Path, default=Path("profiles/aidn-mainnet-candidate-1.json"))
@@ -233,6 +299,21 @@ def main() -> int:
     parser.add_argument("--artifact-dir", type=Path)
     parser.add_argument("--release-id")
     parser.add_argument("--signing-key", type=Path)
+    parser.add_argument(
+        "--network-profile",
+        type=Path,
+        help="Network Profile TOML to bind into this release manifest",
+    )
+    parser.add_argument(
+        "--network-profile-signers",
+        type=Path,
+        help="independent trusted signer registry for --network-profile",
+    )
+    parser.add_argument(
+        "--require-public-network",
+        action="store_true",
+        help="fail unless the release binds a verified testnet/mainnet Network Profile",
+    )
     parser.add_argument("--report", type=Path, required=True)
     args = parser.parse_args()
 
@@ -272,6 +353,11 @@ def main() -> int:
             raise ValueError("working tree is dirty; commit the release source before building G0 evidence")
         dependency_scan = _scan_dependency_licenses(args.lockfile, license_config["file"])
         fixture_manifest_hash = _sha256_file(args.fixture_manifest)
+        network_release = _public_network_release_binding(
+            profile_path=args.network_profile,
+            trusted_signers_path=args.network_profile_signers,
+            required=args.require_public_network,
+        )
         release_payload = {
             "schema_version": 1,
             "release_id": args.release_id or source_commit,
@@ -282,6 +368,7 @@ def main() -> int:
             "fixture_manifest_path": str(args.fixture_manifest.resolve()),
             "fixture_manifest_hash": fixture_manifest_hash,
             "artifacts": artifacts,
+            "network_release": network_release,
         }
         signing_key, signing_mode = _load_private_key(args.signing_key)
         public_key = signing_key.public_key().public_bytes(
@@ -303,6 +390,9 @@ def main() -> int:
             "operation_catalog": bool(profile["operation_catalog"].get("operation_catalog_hash")),
             "fixture_manifest": bool(fixture_manifest_hash),
             "dependency_license_scan": dependency_scan["status"] == "PASS",
+            "public_network_release": (
+                network_release is not None if args.require_public_network else True
+            ),
         }
         payload: dict[str, Any] = {
             "schema_version": 1,
