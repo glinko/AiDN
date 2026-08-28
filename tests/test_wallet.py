@@ -9,7 +9,6 @@ from aidn_hypervisor.accounting.models import (
     usage_acknowledgement_hash,
     usage_report_hash,
 )
-from aidn_hypervisor.bundle_registry import FileBundleRegistry
 from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig, NodeCapacity, ResourceProfile, TaskRequest
 from aidn_hypervisor.endpoints.models import CreateEndpointCommand
 from aidn_hypervisor.endpoints.service import EndpointService
@@ -2087,14 +2086,55 @@ def test_service_builds_provider_metered_accounting_contract_for_paid_endpoint()
 
 
 def test_service_builds_accounting_contract_from_pricing_v2_rate_card() -> None:
-    from aidn_hypervisor.pricing import RateCardV2, RateComponent
-
     service = _service(
         plugin=UsageMeteringPlugin(),
         bundle=_bundle("phi4-local", "llm_text").model_copy(
             update={"plugin_id": "fake-usage-metering"}
         ),
     )
+    rate_card = RateCardV2(
+        components=[
+            RateComponent(
+                component_id="input",
+                dimension="input_tokens",
+                unit_price_q_atoms=12_000_000,
+                unit_divisor=1_000_000,
+                accounting_mode="provider_metered",
+            ),
+            RateComponent(
+                component_id="base",
+                dimension="request_count",
+                kind="fixed",
+                unit_price_q_atoms=2_000_000,
+                accounting_mode="fixed_price",
+            ),
+        ],
+    )
+    endpoint = EndpointService(EndpointStore()).create_endpoint(
+        CreateEndpointCommand(
+            owner_wallet="wallet-1",
+            bundle_id="phi4-local",
+            bundle_hash="bundle-hash-a",
+            display_name="Pricing V2 Text",
+            model_class="llm_text",
+            capabilities=["llm_text.generate"],
+            pricing={"rate_card": rate_card.model_dump(mode="json")},
+            session={"minimum_deposit": 10.0, "recommended_deposit": 25.0},
+        )
+    ).endpoint
+
+    contract = service.accounting_contract_for_endpoint(endpoint)
+
+    assert contract["pricing_version"] == f"pricing.v2:{rate_card.rate_card_hash}"
+    assert contract["pricing_policy_reference"] == rate_card.rate_card_hash
+    assert "maximum_request_charge" not in contract
+    assert [
+        (item["unit"], item["price"], item["mode"])
+        for item in contract["billable_units"]
+    ] == [
+        ("input_tokens", 12.0, "provider_metered"),
+        ("request_count", 2.0, "fixed_price"),
+    ]
 
 
 def _llm_pricing(*, input_q: int = 0, output_q: int = 0, fixed_q: int = 0) -> dict:
@@ -2134,53 +2174,9 @@ def _audio_pricing() -> dict:
             unit_price_q_atoms=2_000_000, accounting_mode="fixed_price",
         ),
     ]).model_dump(mode="json")}
-    rate_card = RateCardV2(
-        components=[
-            RateComponent(
-                component_id="input",
-                dimension="input_tokens",
-                unit_price_q_atoms=12_000_000,
-                unit_divisor=1_000_000,
-                accounting_mode="provider_metered",
-            ),
-            RateComponent(
-                component_id="base",
-                dimension="request_count",
-                kind="fixed",
-                unit_price_q_atoms=2_000_000,
-                accounting_mode="fixed_price",
-            ),
-        ],
-    )
-    endpoint = EndpointService(EndpointStore()).create_endpoint(
-        CreateEndpointCommand(
-            owner_wallet="wallet-1",
-            bundle_id="phi4-local",
-            bundle_hash="bundle-hash-a",
-            display_name="Pricing V2 Text",
-            model_class="llm_text",
-            capabilities=["llm_text.generate"],
-            pricing={"rate_card": rate_card.model_dump(mode="json")},
-            session={"minimum_deposit": 10.0, "recommended_deposit": 25.0},
-        )
-    ).endpoint
-
-    contract = service.accounting_contract_for_endpoint(endpoint)
-
-    assert contract["pricing_version"] == (
-        f"pricing.v2:{rate_card.rate_card_hash}"
-    )
-    assert contract["pricing_policy_reference"] == rate_card.rate_card_hash
-    assert "maximum_request_charge" not in contract
-    assert [(item["unit"], item["price"], item["mode"]) for item in contract["billable_units"]] == [
-        ("input_tokens", 12.0, "provider_metered"),
-        ("request_count", 2.0, "fixed_price"),
-    ]
 
 
 def test_pricing_v2_charges_llm_tokens_and_base_request_end_to_end() -> None:
-    from aidn_hypervisor.pricing import RateCardV2, RateComponent
-
     service = _service(
         plugin=UsageMeteringPlugin(),
         bundle=_bundle("phi4-local", "llm_text").model_copy(

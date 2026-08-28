@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING
 
+from aidn_hypervisor.pricing import Q_ATOMS_PER_Q, quote_rate_card
 from aidn_hypervisor.session_read_models import (
     build_session_accounting_payload,
     build_session_detail_payload,
@@ -12,7 +13,6 @@ from aidn_hypervisor.session_read_models import (
     build_session_sweep_payload,
 )
 from aidn_hypervisor.sessions.models import SessionAmendmentKind
-from aidn_hypervisor.pricing import Q_ATOMS_PER_Q, quote_rate_card
 
 if TYPE_CHECKING:
     from aidn_hypervisor.endpoints.service import EndpointService

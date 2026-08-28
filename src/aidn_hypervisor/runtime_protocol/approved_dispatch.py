@@ -14,8 +14,8 @@ from aidn_hypervisor.accounting.whisper import build_whisper_usage_profile
 from aidn_hypervisor.dispatcher.models import DispatcherRoute
 from aidn_hypervisor.runtime_protocol.adapters.llamacpp import LlamaCppOpenAIAdapter
 from aidn_hypervisor.runtime_protocol.adapters.ollama import OllamaGenerateAdapter
-from aidn_hypervisor.runtime_protocol.adapters.tts import OpenAITtsAdapter
 from aidn_hypervisor.runtime_protocol.adapters.proxy import ProxyOpenAIAdapter
+from aidn_hypervisor.runtime_protocol.adapters.tts import OpenAITtsAdapter
 from aidn_hypervisor.runtime_protocol.adapters.vllm import VllmOpenAIAdapter
 from aidn_hypervisor.runtime_protocol.adapters.whisper import WhisperHttpAdapter
 from aidn_hypervisor.runtime_protocol.models import (

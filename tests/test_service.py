@@ -1240,7 +1240,20 @@ def test_service_executes_task_via_proxy_endpoint_when_endpoint_constraint_is_pr
 
     assert service.selected_bundle_id(task.task_id) == "text-a"
     assert service.get_task(task.task_id).status == "completed"
-    assert service.task_result(task.task_id) == {
+    result = service.task_result(task.task_id)
+    assert result is not None
+    charge_breakdown = result.pop("charge_breakdown")
+    assert set(charge_breakdown) == {
+        "rate_card_hash",
+        "components",
+        "subtotal_q_atoms",
+        "total_q_atoms",
+    }
+    assert charge_breakdown["rate_card_hash"].startswith("sha256:")
+    assert charge_breakdown["components"] == []
+    assert charge_breakdown["subtotal_q_atoms"] == 0
+    assert charge_breakdown["total_q_atoms"] == 0
+    assert result == {
         "ok": True,
         "task_type": "llm_text.generate",
         "output_text": "hello from remote",

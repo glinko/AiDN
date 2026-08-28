@@ -82,6 +82,7 @@
       "SNAPSHOT_COMMIT",
       "STAKE_LOCK",
       "STAKE_RELEASE",
+      "TESTNET_PARTICIPATION_HEARTBEAT",
       "TREASURY_FUND",
       "TREASURY_MANIFEST_BIND",
       "UNSTAKE_REQUEST",
@@ -146,6 +147,7 @@
       "SNAPSHOT_COMMIT",
       "STAKE_LOCK",
       "STAKE_RELEASE",
+      "TESTNET_PARTICIPATION_HEARTBEAT",
       "TREASURY_FUND",
       "TREASURY_MANIFEST_BIND",
       "UNSTAKE_REQUEST",
@@ -206,6 +208,7 @@
       "SNAPSHOT_COMMIT",
       "STAKE_LOCK",
       "STAKE_RELEASE",
+      "TESTNET_PARTICIPATION_HEARTBEAT",
       "TREASURY_FUND",
       "TREASURY_MANIFEST_BIND",
       "UNSTAKE_REQUEST",
@@ -242,7 +245,7 @@
       "VALIDATOR_STAKE",
       "VALIDATOR_UNSTAKE"
     ],
-    "operation_catalog_hash": "sha256:a2182fe9b6a897070a426ebc6cec57f2aa8fdaba166079b230f3c69351d0c583"
+    "operation_catalog_hash": "sha256:e79cd79ea3a769c5870c49e5b1dc6a8ca4ae31c87226ac0fa0b1e00e928fd629"
   },
   "state_commitment": {
     "abci_app_hash_version": "aidn-abci-state-hash.v1",
@@ -251,5 +254,5 @@
     "empty_extension_compatibility": "empty post-MVP extensions are omitted from historical AppHash"
   },
   "stable_error_policy": "symbolic deterministic errors; human text is non-consensus",
-  "profile_commitment": "sha256:c083408a57e61296aa57105f8e61afeff53bf7c371f4e1026814e8d8c5deff87"
+  "profile_commitment": "sha256:f2b5391eac73c6901198f1f0cc83a894ab671cebde2df723e1c34f2c719fdcc5"
 }

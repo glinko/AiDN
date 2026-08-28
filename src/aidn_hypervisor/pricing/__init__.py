@@ -1,3 +1,4 @@
+from aidn_hypervisor.pricing.accounting_snapshot import accounting_snapshot_units
 from aidn_hypervisor.pricing.charges import (
     RateCharge,
     RateChargeComponent,
@@ -8,10 +9,9 @@ from aidn_hypervisor.pricing.deposits import (
     EscrowDepositRecommendationRequest,
     estimate_escrow_deposits,
 )
-from aidn_hypervisor.pricing.accounting_snapshot import accounting_snapshot_units
 from aidn_hypervisor.pricing.models import (
-    BillingDimension,
     Q_ATOMS_PER_Q,
+    BillingDimension,
     RateCardV2,
     RateComponent,
 )
