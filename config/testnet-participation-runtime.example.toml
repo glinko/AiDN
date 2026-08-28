@@ -1,0 +1,20 @@
+# Host-local execution switch for Testnet participation payouts.
+#
+# It is intentionally disabled in every release. This file never contains a
+# private key: treasury_signer_secret_ref names a protected host secret that
+# the service manager resolves outside TOML, shell history and the Dashboard.
+
+schema_version = "aidn.testnet-participation-runtime.v1"
+
+[runtime]
+enabled = false
+mode = "inspect"
+active_network_id = "aidn-testnet"
+active_chain_id = "aidn-testnet-1"
+
+# Fill these only in a reviewed, host-local activation copy:
+# program_path = "/etc/aidn/testnet/participation.toml"
+# evidence_store_path = "/var/lib/aidn/testnet-participation/evidence.sqlite"
+# payout_store_path = "/var/lib/aidn/testnet-participation/payout.sqlite"
+# treasury_wallet = "wallet-testnet-incentives"
+# treasury_signer_secret_ref = "aidn-testnet-incentive-treasury"

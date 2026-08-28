@@ -151,7 +151,9 @@ missing, restart, treasury-exhaustion and restoration drills.
 ## Current implementation point
 
 The deterministic policy calculator, signed heartbeat format, SQLite evidence
-store, persistent payout state machine and non-emitting CLI already exist.
-The first active slice is item 1: bridge finalized consensus evidence into that
-store. Items 2–7 remain deliberately inactive until the preceding exit
+store, persistent payout state machine, consensus submitter/finality adapter,
+and disabled-by-default runtime profile already exist. The next active slice
+is the service-lifecycle bridge: resolve the protected signer, invoke the
+runtime only after the canonical daily transition, and expose its read-only
+status. Items 3–7 remain deliberately inactive until the preceding exit
 conditions are met.

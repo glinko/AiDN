@@ -38,10 +38,14 @@ hashes and the genesis hash in its announcement.
 
 1. Fund the dedicated Testnet Incentive Treasury through its reviewed funding
    path. It is not the Faucet Treasury and not a permanent-emission account.
-2. Configure the managed worker with a protected signing key, the finalized
-   evidence store, its SQLite payout store and the reviewed CometBFT transfer
-   submitter.
-3. Run a dry calculation at one finalized Epoch:
+2. Copy `config/testnet-participation-runtime.example.toml` to a protected
+   host path. It starts with `enabled = false`; set a reviewed programme path,
+   evidence/payout SQLite paths, Treasury Wallet and **secret reference**
+   (never a key) before enabling. Begin with `mode = "dry_run"`.
+3. Configure the managed worker with a protected signing key resolved from that
+   secret reference, the finalized evidence store, its SQLite payout store and
+   the reviewed CometBFT transfer submitter.
+4. Run a dry calculation at one finalized Epoch:
 
 ```text
 aidn participation --program-path /etc/aidn/testnet/participation.toml \
@@ -51,7 +55,7 @@ aidn participation --program-path /etc/aidn/testnet/participation.toml \
   --period-start <UTC-RFC3339>
 ```
 
-4. Reconcile the generated `WALLET_TRANSFER` operation IDs to finality before
+5. Reconcile the generated `WALLET_TRANSFER` operation IDs to finality before
    the worker can advance the treasury sequence.
-5. Keep the worker disabled until every item above succeeds in a multi-node
+6. Keep the worker disabled until every item above succeeds in a multi-node
    rehearsal.

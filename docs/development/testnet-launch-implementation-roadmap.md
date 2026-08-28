@@ -19,6 +19,10 @@ The ordered implementation and public-launch execution plan is maintained in
 - Durable payout worker primitive: persists signed batches before submission,
   submits treasury sequences in order, reconciles after timeout/restart, and
   blocks a deterministically rejected batch without skipping a sequence.
+- Host-local participation runtime profile: disabled by default, supports
+  `inspect`, `dry_run`, and `submit` modes, requires a named protected
+  Treasury signer reference rather than key material, and uses the reviewed
+  consensus submission/finality adapter.
 - Finalized evidence store: accepts only Ed25519-signed heartbeats from the
   Wallet identity canonically bound to the Node by `OPERATOR_WALLET_BIND`.
 - `aidn participation verify|calculate` gives operators a non-emitting,
@@ -30,9 +34,9 @@ The ordered implementation and public-launch execution plan is maintained in
 
 1. Wire the finalized Registry/Consensus bridge to write the evidence store;
    Dashboard observations and mutable Registry advertisements remain ineligible.
-2. Wire the evidence store and payout worker into the managed
-   testnet service, using the existing CometBFT transfer submitter and a
-   protected incentive-treasury signing key.
+2. Wire the runtime profile into the managed testnet service lifecycle and its
+   protected Secret Manager resolver. It must run only after a canonical daily
+   `EPOCH_TRANSITION`, never from a host-local timer.
 3. Publish the signed `aidn-testnet-1` genesis and public multi-validator
    profile, then package a verified TOML profile in the release.
 4. Expose participation status, qualification countdown, eligible windows,
