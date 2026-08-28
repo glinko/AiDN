@@ -45,6 +45,12 @@ The ordered implementation and public-launch execution plan is maintained in
 5. Run multi-node acceptance: missing/duplicate/late heartbeat, version skew,
    node restart, day-boundary failover, duplicate settlement, retired/banned
    node, treasury exhaustion, snapshot restore, and Mainnet sunset.
+6. Before any economically significant reward programme, harden participation
+   evidence beyond self-reported heartbeat: require signed peer/validator
+   reachability attestations, bounded endpoint probes, failure-history review,
+   and programme-appropriate anti-Sybil signals. These inputs must be bound
+   into the final settlement evidence root; Dashboard/Registry observations
+   remain advisory.
 
 The Testnet Incentive Treasury must be explicitly funded before step 2 is
 enabled. Until the managed worker is enabled, the library can produce verified

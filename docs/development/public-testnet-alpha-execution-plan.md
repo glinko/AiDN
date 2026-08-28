@@ -74,6 +74,26 @@ The calculation reads only finalized evidence. Its output binds the programme
 policy hash and finalized `EPOCH_TRANSITION` ID. It produces a reviewable
 allocation first, not a payment.
 
+### 2a. Participation evidence hardening
+
+The signed, consensus-finalized heartbeat proves that the Node Identity was
+able to participate in the network at a bounded time; it is not, on its own,
+proof that the node delivered useful service. Before any economically
+significant programme or Mainnet reward is activated, add independent evidence
+to the eligibility policy:
+
+1. Peer/validator attestations that the node was reachable through the intended
+   network surface.
+2. Periodic, rate-limited endpoint availability probes with signed results.
+3. A bounded uptime and failure-history projection, including bans and
+   withdrawals from the active set.
+4. Anti-Sybil review signals appropriate to the programme phase, without
+   treating IP address alone as identity.
+
+The future calculator must bind the selected attestation policy and evidence
+root into the same daily settlement hash. Dashboard observations remain
+advisory and can never substitute for signed independent evidence.
+
 ### 3. Managed payout worker
 
 Wrap the existing durable payout primitive in a host-managed service:
@@ -147,6 +167,7 @@ missing, restart, treasury-exhaustion and restoration drills.
 | 5 | Launch ceremony scripts | Four public validators can build and verify one immutable network. |
 | 6 | Observe-only network drill | Independent nodes reproduce the same daily allocation. |
 | 7 | Controlled reward activation | Explicitly funded Treasury makes reviewed Testnet-only payouts. |
+| 8 | Participation evidence hardening | Independent reachability and service attestations gate economically significant rewards. |
 
 ## Current implementation point
 
