@@ -10,6 +10,8 @@
   <a href="pyproject.toml"><img src="https://img.shields.io/badge/python-3.11%2B-3776ab" alt="Python 3.11 or newer"></a>
 </p>
 
+<p align="center"><strong>Language:</strong> English · <a href="README.ru.md">Русский</a></p>
+
 AiDN is an operator control plane for AI resources. An **AiDN Hypervisor**
 connects reviewed execution Providers, models, immutable Bundles, Endpoint
 offers, Wallet-backed accounting, validation evidence, and network operations

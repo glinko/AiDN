@@ -25,6 +25,7 @@ LEGACY_PATHS = ("docs/superpowers/", "docs/development/executable-spec-pack/")
 
 def markdown_documents() -> list[Path]:
     paths = set(ROOT_DOCUMENTS)
+    paths.update(REPOSITORY_ROOT.glob("README.*.md"))
     for root in DOCUMENT_ROOTS:
         if root.exists():
             paths.update(root.rglob("*.md"))

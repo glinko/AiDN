@@ -42,6 +42,10 @@ This document defines the rules behind that catalog.
   `component-acceptance-2026-08-28.md`.
 - New material must be placed in its final taxonomy directory. Do not create
   new documents under `docs/archive/` or use legacy directory names.
+- The root `README.md` is the canonical English repository entry point. A
+  maintained translation uses `README.<locale>.md`, begins with a visible
+  language switcher, and links back to `README.md` as the source of truth.
+  Update its links and screenshots in the same change as the canonical README.
 
 ## Authority and lifecycle
 
