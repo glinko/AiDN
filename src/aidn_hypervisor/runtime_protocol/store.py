@@ -28,6 +28,7 @@ from aidn_hypervisor.runtime_protocol.models import (
 )
 
 _TERMINAL_REQUEST_STATES = {"COMPLETED", "PARTIAL", "CANCELLED", "FAILED", "EXPIRED", "UNRECOVERABLE"}
+_TERMINAL_SNAPSHOT_REQUEST_LIMIT = 256
 
 if TYPE_CHECKING:
     from aidn_hypervisor.state import HypervisorStateSnapshot
@@ -162,6 +163,7 @@ class RuntimeProtocolStore:
             self._state_store, "save"
         ):
             return
+        retained_request_ids = self.snapshot_request_ids()
         snapshot = self._state_store.load().model_copy(
             update={
                 "runtime_protocol_connections": list(self.connections.values()),
@@ -172,12 +174,16 @@ class RuntimeProtocolStore:
                 ),
                 "runtime_protocol_messages": list(self.messages.values()),
                 "runtime_protocol_sequences": dict(self.runtime_sequences),
-                "runtime_protocol_requests": self._persisted_requests(),
-                "runtime_protocol_cancellations": list(self.cancellations.values()),
-                "runtime_protocol_cancellation_results": list(
-                    self.cancellation_results.values()
+                "runtime_protocol_requests": self.snapshot_requests(
+                    retained_request_ids
                 ),
-                "runtime_protocol_results": list(self.results.values()),
+                "runtime_protocol_cancellations": self.snapshot_cancellations(
+                    retained_request_ids
+                ),
+                "runtime_protocol_cancellation_results": self.snapshot_cancellation_results(
+                    retained_request_ids
+                ),
+                "runtime_protocol_results": self.snapshot_results(retained_request_ids),
                 "runtime_protocol_streams": list(self.streams.values()),
                 "runtime_protocol_stream_chunks": [
                     chunk
@@ -192,8 +198,12 @@ class RuntimeProtocolStore:
                 "runtime_protocol_recovery_states": list(
                     self.recovery_states.values()
                 ),
-                "runtime_protocol_usage_reports": list(self.usage_reports.values()),
-                "runtime_protocol_usage_acks": list(self.usage_acks.values()),
+                "runtime_protocol_usage_reports": self.snapshot_usage_reports(
+                    retained_request_ids
+                ),
+                "runtime_protocol_usage_acks": self.snapshot_usage_acks(
+                    retained_request_ids
+                ),
                 "runtime_protocol_usage_conflicts": list(
                     self.usage_conflicts.values()
                 ),
@@ -211,7 +221,27 @@ class RuntimeProtocolStore:
         )
         self._state_store.save(snapshot)
 
-    def _persisted_requests(self) -> list[RuntimeRequestRecord]:
+    def snapshot_request_ids(self) -> set[str]:
+        """Return all active requests plus a bounded terminal history."""
+
+        active = {
+            record.request_id
+            for record in self.requests.values()
+            if record.request_state not in _TERMINAL_REQUEST_STATES
+        }
+        terminal = sorted(
+            (
+                record
+                for record in self.requests.values()
+                if record.request_state in _TERMINAL_REQUEST_STATES
+            ),
+            key=lambda record: (record.updated_at, record.request_id),
+        )[-_TERMINAL_SNAPSHOT_REQUEST_LIMIT:]
+        return active | {record.request_id for record in terminal}
+
+    def snapshot_requests(
+        self, retained_request_ids: set[str] | None = None
+    ) -> list[RuntimeRequestRecord]:
         """Persist terminal request identity without replaying full transcripts.
 
         Runtime request hashes, lifecycle fields, and usage evidence remain
@@ -221,8 +251,11 @@ class RuntimeProtocolStore:
         growing by the same transcript on every inference turn.
         """
 
+        retained_request_ids = retained_request_ids or self.snapshot_request_ids()
         persisted: list[RuntimeRequestRecord] = []
         for record in self.requests.values():
+            if record.request_id not in retained_request_ids:
+                continue
             if record.request_state not in _TERMINAL_REQUEST_STATES:
                 persisted.append(record)
                 continue
@@ -241,6 +274,46 @@ class RuntimeProtocolStore:
             )
             persisted.append(record.model_copy(update={"request": compact_request}))
         return persisted
+
+    def snapshot_cancellations(self, request_ids: set[str]) -> list[RuntimeCancellationRecord]:
+        return [
+            record
+            for record in self.cancellations.values()
+            if record.cancellation.request_id in request_ids
+        ]
+
+    def snapshot_cancellation_results(
+        self, request_ids: set[str]
+    ) -> list[RuntimeCancelResult]:
+        return [
+            result
+            for result in self.cancellation_results.values()
+            if result.request_id in request_ids
+        ]
+
+    def snapshot_results(self, request_ids: set[str]) -> list[RuntimeResult]:
+        return [
+            result for request_id, result in self.results.items() if request_id in request_ids
+        ]
+
+    def snapshot_usage_reports(self, request_ids: set[str]) -> list[RuntimeUsageReport]:
+        return [
+            report
+            for report in self.usage_reports.values()
+            if report.request_id in request_ids
+        ]
+
+    def snapshot_usage_acks(self, request_ids: set[str]) -> list[RuntimeUsageAck]:
+        return [
+            acknowledgment
+            for acknowledgment in self.usage_acks.values()
+            if acknowledgment.request_id in request_ids
+        ]
+
+    # Kept as a private compatibility alias for callers that used the helper
+    # before the snapshot projection became part of the public store contract.
+    def _persisted_requests(self) -> list[RuntimeRequestRecord]:
+        return self.snapshot_requests()
 
     @staticmethod
     def _checkpoint_key(checkpoint: RuntimeStateCheckpoint) -> str:

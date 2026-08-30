@@ -453,6 +453,30 @@ def test_llamacpp_plugin_honors_bounded_per_request_transport_timeout() -> None:
     assert plugin.timeouts[-1] == 24.0
 
 
+def test_llamacpp_plugin_uses_long_context_safe_default_timeout() -> None:
+    plugin = StubLlamaCppPlugin(chat_payload={"choices": [{"message": {"content": "ok"}}]})
+    runtime = RuntimeHandle(
+        runtime_id="rt-1",
+        command=["llama-server"],
+        status="running",
+        bundle_id="phi4-llamacpp",
+        metadata={
+            "endpoint": "http://127.0.0.1:8080",
+            "model_id": "C:/models/phi4.gguf",
+        },
+    )
+
+    plugin.invoke(
+        TaskRequest(
+            task_type="llm_text.generate",
+            payload={"messages": [{"role": "user", "content": "Hi"}]},
+        ),
+        runtime,
+    )
+
+    assert plugin.timeouts[-1] == 300.0
+
+
 def test_llamacpp_partial_usage_does_not_invent_unknown_tokens() -> None:
     usage = LlamaCppPlugin()._usage_from_response({"tokens_evaluated": 7})
 

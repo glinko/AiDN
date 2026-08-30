@@ -119,6 +119,7 @@ class SnapshotStateService:
         reasoning_snapshot = getattr(self._host, "reasoning_provider_registry_snapshot", None)
         if callable(reasoning_snapshot):
             resident_agent_snapshot["reasoning_providers"] = reasoning_snapshot()
+        retained_runtime_request_ids = self._host.runtime_protocol_store.snapshot_request_ids()
         return HypervisorStateSnapshot(
             resident_agent=resident_agent_snapshot,
             tasks=[
@@ -230,10 +231,22 @@ class SnapshotStateService:
             runtime_protocol_capacity_records=list(self._host.runtime_protocol_store.capacity_records.values()),
             runtime_protocol_messages=list(self._host.runtime_protocol_store.messages.values()),
             runtime_protocol_sequences=dict(self._host.runtime_protocol_store.runtime_sequences),
-            runtime_protocol_requests=list(self._host.runtime_protocol_store.requests.values()),
-            runtime_protocol_cancellations=list(self._host.runtime_protocol_store.cancellations.values()),
-            runtime_protocol_cancellation_results=list(self._host.runtime_protocol_store.cancellation_results.values()),
-            runtime_protocol_results=list(self._host.runtime_protocol_store.results.values()),
+            # Requests may contain full model conversations and tool catalogs
+            # while they are in flight.  The protocol store projects terminal
+            # requests to their durable hashes/references so this operator
+            # snapshot never grows with every completed inference turn.
+            runtime_protocol_requests=self._host.runtime_protocol_store.snapshot_requests(
+                retained_runtime_request_ids
+            ),
+            runtime_protocol_cancellations=self._host.runtime_protocol_store.snapshot_cancellations(
+                retained_runtime_request_ids
+            ),
+            runtime_protocol_cancellation_results=self._host.runtime_protocol_store.snapshot_cancellation_results(
+                retained_runtime_request_ids
+            ),
+            runtime_protocol_results=self._host.runtime_protocol_store.snapshot_results(
+                retained_runtime_request_ids
+            ),
             runtime_protocol_streams=list(self._host.runtime_protocol_store.streams.values()),
             runtime_protocol_stream_chunks=[
                 chunk
@@ -244,8 +257,12 @@ class SnapshotStateService:
             runtime_protocol_artifacts=list(self._host.runtime_protocol_store.artifacts.values()),
             runtime_protocol_state_checkpoints=list(self._host.runtime_protocol_store.state_checkpoints.values()),
             runtime_protocol_recovery_states=list(self._host.runtime_protocol_store.recovery_states.values()),
-            runtime_protocol_usage_reports=list(self._host.runtime_protocol_store.usage_reports.values()),
-            runtime_protocol_usage_acks=list(self._host.runtime_protocol_store.usage_acks.values()),
+            runtime_protocol_usage_reports=self._host.runtime_protocol_store.snapshot_usage_reports(
+                retained_runtime_request_ids
+            ),
+            runtime_protocol_usage_acks=self._host.runtime_protocol_store.snapshot_usage_acks(
+                retained_runtime_request_ids
+            ),
             runtime_protocol_usage_conflicts=list(self._host.runtime_protocol_store.usage_conflicts.values()),
             runtime_protocol_recovery_plans=list(self._host.runtime_protocol_store.recovery_plans.values()),
             runtime_protocol_recovery_results=list(self._host.runtime_protocol_store.recovery_results.values()),

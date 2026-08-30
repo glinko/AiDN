@@ -97,6 +97,23 @@ class _HypervisorService:
         }
 
 
+class _ResidentHypervisorService(_HypervisorService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.resident_requests: list[tuple[str, dict]] = []
+
+    def resident_inference_status(self):
+        return {"state": "RUNNING"}
+
+    def invoke_resident_inference(self, prompt: str, **parameters):
+        self.resident_requests.append((prompt, parameters))
+        return {
+            "ok": True,
+            "output_text": "hello from resident llama",
+            "model_id": "qwen-resident",
+        }
+
+
 def _store(tmp_path):
     return McpCredentialStore(
         secret_manager=FileSecretManager(
@@ -114,6 +131,7 @@ def _client(
     runtime_parameter_policy: dict | None = None,
     max_request_bytes: int | None = None,
     max_messages: int | None = None,
+    enable_owner_resident_route: bool = False,
 ):
     endpoint = EndpointManifest(
         endpoint_id="ep-local",
@@ -135,7 +153,7 @@ def _client(
         owner_wallet=endpoint.owner_wallet,
         model_alias="qwen-local",
     )
-    service = _HypervisorService()
+    service = _ResidentHypervisorService() if enable_owner_resident_route else _HypervisorService()
     sessions = _SessionService()
     app = FastAPI()
     app.include_router(
@@ -146,11 +164,37 @@ def _client(
             credential_store=store,
             max_request_bytes=max_request_bytes,
             max_messages=max_messages,
+            enable_owner_resident_route=enable_owner_resident_route,
         )
     )
     client = TestClient(app)
     client._aidn_credential_store = store
     return client, issued, service, sessions
+
+
+def test_chat_completion_can_use_opted_in_resident_owner_route(tmp_path) -> None:
+    client, issued, service, sessions = _client(
+        tmp_path,
+        enable_owner_resident_route=True,
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        headers={"Authorization": f"Bearer {issued.token}"},
+        json={
+            "model": "qwen-local",
+            "messages": [{"role": "user", "content": "Say hello"}],
+            "temperature": 0.2,
+            "max_tokens": 64,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["choices"][0]["message"]["content"] == "hello from resident llama"
+    assert response.json()["aidn"]["execution_mode"] == "resident_owner"
+    assert service.submitted == []
+    assert sessions.opened == []
+    assert service.resident_requests[0][1]["messages"][0]["content"] == "Say hello"
 
 
 def test_models_is_limited_to_the_credential_endpoint(tmp_path) -> None:

@@ -305,6 +305,7 @@ def build_inference_router(
     credential_store: McpCredentialStore | None,
     max_request_bytes: int | None = None,
     max_messages: int | None = None,
+    enable_owner_resident_route: bool | None = None,
 ) -> APIRouter:
     """Build the `/v1` data-plane router.
 
@@ -328,6 +329,10 @@ def build_inference_router(
 
     request_body_limit = _resolve_max_request_bytes(max_request_bytes)
     message_limit = _resolve_max_messages(max_messages)
+    if enable_owner_resident_route is None:
+        enable_owner_resident_route = os.getenv(
+            "AIDN_INFERENCE_GATEWAY_RESIDENT_OWNER_ROUTE", ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
 
     def authenticate(request: Request) -> InferenceCredential | JSONResponse:
         if credential_store is None:
@@ -611,27 +616,51 @@ def build_inference_router(
                     str(error),
                     code="parameter_policy_violation",
                 )
-            session_id = ensure_session(credential, endpoint)
-            request_id = "agent-" + uuid4().hex
-            task = await run_in_threadpool(
-                submit_inference_task,
-                TaskRequest(
-                    task_type="llm_text.generate",
-                    payload=request_payload,
-                    mode="manual",
-                    constraints={
-                        "endpoint_id": endpoint.endpoint_id,
-                        "session_id": session_id,
-                        "request_id": request_id,
-                        "streaming": False,
-                        "inference_credential_id": credential.credential_id,
-                        "agent_identity": credential.credential_id,
-                    },
-                ),
+            resident_status = (
+                hypervisor_service.resident_inference_status()
+                if enable_owner_resident_route
+                and bool(getattr(endpoint, "local_agent_use", False))
+                and hasattr(hypervisor_service, "resident_inference_status")
+                else None
             )
+            resident_route = (
+                isinstance(resident_status, dict)
+                and str(resident_status.get("state") or "").upper() == "RUNNING"
+                and hasattr(hypervisor_service, "invoke_resident_inference")
+            )
+            if resident_route:
+                # This route is limited to a credential's local-agent
+                # Endpoint. Public/paid Endpoint traffic still proceeds
+                # through the normal session, scheduler and settlement path.
+                result = await run_in_threadpool(
+                    hypervisor_service.invoke_resident_inference,
+                    "Respond to the supplied role-separated conversation.",
+                    **request_payload,
+                )
+                task_id = "resident-" + uuid4().hex
+            else:
+                session_id = ensure_session(credential, endpoint)
+                request_id = "agent-" + uuid4().hex
+                task = await run_in_threadpool(
+                    submit_inference_task,
+                    TaskRequest(
+                        task_type="llm_text.generate",
+                        payload=request_payload,
+                        mode="manual",
+                        constraints={
+                            "endpoint_id": endpoint.endpoint_id,
+                            "session_id": session_id,
+                            "request_id": request_id,
+                            "streaming": False,
+                            "inference_credential_id": credential.credential_id,
+                            "agent_identity": credential.credential_id,
+                        },
+                    ),
+                )
+                result = hypervisor_service.task_result(task.task_id)
+                task_id = task.task_id
         except (RuntimeError, ValueError, KeyError) as error:
             return _error(503, str(error), code="inference_execution_failed", error_type="server_error")
-        result = hypervisor_service.task_result(task.task_id)
         # ``submit`` returns the queue snapshot created before its synchronous
         # processing pass. A successfully completed task therefore still has
         # its original ``queued`` status on that stale object. The committed
@@ -651,7 +680,7 @@ def build_inference_router(
                 error_type="server_error",
             )
         text, tool_calls = _assistant_output(result)
-        completion_id = "chatcmpl-" + task.task_id
+        completion_id = "chatcmpl-" + task_id
         created = int(time.time())
         finish_reason = "tool_calls" if tool_calls else "stop"
         if payload.stream:
@@ -728,7 +757,11 @@ def build_inference_router(
                         "finish_reason": finish_reason,
                     }
                 ],
-                "aidn": {"endpoint_id": endpoint.endpoint_id, "task_id": task.task_id},
+                "aidn": {
+                    "endpoint_id": endpoint.endpoint_id,
+                    "task_id": task_id,
+                    "execution_mode": "resident_owner" if resident_route else "endpoint_runtime",
+                },
             },
         )
 

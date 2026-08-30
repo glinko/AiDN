@@ -8,10 +8,14 @@ import json
 import os
 import tempfile
 import threading
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from contextlib import contextmanager
 from pathlib import Path
+from typing import TypeVar
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+_MutationResult = TypeVar("_MutationResult")
 
 
 class SecretManagerError(ValueError):
@@ -47,14 +51,7 @@ class FileSecretManager:
             if not value:
                 raise SecretManagerError("secret value must not be empty")
             updates[handle] = bytes(value)
-        with self._lock:
-            previous = self._secrets.copy()
-            self._secrets.update(updates)
-            try:
-                self._persist()
-            except Exception:
-                self._secrets = previous
-                raise
+        self.mutate(lambda secrets: secrets.update(updates))
 
     def get(self, handle: str) -> bytes:
         self._validate_handle(handle)
@@ -66,10 +63,7 @@ class FileSecretManager:
 
     def remove(self, *, handle: str) -> None:
         self._validate_handle(handle)
-        with self._lock:
-            if handle in self._secrets:
-                del self._secrets[handle]
-                self._persist()
+        self.mutate(lambda secrets: secrets.pop(handle, None))
 
     def has(self, handle: str) -> bool:
         self._validate_handle(handle)
@@ -83,6 +77,29 @@ class FileSecretManager:
             changed = loaded != self._secrets
             self._secrets = loaded
             return changed
+
+    def mutate(self, operation: Callable[[dict[str, bytes]], _MutationResult]) -> _MutationResult:
+        """Run a read-modify-write operation while holding a host-wide file lock.
+
+        Atomic ``os.replace`` prevents a torn encrypted file, but by itself it
+        does not prevent a long-running Hypervisor and a local CLI from each
+        overwriting the other's fresh state.  Pairing uses both processes, so
+        the complete operation must be serialized across processes as well as
+        between threads in one process.
+        """
+        with self._lock, self._exclusive_file_lock():
+            previous = self._secrets
+            current = self._load()
+            self._secrets = current
+            before = current.copy()
+            try:
+                result = operation(current)
+                if current != before:
+                    self._persist()
+                return result
+            except Exception:
+                self._secrets = previous
+                raise
 
     def fingerprint(self, handles: Iterable[str]) -> str:
         """Return a stable digest without exposing secret values."""
@@ -164,6 +181,35 @@ class FileSecretManager:
         finally:
             if os.path.exists(temporary_path):
                 os.unlink(temporary_path)
+
+    @contextmanager
+    def _exclusive_file_lock(self):
+        """Serialize secret mutations across independent local processes."""
+        lock_path = self._path.with_name(f".{self._path.name}.lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("a+b") as stream:
+            if os.name == "nt":
+                import msvcrt
+
+                stream.seek(0, os.SEEK_END)
+                if stream.tell() == 0:
+                    stream.write(b"\\0")
+                    stream.flush()
+                stream.seek(0)
+                msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+                try:
+                    yield
+                finally:
+                    stream.seek(0)
+                    msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
     @staticmethod
     def _validate_handle(handle: str) -> None:

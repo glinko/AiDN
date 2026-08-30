@@ -13,6 +13,13 @@ class LlamaCppPlugin(ProviderPlugin):
     plugin_version = "0.2.0"
     _runtime_ref = "b10433"
     _default_endpoint = "http://127.0.0.1:8080"
+    # Prompt ingestion for a real long-context local model can take longer
+    # than the old 90-second transport default before it emits its first
+    # token.  This is deliberately below the Hypervisor's one-hour absolute
+    # ceiling but long enough for a 128K-context GPU runtime to complete a
+    # normal agent turn.  A reviewed runtime metadata value or a smaller
+    # per-request policy limit still wins below.
+    _default_inference_timeout_seconds = 300.0
     _circuit_breaker_policy = {
         "failure_threshold": 2,
         "cooldown_seconds": 30.0,
@@ -396,7 +403,9 @@ class LlamaCppPlugin(ProviderPlugin):
         # health/discovery timeout generating a response.  Keep transport
         # timeout separate from the provider probe timeout and allow the
         # runtime to override it when a managed bundle supplies one.
-        timeout_seconds = runtime_handle.metadata.get("timeout_seconds", 90)
+        timeout_seconds = runtime_handle.metadata.get(
+            "timeout_seconds", self._default_inference_timeout_seconds
+        )
         request_timeout = task.payload.get("provider_timeout_seconds")
         if request_timeout is not None:
             try:
@@ -406,7 +415,7 @@ class LlamaCppPlugin(ProviderPlugin):
         try:
             timeout_seconds = max(1.0, min(3600.0, float(timeout_seconds)))
         except (TypeError, ValueError):
-            timeout_seconds = 90.0
+            timeout_seconds = self._default_inference_timeout_seconds
         try:
             response = self._request_json(
                 "POST",

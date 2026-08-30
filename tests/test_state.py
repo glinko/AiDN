@@ -15,6 +15,11 @@ from aidn_hypervisor.plugins.registry import PluginRegistry
 from aidn_hypervisor.process_manager import ProviderProcessManager
 from aidn_hypervisor.queue import InMemoryTaskQueue
 from aidn_hypervisor.resources import ResourceOrchestrator
+from aidn_hypervisor.runtime_protocol import (
+    RuntimeExecuteRequest,
+    RuntimeRequestRecord,
+    canonical_hash,
+)
 from aidn_hypervisor.scheduler import Scheduler
 from aidn_hypervisor.service import HypervisorService
 from aidn_hypervisor.settlement.models import SettlementReadyCommitment
@@ -140,6 +145,53 @@ def test_service_snapshot_and_restore_preserves_queued_and_completed_tasks() -> 
         "ok": True,
         "task_type": "audio.transcribe",
     }
+
+
+def test_snapshot_elides_terminal_runtime_request_payloads() -> None:
+    service = _service(bundles=[], plugins=_registry())
+    payload = {
+        "messages": [{"role": "user", "content": "x" * 4096}],
+        "tools": [{"name": "inspect-node"}],
+    }
+    request = RuntimeExecuteRequest(
+        runtime_id="runtime-1",
+        runtime_generation=1,
+        runtime_configuration_hash="runtime-config-1",
+        route_generation=1,
+        endpoint_id="endpoint-1",
+        endpoint_configuration_hash="endpoint-config-1",
+        session_id="session-1",
+        session_contract_hash="session-contract-1",
+        request_id="request-1",
+        capability_id="llm.chat",
+        capability_version="1.0",
+        capability_definition_hash="capability-1",
+        request_payload_hash=canonical_hash(payload),
+        request_payload=payload,
+        request_charge_ceiling=0.0,
+        accounting_contract_hash="accounting-1",
+        idempotency_key="request-1",
+        request_deadline="2026-08-29T18:00:00+00:00",
+    )
+    service.runtime_protocol_store.requests[request.request_id] = RuntimeRequestRecord(
+        request_id=request.request_id,
+        runtime_id=request.runtime_id,
+        runtime_generation=request.runtime_generation,
+        route_generation=request.route_generation,
+        request_hash=request.semantic_hash(),
+        request=request,
+        request_state="COMPLETED",
+        updated_at="2026-08-29T18:00:01+00:00",
+    )
+
+    snapshot = service.snapshot_state()
+
+    persisted = snapshot.runtime_protocol_requests[0].request
+    assert persisted.request_payload is None
+    assert persisted.request_payload_reference == (
+        "state://runtime-request/request-1/" + request.request_payload_hash
+    )
+    assert service.runtime_protocol_store.requests[request.request_id].request.request_payload == payload
 
 
 def test_service_snapshot_and_restore_preserves_allocations() -> None:

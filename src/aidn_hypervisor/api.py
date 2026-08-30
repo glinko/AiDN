@@ -2024,6 +2024,57 @@ def build_api_router(
             consensus_status=consensus_status,
         )
 
+    @router.get("/operators/dashboard/status/summary")
+    async def operator_dashboard_status_summary() -> dict:
+        """Return a deliberately small, agent-safe live node diagnostic.
+
+        This endpoint is the supported alternative to reading the durable
+        ``hypervisor-state.json`` file.  State files can contain retained
+        protocol evidence and must never be treated as a status API by an
+        interactive assistant.
+        """
+
+        service.refresh_runtime_health()
+        resident = service.resident_inference_status()
+        recent_failures = [
+            {
+                "event_type": event.event_type,
+                "message": event.message,
+                "timestamp": event.timestamp,
+                "task_id": event.task_id,
+            }
+            for event in service.event_journal(limit=40)
+            if str(getattr(event, "severity", "")).upper() in {"ERROR", "CRITICAL"}
+        ][-5:]
+        return {
+            "node": {"node_id": service.node_id},
+            "resident_inference": {
+                "configured": bool(resident.get("configured")),
+                "state": resident.get("state"),
+                "provider_type": resident.get("provider_type"),
+                "model_path": resident.get("model_path"),
+                "last_error": resident.get("last_error"),
+                "runtime": {
+                    "runtime_id": (resident.get("runtime") or {}).get("runtime_id"),
+                    "status": (resident.get("runtime") or {}).get("status"),
+                    "health_status": (resident.get("runtime") or {}).get("health_status"),
+                    "readiness_status": (resident.get("runtime") or {}).get("readiness_status"),
+                },
+            },
+            "runtimes": [
+                {
+                    "runtime_id": runtime.runtime_id,
+                    "bundle_id": runtime.bundle_id,
+                    "status": runtime.status,
+                    "health_status": runtime.health_status,
+                }
+                for runtime in service.list_runtimes()
+            ],
+            "queue": service.queue_summary(),
+            "resources": service.resources.summary() if service.resources is not None else None,
+            "recent_failures": recent_failures,
+        }
+
     @router.get("/operators/dashboard/cometbft")
     async def operator_dashboard_cometbft() -> dict:
         """Return the bounded CometBFT control/readiness projection."""

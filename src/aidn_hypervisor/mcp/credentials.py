@@ -102,9 +102,7 @@ class McpCredentialStore:
             "created_at": created_at,
             "last_used_at": None,
         }
-        state = self._load_state()
-        state["credentials"].append(record)
-        self._save_state(state)
+        self._mutate_state(lambda state: state["credentials"].append(record))
         return self._credential(record, token=token)
 
     def import_legacy_token(
@@ -125,9 +123,6 @@ class McpCredentialStore:
         normalized_scopes = self._normalize_scopes(scopes)
         if not isinstance(token, str) or not token.strip():
             raise ValueError("MCP legacy token must be a non-empty string")
-        state = self._load_state()
-        if state["legacy_imported"]:
-            return None
         record = {
             "kind": "mcp",
             "credential_id": "mcpcred-" + secrets.token_urlsafe(12),
@@ -140,34 +135,42 @@ class McpCredentialStore:
             "created_at": self._timestamp(),
             "last_used_at": None,
         }
-        state["credentials"].append(record)
-        state["legacy_imported"] = True
-        self._save_state(state)
-        return self._credential(record)
+        def import_token(state: dict) -> McpCredential | None:
+            if state["legacy_imported"]:
+                return None
+            state["credentials"].append(record)
+            state["legacy_imported"] = True
+            return self._credential(record)
+
+        return self._mutate_state(import_token)
 
     def list_credentials(self) -> list[McpCredential]:
-        state = self._load_state()
-        self._migrate_legacy_control_session_scope(state)
-        return [
-            self._credential(record)
-            for record in state["credentials"]
-            if record.get("kind", "mcp") == "mcp"
-        ]
+        def list_records(state: dict) -> list[McpCredential]:
+            self._migrate_legacy_control_session_scope(state)
+            return [
+                self._credential(record)
+                for record in state["credentials"]
+                if record.get("kind", "mcp") == "mcp"
+            ]
+
+        return self._mutate_state(list_records)
 
     def resolve(self, token: str | None) -> McpCredential | None:
         if not isinstance(token, str) or not token.strip():
             return None
         token_digest = self._digest(token.strip())
-        state = self._load_state()
-        self._migrate_legacy_control_session_scope(state)
-        for record in state["credentials"]:
-            if record.get("kind", "mcp") != "mcp":
-                continue
-            if record["state"] != "active":
-                continue
-            if hmac.compare_digest(record["token_digest"], token_digest):
-                return self._credential(record)
-        return None
+        def resolve_record(state: dict) -> McpCredential | None:
+            self._migrate_legacy_control_session_scope(state)
+            for record in state["credentials"]:
+                if record.get("kind", "mcp") != "mcp":
+                    continue
+                if record["state"] != "active":
+                    continue
+                if hmac.compare_digest(record["token_digest"], token_digest):
+                    return self._credential(record)
+            return None
+
+        return self._mutate_state(resolve_record)
 
     def create_inference_credential(
         self,
@@ -205,116 +208,114 @@ class McpCredentialStore:
             "last_used_at": None,
             "session_id": None,
         }
-        state = self._load_state()
-        state["credentials"].append(record)
-        self._save_state(state)
+        self._mutate_state(lambda state: state["credentials"].append(record))
         return self._inference_credential(record, token=token)
 
     def list_inference_credentials(self) -> list[InferenceCredential]:
-        state = self._load_state()
-        changed = self._revoke_expired_inference_records(state)
-        if changed:
-            self._save_state(state)
-        return [
-            self._inference_credential(record)
-            for record in state["credentials"]
-            if record.get("kind") == "inference"
-        ]
+        def list_records(state: dict) -> list[InferenceCredential]:
+            self._revoke_expired_inference_records(state)
+            return [
+                self._inference_credential(record)
+                for record in state["credentials"]
+                if record.get("kind") == "inference"
+            ]
+
+        return self._mutate_state(list_records)
 
     def resolve_inference(self, token: str | None) -> InferenceCredential | None:
         if not isinstance(token, str) or not token.strip():
             return None
         token_digest = self._digest(token.strip())
-        state = self._load_state()
-        changed = self._revoke_expired_inference_records(state)
-        for record in state["credentials"]:
-            if record.get("kind") != "inference" or record["state"] != "active":
-                continue
-            if hmac.compare_digest(record["token_digest"], token_digest):
-                if changed:
-                    self._save_state(state)
-                return self._inference_credential(record)
-        if changed:
-            self._save_state(state)
-        return None
+        def resolve_record(state: dict) -> InferenceCredential | None:
+            self._revoke_expired_inference_records(state)
+            for record in state["credentials"]:
+                if record.get("kind") != "inference" or record["state"] != "active":
+                    continue
+                if hmac.compare_digest(record["token_digest"], token_digest):
+                    return self._inference_credential(record)
+            return None
+
+        return self._mutate_state(resolve_record)
 
     def rotate_inference_credential(self, credential_id: str) -> InferenceCredential:
-        state = self._load_state()
-        predecessor = self._find_active_inference_record(state, credential_id)
         token = secrets.token_urlsafe(32)
         created_at = self._current_time()
-        replacement = {
-            "kind": "inference",
-            "credential_id": "infcred-" + secrets.token_urlsafe(12),
-            "label": predecessor["label"],
-            "endpoint_id": predecessor["endpoint_id"],
-            "model_alias": predecessor["model_alias"],
-            "owner_wallet": predecessor["owner_wallet"],
-            "token_digest": self._digest(token),
-            "fingerprint": self._fingerprint(token),
-            "state": "active",
-            "created_at": self._format_timestamp(created_at),
-            "expires_at": predecessor.get("expires_at"),
-            "last_used_at": None,
-            # Rotation must not strand the active zero-fee session.  The
-            # replacement credential has the same owner and endpoint, so the
-            # gateway can continue using that session without opening a
-            # second slot.
-            "session_id": predecessor.get("session_id"),
-        }
-        predecessor["state"] = "revoked"
-        state["credentials"].append(replacement)
-        self._save_state(state)
-        return self._inference_credential(replacement, token=token)
+        def rotate(state: dict) -> InferenceCredential:
+            predecessor = self._find_active_inference_record(state, credential_id)
+            replacement = {
+                "kind": "inference",
+                "credential_id": "infcred-" + secrets.token_urlsafe(12),
+                "label": predecessor["label"],
+                "endpoint_id": predecessor["endpoint_id"],
+                "model_alias": predecessor["model_alias"],
+                "owner_wallet": predecessor["owner_wallet"],
+                "token_digest": self._digest(token),
+                "fingerprint": self._fingerprint(token),
+                "state": "active",
+                "created_at": self._format_timestamp(created_at),
+                "expires_at": predecessor.get("expires_at"),
+                "last_used_at": None,
+                "session_id": predecessor.get("session_id"),
+            }
+            predecessor["state"] = "revoked"
+            state["credentials"].append(replacement)
+            return self._inference_credential(replacement, token=token)
+
+        return self._mutate_state(rotate)
 
     def bind_inference_session(self, credential_id: str, session_id: str) -> None:
-        state = self._load_state()
-        record = self._find_active_inference_record(state, credential_id)
-        record["session_id"] = self._normalize_identifier(session_id, "session id")
-        self._save_state(state)
+        normalized_session_id = self._normalize_identifier(session_id, "session id")
+        self._mutate_state(
+            lambda state: self._find_active_inference_record(state, credential_id).__setitem__(
+                "session_id", normalized_session_id
+            )
+        )
 
     def revoke_inference_credential(self, credential_id: str) -> bool:
-        state = self._load_state()
-        for record in state["credentials"]:
-            if (
-                record.get("kind") == "inference"
-                and record["credential_id"] == credential_id
-                and record["state"] == "active"
-            ):
-                record["state"] = "revoked"
-                self._save_state(state)
-                return True
-        return False
+        def revoke(state: dict) -> bool:
+            for record in state["credentials"]:
+                if (
+                    record.get("kind") == "inference"
+                    and record["credential_id"] == credential_id
+                    and record["state"] == "active"
+                ):
+                    record["state"] = "revoked"
+                    return True
+            return False
+
+        return self._mutate_state(revoke)
 
     def record_use(self, credential_id: str) -> None:
-        state = self._load_state()
-        for record in state["credentials"]:
-            if record["credential_id"] == credential_id and record["state"] == "active":
-                record["last_used_at"] = self._timestamp()
-                self._save_state(state)
-                return
+        def record(state: dict) -> None:
+            for item in state["credentials"]:
+                if item["credential_id"] == credential_id and item["state"] == "active":
+                    item["last_used_at"] = self._timestamp()
+                    return
+
+        self._mutate_state(record)
 
     def rotate_credential(self, credential_id: str) -> McpCredential:
-        state = self._load_state()
-        predecessor = self._find_active_record(state, credential_id)
         token = secrets.token_urlsafe(32)
         created_at = self._timestamp()
-        replacement = {
-            "kind": "mcp",
-            "credential_id": "mcpcred-" + secrets.token_urlsafe(12),
-            "label": predecessor["label"],
-            "scopes": predecessor["scopes"],
-            "auto_approved_scopes": predecessor.get("auto_approved_scopes", []),
-            "token_digest": self._digest(token),
-            "fingerprint": self._fingerprint(token),
-            "state": "active",
-            "created_at": created_at,
-            "last_used_at": None,
-        }
-        predecessor["state"] = "revoked"
-        state["credentials"].append(replacement)
-        self._save_state(state)
-        return self._credential(replacement, token=token)
+        def rotate(state: dict) -> McpCredential:
+            predecessor = self._find_active_record(state, credential_id)
+            replacement = {
+                "kind": "mcp",
+                "credential_id": "mcpcred-" + secrets.token_urlsafe(12),
+                "label": predecessor["label"],
+                "scopes": predecessor["scopes"],
+                "auto_approved_scopes": predecessor.get("auto_approved_scopes", []),
+                "token_digest": self._digest(token),
+                "fingerprint": self._fingerprint(token),
+                "state": "active",
+                "created_at": created_at,
+                "last_used_at": None,
+            }
+            predecessor["state"] = "revoked"
+            state["credentials"].append(replacement)
+            return self._credential(replacement, token=token)
+
+        return self._mutate_state(rotate)
 
     def update_scopes(
         self,
@@ -328,26 +329,28 @@ class McpCredentialStore:
         normalized_auto_approved_scopes = normalize_auto_approved_scopes(auto_approved_scopes)
         if not set(normalized_auto_approved_scopes).issubset(normalized_scopes):
             raise ValueError("MCP auto approval requires the corresponding credential scope")
-        state = self._load_state()
-        record = self._find_active_record(state, credential_id)
-        record["scopes"] = list(normalized_scopes)
-        record["auto_approved_scopes"] = list(normalized_auto_approved_scopes)
-        self._save_state(state)
-        return self._credential(record)
+        def update(state: dict) -> McpCredential:
+            record = self._find_active_record(state, credential_id)
+            record["scopes"] = list(normalized_scopes)
+            record["auto_approved_scopes"] = list(normalized_auto_approved_scopes)
+            return self._credential(record)
+
+        return self._mutate_state(update)
 
     def revoke_credential(self, credential_id: str) -> bool:
-        state = self._load_state()
-        for record in state["credentials"]:
-            if (
-                record.get("kind", "mcp") != "mcp"
-                or record["credential_id"] != credential_id
-                or record["state"] != "active"
-            ):
-                continue
-            record["state"] = "revoked"
-            self._save_state(state)
-            return True
-        return False
+        def revoke(state: dict) -> bool:
+            for record in state["credentials"]:
+                if (
+                    record.get("kind", "mcp") != "mcp"
+                    or record["credential_id"] != credential_id
+                    or record["state"] != "active"
+                ):
+                    continue
+                record["state"] = "revoked"
+                return True
+            return False
+
+        return self._mutate_state(revoke)
 
     def create_pairing_code(self, *, ttl_seconds: int) -> McpPairingCode:
         if ttl_seconds <= 0:
@@ -355,37 +358,53 @@ class McpCredentialStore:
         code = secrets.token_urlsafe(24)
         created_at = self._current_time()
         expires_at = created_at + timedelta(seconds=ttl_seconds)
-        state = self._load_state()
-        state["pairing"] = {
-            "code_digest": self._digest(code),
-            "created_at": self._format_timestamp(created_at),
-            "expires_at": self._format_timestamp(expires_at),
-        }
-        # A CLI code is a deliberate replacement for the less restrictive
-        # trusted-LAN enrollment window, never a second concurrent path.
-        state["dashboard_first_browser_claim"] = None
-        self._save_state(state)
+        def create(state: dict) -> None:
+            state["pairing"] = {
+                "code_digest": self._digest(code),
+                "created_at": self._format_timestamp(created_at),
+                "expires_at": self._format_timestamp(expires_at),
+            }
+            # A CLI code is a deliberate replacement for the less restrictive
+            # trusted-LAN enrollment window, never a second concurrent path.
+            state["dashboard_first_browser_claim"] = None
+
+        self._mutate_state(create)
         return McpPairingCode(code=code, expires_at=self._format_timestamp(expires_at))
 
     def consume_pairing_code(self, code: str | None) -> bool:
         if not isinstance(code, str) or not code.strip():
             return False
-        state = self._load_state()
-        pairing = state.get("pairing")
-        if not isinstance(pairing, dict):
+        return self._mutate_state(lambda state: self._consume_pairing_code(state, code))
+
+    def exchange_pairing_code_for_dashboard_session(
+        self,
+        code: str | None,
+        *,
+        session_id: str,
+        browser_key: str,
+        expires_at: str | None,
+        max_sessions: int,
+    ) -> bool:
+        """Consume one code and create its browser session as one transaction."""
+        if not session_id or not self._valid_browser_key(browser_key) or max_sessions < 1:
             return False
-        expires_at = self._parse_timestamp(pairing.get("expires_at"))
-        digest = pairing.get("code_digest")
-        valid = bool(
-            expires_at is not None
-            and expires_at > self._current_time()
-            and isinstance(digest, str)
-            and hmac.compare_digest(digest, self._digest(code.strip()))
-        )
-        if valid or expires_at is None or expires_at <= self._current_time():
-            state["pairing"] = None
-            self._save_state(state)
-        return valid
+
+        def exchange(state: dict) -> bool:
+            if not self._consume_pairing_code(state, code):
+                return False
+            self._prune_dashboard_sessions(state)
+            if len(state["dashboard_sessions"]) >= max_sessions:
+                return False
+            state["dashboard_sessions"].append(
+                {
+                    "session_digest": self._digest(session_id),
+                    "browser_key_digest": self._digest(browser_key),
+                    "expires_at": expires_at,
+                }
+            )
+            return True
+
+        return self._mutate_state(exchange)
 
     def open_first_dashboard_browser_claim(self, *, ttl_seconds: int) -> DashboardFirstBrowserClaim:
         """Allow exactly one explicitly-confirmed browser enrollment for a short period.
@@ -399,18 +418,19 @@ class McpCredentialStore:
             raise ValueError("first browser claim TTL must be positive")
         created_at = self._current_time()
         expires_at = created_at + timedelta(seconds=ttl_seconds)
-        state = self._load_state()
-        self._prune_dashboard_sessions(state)
-        if state["dashboard_sessions"]:
-            raise ValueError("cannot open first browser enrollment after a browser is already trusted")
-        # Conversely, an explicit first-browser choice invalidates a prior
-        # terminal code so the installer has one active enrollment method.
-        state["pairing"] = None
-        state["dashboard_first_browser_claim"] = {
-            "created_at": self._format_timestamp(created_at),
-            "expires_at": self._format_timestamp(expires_at),
-        }
-        self._save_state(state)
+        def open_claim(state: dict) -> None:
+            self._prune_dashboard_sessions(state)
+            if state["dashboard_sessions"]:
+                raise ValueError("cannot open first browser enrollment after a browser is already trusted")
+            # Conversely, an explicit first-browser choice invalidates a prior
+            # terminal code so the installer has one active enrollment method.
+            state["pairing"] = None
+            state["dashboard_first_browser_claim"] = {
+                "created_at": self._format_timestamp(created_at),
+                "expires_at": self._format_timestamp(expires_at),
+            }
+
+        self._mutate_state(open_claim)
         return DashboardFirstBrowserClaim(expires_at=self._format_timestamp(expires_at))
 
     def first_dashboard_browser_claim_expiry(self) -> str | None:
@@ -420,11 +440,6 @@ class McpCredentialStore:
         claim = state.get("dashboard_first_browser_claim")
         expires_at = self._parse_timestamp(claim.get("expires_at")) if isinstance(claim, dict) else None
         active = bool(not state["dashboard_sessions"] and expires_at is not None and expires_at > self._current_time())
-        if not active and claim is not None:
-            state["dashboard_first_browser_claim"] = None
-            self._save_state(state)
-        elif state["dashboard_sessions"]:
-            self._save_state(state)
         return self._format_timestamp(expires_at) if active and expires_at is not None else None
 
     def claim_first_dashboard_browser(
@@ -438,30 +453,30 @@ class McpCredentialStore:
         """Consume the first-browser window and store one browser-bound session."""
         if not session_id or not self._valid_browser_key(browser_key) or max_sessions < 1:
             return False
-        state = self._load_state()
-        self._prune_dashboard_sessions(state)
-        claim = state.get("dashboard_first_browser_claim")
-        claim_expires_at = self._parse_timestamp(claim.get("expires_at")) if isinstance(claim, dict) else None
-        valid = bool(
-            not state["dashboard_sessions"]
-            and claim_expires_at is not None
-            and claim_expires_at > self._current_time()
-        )
-        if not valid:
-            if claim is not None:
-                state["dashboard_first_browser_claim"] = None
-                self._save_state(state)
-            return False
-        state["dashboard_sessions"].append(
-            {
-                "session_digest": self._digest(session_id),
-                "browser_key_digest": self._digest(browser_key),
-                "expires_at": expires_at,
-            }
-        )
-        state["dashboard_first_browser_claim"] = None
-        self._save_state(state)
-        return True
+        def claim(state: dict) -> bool:
+            self._prune_dashboard_sessions(state)
+            first_claim = state.get("dashboard_first_browser_claim")
+            claim_expires_at = self._parse_timestamp(first_claim.get("expires_at")) if isinstance(first_claim, dict) else None
+            valid = bool(
+                not state["dashboard_sessions"]
+                and claim_expires_at is not None
+                and claim_expires_at > self._current_time()
+            )
+            if not valid:
+                if first_claim is not None:
+                    state["dashboard_first_browser_claim"] = None
+                return False
+            state["dashboard_sessions"].append(
+                {
+                    "session_digest": self._digest(session_id),
+                    "browser_key_digest": self._digest(browser_key),
+                    "expires_at": expires_at,
+                }
+            )
+            state["dashboard_first_browser_claim"] = None
+            return True
+
+        return self._mutate_state(claim)
 
     def create_dashboard_browser_session(
         self,
@@ -474,20 +489,20 @@ class McpCredentialStore:
         """Persist a browser-bound dashboard session without storing either secret."""
         if not session_id or not self._valid_browser_key(browser_key) or max_sessions < 1:
             return False
-        state = self._load_state()
-        self._prune_dashboard_sessions(state)
-        if len(state["dashboard_sessions"]) >= max_sessions:
-            self._save_state(state)
-            return False
-        state["dashboard_sessions"].append(
-            {
-                "session_digest": self._digest(session_id),
-                "browser_key_digest": self._digest(browser_key),
-                "expires_at": expires_at,
-            }
-        )
-        self._save_state(state)
-        return True
+        def create(state: dict) -> bool:
+            self._prune_dashboard_sessions(state)
+            if len(state["dashboard_sessions"]) >= max_sessions:
+                return False
+            state["dashboard_sessions"].append(
+                {
+                    "session_digest": self._digest(session_id),
+                    "browser_key_digest": self._digest(browser_key),
+                    "expires_at": expires_at,
+                }
+            )
+            return True
+
+        return self._mutate_state(create)
 
     def authorize_dashboard_browser_session(self, *, session_id: str | None, browser_key: str | None) -> bool:
         if not isinstance(session_id, str) or not self._valid_browser_key(browser_key):
@@ -501,7 +516,6 @@ class McpCredentialStore:
             and hmac.compare_digest(record.get("browser_key_digest", ""), browser_key_digest)
             for record in state["dashboard_sessions"]
         )
-        self._save_state(state)
         return valid
 
     def dashboard_browser_session_expiry(self, *, session_id: str | None, browser_key: str | None) -> str | None:
@@ -515,28 +529,27 @@ class McpCredentialStore:
             if hmac.compare_digest(record.get("session_digest", ""), session_digest) and hmac.compare_digest(
                 record.get("browser_key_digest", ""), browser_key_digest
             ):
-                self._save_state(state)
                 return record.get("expires_at")
-        self._save_state(state)
         return None
 
     def revoke_dashboard_browser_session(self, *, session_id: str | None, browser_key: str | None) -> bool:
         if not isinstance(session_id, str) or not self._valid_browser_key(browser_key):
             return False
-        state = self._load_state()
-        session_digest = self._digest(session_id)
-        browser_key_digest = self._digest(browser_key)
-        before = len(state["dashboard_sessions"])
-        state["dashboard_sessions"] = [
-            record
-            for record in state["dashboard_sessions"]
-            if not (
-                hmac.compare_digest(record.get("session_digest", ""), session_digest)
-                and hmac.compare_digest(record.get("browser_key_digest", ""), browser_key_digest)
-            )
-        ]
-        self._save_state(state)
-        return len(state["dashboard_sessions"]) != before
+        def revoke(state: dict) -> bool:
+            session_digest = self._digest(session_id)
+            browser_key_digest = self._digest(browser_key)
+            before = len(state["dashboard_sessions"])
+            state["dashboard_sessions"] = [
+                record
+                for record in state["dashboard_sessions"]
+                if not (
+                    hmac.compare_digest(record.get("session_digest", ""), session_digest)
+                    and hmac.compare_digest(record.get("browser_key_digest", ""), browser_key_digest)
+                )
+            ]
+            return len(state["dashboard_sessions"]) != before
+
+        return self._mutate_state(revoke)
 
     def _load_state(self) -> dict:
         # Pairing codes are intentionally minted by a separate host-local CLI
@@ -590,6 +603,71 @@ class McpCredentialStore:
             raise SecretManagerError("MCP first dashboard browser claim state is invalid")
         return state
 
+    def _mutate_state(self, operation):
+        """Apply a state mutation under the secret backend's process lock."""
+        import json
+
+        def mutate(values: dict[str, bytes]):
+            raw = values.get(MCP_ACCESS_STATE_HANDLE)
+            if raw is None:
+                state = {
+                    "version": _STATE_VERSION,
+                    "credentials": [],
+                    "pairing": None,
+                    "legacy_imported": False,
+                    "dashboard_sessions": [],
+                    "dashboard_first_browser_claim": None,
+                }
+            else:
+                try:
+                    state = json.loads(raw.decode("utf-8"))
+                except (UnicodeDecodeError, ValueError) as exc:
+                    raise SecretManagerError("MCP credential state is invalid") from exc
+                if not isinstance(state, dict) or state.get("version") != _STATE_VERSION:
+                    raise SecretManagerError("MCP credential state version is unsupported")
+                credentials = state.get("credentials")
+                if not isinstance(credentials, list) or any(not isinstance(item, dict) for item in credentials):
+                    raise SecretManagerError("MCP credential state is invalid")
+                state.setdefault("pairing", None)
+                state.setdefault("legacy_imported", False)
+                state.setdefault("dashboard_sessions", [])
+                state.setdefault("dashboard_first_browser_claim", None)
+                if state["pairing"] is not None and not isinstance(state["pairing"], dict):
+                    raise SecretManagerError("MCP credential pairing state is invalid")
+                if not isinstance(state["dashboard_sessions"], list) or any(
+                    not isinstance(item, dict) for item in state["dashboard_sessions"]
+                ):
+                    raise SecretManagerError("MCP dashboard browser session state is invalid")
+                if state["dashboard_first_browser_claim"] is not None and not isinstance(
+                    state["dashboard_first_browser_claim"], dict
+                ):
+                    raise SecretManagerError("MCP first dashboard browser claim state is invalid")
+            result = operation(state)
+            values[MCP_ACCESS_STATE_HANDLE] = json.dumps(
+                state, sort_keys=True, separators=(",", ":")
+            ).encode("utf-8")
+            return result
+
+        return self._secret_manager.mutate(mutate)
+
+    def _consume_pairing_code(self, state: dict, code: str | None) -> bool:
+        pairing = state.get("pairing")
+        if not isinstance(pairing, dict):
+            return False
+        expires_at = self._parse_timestamp(pairing.get("expires_at"))
+        digest = pairing.get("code_digest")
+        valid = bool(
+            isinstance(code, str)
+            and code.strip()
+            and expires_at is not None
+            and expires_at > self._current_time()
+            and isinstance(digest, str)
+            and hmac.compare_digest(digest, self._digest(code.strip()))
+        )
+        if valid or expires_at is None or expires_at <= self._current_time():
+            state["pairing"] = None
+        return valid
+
     def _prune_dashboard_sessions(self, state: dict) -> None:
         now = self._current_time()
         state["dashboard_sessions"] = [
@@ -614,13 +692,9 @@ class McpCredentialStore:
         cannot be preserved as an operator-selected permission.  Upgrade only
         that exact legacy value, never a broader historical scope set.
         """
-        changed = False
         for record in state["credentials"]:
             if record.get("scopes") == ["CONTROL_SESSION"]:
                 record["scopes"] = list(DEFAULT_AGENT_READ_SCOPES)
-                changed = True
-        if changed:
-            self._save_state(state)
 
     @staticmethod
     def _find_active_record(state: dict, credential_id: str) -> dict:

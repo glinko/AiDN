@@ -61,13 +61,12 @@ class DashboardAccessService:
     ) -> DashboardAccessSession | None:
         if duration not in _DURATION_SECONDS or not isinstance(browser_key, str) or not (32 <= len(browser_key) <= 128):
             return None
-        if not self._store.consume_pairing_code(code):
-            return None
         session_id = "das-" + secrets.token_urlsafe(24)
         seconds = _DURATION_SECONDS[duration]
         expires_at = None if seconds is None else self._current_time() + timedelta(seconds=seconds)
         expiry_text = None if expires_at is None else self._format_timestamp(expires_at)
-        if not self._store.create_dashboard_browser_session(
+        if not self._store.exchange_pairing_code_for_dashboard_session(
+            code,
             session_id=session_id,
             browser_key=browser_key,
             expires_at=expiry_text,

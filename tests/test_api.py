@@ -2246,6 +2246,28 @@ def test_operator_dashboard_resources_endpoint_returns_broker_projection() -> No
     assert "queue_wait" in body["metrics"]
 
 
+def test_operator_dashboard_status_summary_is_bounded_and_agent_safe() -> None:
+    service = _service()
+    client = TestClient(build_app(service=service))
+
+    response = client.get("/operators/dashboard/status/summary")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["node"] == {"node_id": service.node_id}
+    assert body["runtimes"] == [
+        {
+            "runtime_id": "rt-1",
+            "bundle_id": "whisper-a",
+            "status": "running",
+            "health_status": "healthy",
+        }
+    ]
+    assert body["queue"] == {"queued": 0, "active": 0, "completed": 0, "failed": 0}
+    assert "tasks" not in body
+    assert "runtime_protocol_requests" not in body
+
+
 def test_operator_dashboard_market_endpoint_marks_own_and_external_candidates() -> None:
     hypervisor = _service(whisper_endpoint="http://127.0.0.1:9000")
     registry = RegistryService()

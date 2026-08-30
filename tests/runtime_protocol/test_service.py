@@ -1317,6 +1317,44 @@ def test_terminal_runtime_request_persistence_elides_replay_payload(tmp_path) ->
     assert persisted_request.request_payload_hash == request.request_payload_hash
 
 
+def test_snapshot_retains_active_requests_and_bounds_terminal_history(tmp_path) -> None:
+    binding = _binding()
+    state_store = FileStateStore(tmp_path / "runtime-bounded-history.json")
+    store = RuntimeProtocolStore(state_store)
+    service = _service(
+        binding,
+        {binding.runtime_id: _route(binding)},
+        store=store,
+    )
+    _, connection = _connect(service, binding)
+    request = _execute_request(binding, value="large transcript")
+    service.register_execute_request(connection.runtime_connection_id, request)
+    base = store.requests[request.request_id]
+
+    for index in range(257):
+        request_id = f"terminal-{index:03d}"
+        terminal_request = base.request.model_copy(
+            update={"request_id": request_id, "idempotency_key": request_id}
+        )
+        store.requests[request_id] = base.model_copy(
+            update={
+                "request_id": request_id,
+                "request": terminal_request,
+                "request_state": "COMPLETED",
+                "updated_at": (
+                    datetime(2026, 8, 29, tzinfo=UTC) + timedelta(seconds=index)
+                ).isoformat(),
+            }
+        )
+
+    request_ids = store.snapshot_request_ids()
+
+    assert request.request_id in request_ids
+    assert "terminal-000" not in request_ids
+    assert "terminal-256" in request_ids
+    assert len(request_ids) == 257
+
+
 def test_recovery_requires_explicit_route_rebind(tmp_path) -> None:
     binding = _binding()
     route_holder = {binding.runtime_id: _route(binding)}

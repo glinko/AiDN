@@ -4,6 +4,7 @@ import base64
 import os
 import subprocess
 import sys
+import threading
 from datetime import UTC, datetime, timedelta
 
 from aidn_hypervisor.mcp.credentials import McpCredentialStore
@@ -148,6 +149,56 @@ def test_access_session_requires_one_pairing_exchange_and_expires(tmp_path) -> N
     assert access.exchange_pairing_code(pairing.code, browser_key=browser_key) is None
     clock.advance(seconds=601)
     assert access.authorize(session.session_id, browser_key=browser_key) is False
+
+
+def test_pairing_exchange_is_atomic_and_authorization_does_not_rewrite_secret_file(tmp_path) -> None:
+    store = McpCredentialStore(secret_manager=_manager(tmp_path))
+    access = DashboardAccessService(store=store)
+    browser_key = "atomic-browser-key-000000000000000000000000000000000000000000"
+    pairing = access.create_pairing(ttl_seconds=600)
+
+    session = access.exchange_pairing_code(pairing.code, browser_key=browser_key)
+
+    assert session is not None
+    secret_path = tmp_path / "secrets.json"
+    before = secret_path.read_bytes()
+    assert access.authorize(session.session_id, browser_key=browser_key) is True
+    assert secret_path.read_bytes() == before
+    assert access.exchange_pairing_code(pairing.code, browser_key=browser_key) is None
+
+
+def test_file_secret_manager_serializes_independent_process_style_mutations(tmp_path) -> None:
+    """Two manager instances must not lose each other's fresh writes."""
+    key = os.urandom(32)
+    path = tmp_path / "secrets.json"
+    first = FileSecretManager(path=path, master_key=key)
+    second = FileSecretManager(path=path, master_key=key)
+    first_entered = threading.Event()
+    second_entered = threading.Event()
+    release_first = threading.Event()
+
+    def mutate_first(values: dict[str, bytes]) -> None:
+        values["secret://first"] = b"one"
+        first_entered.set()
+        assert release_first.wait(timeout=2)
+
+    def mutate_second(values: dict[str, bytes]) -> None:
+        second_entered.set()
+        values["secret://second"] = b"two"
+
+    first_thread = threading.Thread(target=lambda: first.mutate(mutate_first))
+    second_thread = threading.Thread(target=lambda: second.mutate(mutate_second))
+    first_thread.start()
+    assert first_entered.wait(timeout=2)
+    second_thread.start()
+    assert not second_entered.wait(timeout=0.1)
+    release_first.set()
+    first_thread.join(timeout=2)
+    second_thread.join(timeout=2)
+
+    restored = FileSecretManager(path=path, master_key=key)
+    assert restored.get("secret://first") == b"one"
+    assert restored.get("secret://second") == b"two"
 
 
 def test_access_session_can_be_persistent_and_survives_service_restart(tmp_path) -> None:
