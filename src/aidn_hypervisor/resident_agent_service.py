@@ -120,10 +120,14 @@ class ResidentAgentService:
         self._restart_count = 0
         self._last_restart_at: str | None = None
         self._action_policy: dict[str, Any] = {
-            "version": 1,
+            "version": 2,
             "auto_actions": ["provider.health_check"],
             "approval_actions": ["runtime.drain", "runtime.restart", "runtime.stop"],
             "max_actions_per_hour": 12,
+            # Explicitly operator-enabled lab switch.  It is intentionally
+            # persisted with the node state rather than inferred from a prompt
+            # or model output, so its status is always visible in the Dashboard.
+            "test_unrestricted": False,
         }
 
     @property
@@ -250,14 +254,22 @@ class ResidentAgentService:
     def action_catalog(self) -> list[dict[str, Any]]:
         with self._lock:
             policy = deepcopy(self._action_policy)
-        return [{"action": name, **deepcopy(spec), "policy": "AUTO" if name in policy["auto_actions"] else "OPERATOR_CONFIRMATION" if name in policy["approval_actions"] else "DISABLED"} for name, spec in ACTION_DEFINITIONS.items()]
+        unrestricted = bool(policy.get("test_unrestricted"))
+        return [
+            {
+                "action": name,
+                **deepcopy(spec),
+                "policy": "AUTO" if unrestricted or name in policy["auto_actions"] else "OPERATOR_CONFIRMATION" if name in policy["approval_actions"] else "DISABLED",
+            }
+            for name, spec in ACTION_DEFINITIONS.items()
+        ]
 
     def action_policy(self) -> dict[str, Any]:
         with self._lock:
             policy = deepcopy(self._action_policy)
         return {**policy, "catalog": self.action_catalog()}
 
-    def configure_action_policy(self, *, auto_actions=None, approval_actions=None, max_actions_per_hour=None, persist: bool = True) -> dict[str, Any]:
+    def configure_action_policy(self, *, auto_actions=None, approval_actions=None, max_actions_per_hour=None, test_unrestricted=None, persist: bool = True) -> dict[str, Any]:
         auto = list(auto_actions) if auto_actions is not None else None
         approval = list(approval_actions) if approval_actions is not None else None
         for values in (auto, approval):
@@ -266,6 +278,8 @@ class ResidentAgentService:
         if auto is not None and approval is not None and set(auto) & set(approval):
             raise ValueError("an action cannot be both automatic and approval-gated")
         with self._lock:
+            if test_unrestricted is not None:
+                self._action_policy["test_unrestricted"] = bool(test_unrestricted)
             if auto is not None:
                 self._action_policy["auto_actions"] = [str(value) for value in auto]
             if approval is not None:
@@ -293,11 +307,21 @@ class ResidentAgentService:
             return {"allowed": False, "code": "ACTION_NOT_ALLOWED", "reason": "action is not in the bounded catalog", **common}
         if not target:
             return {"allowed": False, "code": "ACTION_TARGET_REQUIRED", "reason": "target_id is required", **common}
-        if int(automation_depth) > MAX_AUTOMATION_DEPTH:
+        with self._lock:
+            test_unrestricted = bool(self._action_policy.get("test_unrestricted"))
+        if not test_unrestricted and int(automation_depth) > MAX_AUTOMATION_DEPTH:
             return {"allowed": False, "code": "AUTOMATION_DEPTH_EXCEEDED", "reason": "autonomous action depth is bounded", "automation_depth": int(automation_depth), **common}
         with self._lock:
             if not self._enabled:
                 return {"allowed": False, "code": "STEWARD_DISABLED", "reason": "Resident Steward is disabled", **common}
+            if test_unrestricted:
+                return {
+                    "allowed": True,
+                    "code": "TEST_UNRESTRICTED",
+                    "reason": "operator enabled unrestricted Steward test mode",
+                    "automation_depth": int(automation_depth),
+                    **common,
+                }
             cutoff = time.time() - 3600
             recent_actions = [
                 item for item in self._action_history
@@ -349,8 +373,18 @@ class ResidentAgentService:
     def decide(self, goal: str, *, event_id: str | None = None, event_type: str | None = None, correlation_id: str | None = None, causation_id: str | None = None, automation_depth: int = 0) -> dict[str, Any]:
         text = str(goal or "").strip().lower()
         lineage = self._lineage(event_id=event_id, event_type=event_type, correlation_id=correlation_id, causation_id=causation_id)
-        if int(automation_depth) > MAX_AUTOMATION_DEPTH:
+        with self._lock:
+            test_unrestricted = bool(self._action_policy.get("test_unrestricted"))
+        if not test_unrestricted and int(automation_depth) > MAX_AUTOMATION_DEPTH:
             return {"mode": "AUTOMATION_BLOCKED", "requires_approval": True, "lineage": lineage, "authority": {"can_mutate_state": False}}
+        if test_unrestricted:
+            return {
+                "mode": "TEST_UNRESTRICTED",
+                "requires_approval": False,
+                "lineage": lineage,
+                "recommendation": {"tool": "aidn.steward.execute_action", "mutating": True},
+                "authority": {"can_mutate_state": True},
+            }
         if any(word in text for word in ("install", "publish", "delete", "remove", "restart", "stop", "drain", "activate", "configure", "download")):
             return {
                 "mode": "POLICY_CONTROLLED",
@@ -384,7 +418,7 @@ class ResidentAgentService:
             self._cooldowns = {tuple(key.split("\u0000", 1)): value for key, value in raw_cooldowns.items() if isinstance(key, str) and "\u0000" in key}
             self._action_history = deque([dict(item) for item in data.get("action_history", []) if isinstance(item, dict)], maxlen=256)
             if isinstance(data.get("action_policy"), dict):
-                self._action_policy.update({key: value for key, value in data["action_policy"].items() if key in {"version", "auto_actions", "approval_actions", "max_actions_per_hour"}})
+                self._action_policy.update({key: value for key, value in data["action_policy"].items() if key in {"version", "auto_actions", "approval_actions", "max_actions_per_hour", "test_unrestricted"}})
             self._last_action, self._last_heartbeat = data.get("last_action"), data.get("last_heartbeat")
             self._restart_count += 1
             self._last_restart_at = _now()

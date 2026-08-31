@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, Cpu, Pause, Play, RefreshCw, Save, ShieldCheck, Square, Zap } from 'lucide-react'
+import { Check, Cpu, FlaskConical, Pause, Play, RefreshCw, Save, ShieldCheck, Square, Zap } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -25,7 +25,7 @@ type StewardPolicyPanelProps = {
   inference: ResidentInference | undefined
   isFetching: boolean
   onRefresh: () => void
-  onSavePolicy: (payload: { auto_actions: string[]; approval_actions: string[]; max_actions_per_hour: number }) => Promise<unknown>
+  onSavePolicy: (payload: { auto_actions: string[]; approval_actions: string[]; max_actions_per_hour: number; test_unrestricted: boolean }) => Promise<unknown>
   onToggle: (enabled: boolean) => Promise<unknown>
   onPrepare: (payload: InferencePreparePayload) => Promise<unknown>
   onStart: () => Promise<unknown>
@@ -53,6 +53,7 @@ export function StewardPolicyPanel({ status, policy, inference, isFetching, onRe
   const [autoActions, setAutoActions] = useState<string[]>(policy?.auto_actions ?? [])
   const [approvalActions, setApprovalActions] = useState<string[]>(policy?.approval_actions ?? [])
   const [maxActions, setMaxActions] = useState(String(policy?.max_actions_per_hour ?? 12))
+  const [testUnrestricted, setTestUnrestricted] = useState(Boolean(policy?.test_unrestricted))
   const [modelPath, setModelPath] = useState(inference?.model_path ?? status?.model.path ?? '')
   const [sourceUrl, setSourceUrl] = useState('')
   const [profile, setProfile] = useState<'CPU_RESIDENT' | 'IGPU_RESIDENT' | 'GPU_RESIDENT' | 'GPU_BURST'>((status?.execution.profile as 'CPU_RESIDENT' | 'IGPU_RESIDENT' | 'GPU_RESIDENT' | 'GPU_BURST') || 'CPU_RESIDENT')
@@ -65,7 +66,8 @@ export function StewardPolicyPanel({ status, policy, inference, isFetching, onRe
     setAutoActions(policy?.auto_actions ?? [])
     setApprovalActions(policy?.approval_actions ?? [])
     setMaxActions(String(policy?.max_actions_per_hour ?? 12))
-  }, [policy?.auto_actions, policy?.approval_actions, policy?.max_actions_per_hour])
+    setTestUnrestricted(Boolean(policy?.test_unrestricted))
+  }, [policy?.auto_actions, policy?.approval_actions, policy?.max_actions_per_hour, policy?.test_unrestricted])
 
   useEffect(() => {
     setModelPath(inference?.model_path ?? status?.model.path ?? '')
@@ -123,12 +125,16 @@ export function StewardPolicyPanel({ status, policy, inference, isFetching, onRe
         </section>
 
         <section className="rounded-xl border border-border/80 bg-[#07111d] p-4" aria-label="Steward action policy">
-          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow">Action boundary</p><p className="mt-1 text-sm font-semibold text-white">Automation policy</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Every action remains allow-listed. Approval-gated actions still require an explicit plan reference.</p></div><label className="grid min-w-36 gap-1.5"><span className="eyebrow">Max actions / hour</span><input type="number" min={1} max={10000} value={maxActions} onChange={(event) => setMaxActions(event.target.value)} className="min-h-11 w-full rounded-lg border border-input bg-[#091725] px-3 font-mono text-sm text-white outline-none focus:border-emerald-300" /></label></div>
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="eyebrow">Action boundary</p><p className="mt-1 text-sm font-semibold text-white">Automation policy</p><p className="mt-1 text-xs leading-5 text-muted-foreground">Choose individual rules, or enable the lab switch to run every available Steward action without approvals.</p></div><label className="grid min-w-36 gap-1.5"><span className="eyebrow">Max actions / hour</span><input type="number" min={1} max={10000} disabled={testUnrestricted} value={maxActions} onChange={(event) => setMaxActions(event.target.value)} className="min-h-11 w-full rounded-lg border border-input bg-[#091725] px-3 font-mono text-sm text-white outline-none focus:border-emerald-300 disabled:cursor-not-allowed disabled:opacity-50" /></label></div>
+          <div className={cn('mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-3', testUnrestricted ? 'border-amber-300/40 bg-amber-300/[0.08]' : 'border-border/70 bg-[#091725]')}>
+            <div className="min-w-0"><p className={cn('text-sm font-semibold', testUnrestricted ? 'text-amber-100' : 'text-slate-100')}>Unrestricted test mode</p><p className={cn('mt-1 max-w-2xl text-xs leading-5', testUnrestricted ? 'text-amber-50/85' : 'text-slate-400')}>For this test node, all available Steward actions run automatically. Approval, rate, cooldown, and action-depth gates are disabled until you turn this mode off.</p></div>
+            <Button type="button" variant={testUnrestricted ? 'default' : 'outline'} className={cn('min-h-11 shrink-0', testUnrestricted ? 'bg-amber-300 text-[#221500] hover:bg-amber-200' : 'border-amber-300/35 bg-[#091725] text-amber-100')} aria-pressed={testUnrestricted} onClick={() => setTestUnrestricted((current) => !current)}><FlaskConical />{testUnrestricted ? 'Test access ON' : 'Enable test access'}</Button>
+          </div>
           <div className="mt-4 divide-y divide-border/70 rounded-lg border border-border/70">{catalog.map((entry) => { const mode = actionMode(entry.action, autoActions, approvalActions); return <div key={entry.action} className="grid gap-3 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"><div className="min-w-0"><p className="text-sm font-medium text-slate-100">{entry.label || labelForAction(entry.action)}</p><p className="mt-1 text-xs leading-5 text-slate-500">{entry.guard_only ? 'Internal safety guard: visible for audit, but it cannot be granted directly.' : (entry.detail || 'Bounded Resident Steward action.')}</p><p className="mt-1 font-mono text-[10px] text-slate-600">{entry.action}</p></div>{entry.guard_only ? <Badge variant="outline" className="h-8 justify-center border-slate-300/30 bg-slate-300/10 px-3 font-mono text-[10px] uppercase text-slate-300">Guarded</Badge> : <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label={`${entry.label || entry.action} policy`}>
-            {(['AUTO', 'APPROVAL', 'DISABLED'] as const).map((option) => <button key={option} type="button" role="radio" aria-checked={mode === option} className={cn('min-h-11 rounded-lg border px-3 text-[10px] font-semibold tracking-[0.08em] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300', mode === option ? option === 'AUTO' ? 'border-emerald-300/40 bg-emerald-300/15 text-emerald-100' : option === 'APPROVAL' ? 'border-amber-300/40 bg-amber-300/15 text-amber-100' : 'border-slate-300/35 bg-slate-300/10 text-slate-200' : 'border-border bg-[#091725] text-slate-500 hover:text-slate-200')} onClick={() => setMode(entry.action, option)}>{option === 'APPROVAL' ? 'ASK' : option === 'DISABLED' ? 'DENY' : 'AUTO'}</button>)}
+            {(['AUTO', 'APPROVAL', 'DISABLED'] as const).map((option) => <button key={option} type="button" role="radio" aria-checked={testUnrestricted || mode === option} disabled={testUnrestricted} className={cn('min-h-11 rounded-lg border px-3 text-[10px] font-semibold tracking-[0.08em] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 disabled:cursor-not-allowed disabled:opacity-50', (testUnrestricted || mode === option) ? option === 'AUTO' || testUnrestricted ? 'border-emerald-300/40 bg-emerald-300/15 text-emerald-100' : option === 'APPROVAL' ? 'border-amber-300/40 bg-amber-300/15 text-amber-100' : 'border-slate-300/35 bg-slate-300/10 text-slate-200' : 'border-border bg-[#091725] text-slate-500 hover:text-slate-200')} onClick={() => setMode(entry.action, option)}>{option === 'APPROVAL' ? 'ASK' : option === 'DISABLED' ? 'DENY' : 'AUTO'}</button>)}
           </div>}</div> })}</div>
-          <div className="mt-3 rounded-lg border border-cyan-300/15 bg-cyan-300/[0.04] px-3 py-2 text-xs leading-5 text-cyan-100/80">AUTO runs this reviewed action after the Hypervisor validates its target. ASK shows its exact plan and waits for one confirmation. DENY prevents it. None of these choices grants access to secrets or arbitrary shell commands.</div>
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-slate-500">Automatic: {autoActions.length} · Approval: {approvalActions.length} · Disabled: {Math.max(0, configurableCatalog.length - autoActions.length - approvalActions.length)} · Guarded: {catalog.length - configurableCatalog.length}</p><Button className="min-h-11 bg-emerald-300 text-[#06121d] hover:bg-emerald-200" disabled={busy === 'policy'} onClick={() => void run('policy', () => onSavePolicy({ auto_actions: autoActions, approval_actions: approvalActions, max_actions_per_hour: Math.max(1, Number(maxActions) || 1) }), 'Steward policy saved.')}>{busy === 'policy' ? <Zap className="animate-pulse" /> : <Save />}{busy === 'policy' ? 'Saving…' : 'Save policy'}</Button></div>
+          <div className="mt-3 rounded-lg border border-cyan-300/15 bg-cyan-300/[0.04] px-3 py-2 text-xs leading-5 text-cyan-100/80">AUTO runs the available action immediately. ASK shows its exact plan and waits for one confirmation. DENY prevents it. Test mode applies AUTO to every available action and skips the operational gates listed above.</div>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-slate-500">{testUnrestricted ? `Test mode: ${configurableCatalog.length} available actions automatic` : `Automatic: ${autoActions.length} · Approval: ${approvalActions.length} · Disabled: ${Math.max(0, configurableCatalog.length - autoActions.length - approvalActions.length)}`} · Guarded: {catalog.length - configurableCatalog.length}</p><Button className="min-h-11 bg-emerald-300 text-[#06121d] hover:bg-emerald-200" disabled={busy === 'policy'} onClick={() => void run('policy', () => onSavePolicy({ auto_actions: autoActions, approval_actions: approvalActions, max_actions_per_hour: Math.max(1, Number(maxActions) || 1), test_unrestricted: testUnrestricted }), testUnrestricted ? 'Unrestricted Steward test mode enabled.' : 'Steward policy saved.')}>{busy === 'policy' ? <Zap className="animate-pulse" /> : <Save />}{busy === 'policy' ? 'Saving…' : testUnrestricted ? 'Apply test access' : 'Save policy'}</Button></div>
         </section>
 
         <section className="min-w-0 overflow-hidden rounded-xl border border-border/80 bg-[#07111d] p-4" aria-label="Steward local reasoning model">

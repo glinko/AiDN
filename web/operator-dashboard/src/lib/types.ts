@@ -347,6 +347,7 @@ const stewardActionPolicySchema = z.object({
   auto_actions: z.array(z.string()).catch([]),
   approval_actions: z.array(z.string()).catch([]),
   max_actions_per_hour: numberValue,
+  test_unrestricted: z.boolean().catch(false),
   catalog: z.array(stewardActionSchema).catch([]),
 }).passthrough()
 

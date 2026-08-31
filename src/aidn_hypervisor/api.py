@@ -241,13 +241,14 @@ class ResidentAgentActionExecuteRequest(BaseModel):
 
 
 class ResidentAgentActionPolicyRequest(BaseModel):
-    """Operator-controlled allow-list for Steward automation."""
+    """Operator-controlled policy for the locally running Steward."""
 
     model_config = ConfigDict(extra="forbid")
 
     auto_actions: list[str] | None = Field(default=None, max_length=32)
     approval_actions: list[str] | None = Field(default=None, max_length=32)
     max_actions_per_hour: int | None = Field(default=None, ge=1, le=10_000)
+    test_unrestricted: bool | None = None
 
 
 class ReasoningProviderRegisterRequest(BaseModel):
@@ -2163,6 +2164,7 @@ def build_api_router(
                 auto_actions=payload.auto_actions,
                 approval_actions=payload.approval_actions,
                 max_actions_per_hour=payload.max_actions_per_hour,
+                test_unrestricted=payload.test_unrestricted,
             )
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error

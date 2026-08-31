@@ -182,6 +182,33 @@ def test_steward_action_guard_blocks_depth_and_restores_cooldown() -> None:
     assert replay["code"] == "ACTION_COOLDOWN_ACTIVE"
 
 
+def test_unrestricted_test_mode_makes_all_available_actions_automatic() -> None:
+    steward = ResidentAgentService(node_id="node-1", enabled=True)
+
+    policy = steward.configure_action_policy(test_unrestricted=True, persist=False)
+    guarded = steward.guard_action(
+        "runtime.restart",
+        target_id="runtime-1",
+        automation_depth=99,
+        cooldown_seconds=3600,
+        persist=False,
+    )
+    repeated = steward.guard_action(
+        "runtime.restart",
+        target_id="runtime-1",
+        automation_depth=99,
+        cooldown_seconds=3600,
+        persist=False,
+    )
+
+    assert policy["test_unrestricted"] is True
+    assert {item["policy"] for item in policy["catalog"]} == {"AUTO"}
+    assert guarded["allowed"] is True
+    assert guarded["code"] == "TEST_UNRESTRICTED"
+    assert repeated["allowed"] is True
+    assert steward.decide("Restart the provider", automation_depth=99)["mode"] == "TEST_UNRESTRICTED"
+
+
 def test_steward_decision_derives_event_lineage() -> None:
     steward = ResidentAgentService(node_id="node-1", enabled=True)
     bus = InternalEventBus(hypervisor_id="node-1")

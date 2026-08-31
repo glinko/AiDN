@@ -1180,11 +1180,12 @@ class HypervisorService:
     def resident_agent_action_policy(self) -> dict:
         return self._resident_agent_service.action_policy()
 
-    def configure_resident_agent_action_policy(self, *, auto_actions=None, approval_actions=None, max_actions_per_hour=None) -> dict:
+    def configure_resident_agent_action_policy(self, *, auto_actions=None, approval_actions=None, max_actions_per_hour=None, test_unrestricted=None) -> dict:
         return self._resident_agent_service.configure_action_policy(
             auto_actions=auto_actions,
             approval_actions=approval_actions,
             max_actions_per_hour=max_actions_per_hour,
+            test_unrestricted=test_unrestricted,
         )
 
     def _resident_agent_action_plan(self, action: str, target_id: str, **kwargs) -> dict:
@@ -1192,7 +1193,7 @@ class HypervisorService:
         item = next((entry for entry in policy.get("catalog", []) if entry.get("action") == str(action)), None)
         if not item or item.get("guard_only"):
             raise ValueError("Resident Steward action is not executable")
-        mode = "AUTO" if action in policy.get("auto_actions", []) else "OPERATOR_CONFIRMATION" if action in policy.get("approval_actions", []) else "DISABLED"
+        mode = "AUTO" if policy.get("test_unrestricted") or action in policy.get("auto_actions", []) else "OPERATOR_CONFIRMATION" if action in policy.get("approval_actions", []) else "DISABLED"
         if mode == "DISABLED":
             raise ValueError("Resident Steward action is disabled by policy")
         lineage = self._resident_agent_service._lineage(

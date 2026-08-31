@@ -11883,6 +11883,14 @@ def test_operator_steward_policy_and_inference_read_models_are_explicit() -> Non
     assert updated.json()["approval_actions"] == ["provider.health_check"]
     assert updated.json()["max_actions_per_hour"] == 4
 
+    unrestricted = client.post(
+        "/operators/dashboard/steward/action-policy",
+        json={"test_unrestricted": True},
+    )
+    assert unrestricted.status_code == 200
+    assert unrestricted.json()["test_unrestricted"] is True
+    assert {item["policy"] for item in unrestricted.json()["catalog"]} == {"AUTO"}
+
     inference = client.get("/operators/dashboard/steward/inference")
     assert inference.status_code == 200
     assert inference.json()["state"] in {"NOT_CONFIGURED", "DISABLED", "READY_TO_START"}
