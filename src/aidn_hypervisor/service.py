@@ -4,6 +4,7 @@ import time
 from copy import deepcopy
 from datetime import UTC, datetime
 from threading import RLock
+from typing import Any
 from uuid import uuid4
 
 from aidn_hypervisor.admission_planning_service import AdmissionPlanningService
@@ -797,6 +798,7 @@ class HypervisorService:
             inference_state=self.resident_inference_status(),
             event_intelligence=advisory,
             diagnostic_snapshot=diagnostic_snapshot,
+            steward_action_policy=self.resident_agent_action_policy(),
         )
         invocation = compose_steward_prompt(
             message,
@@ -922,6 +924,9 @@ class HypervisorService:
         else:
             inference_parameters.pop("chat_template_kwargs", None)
         inference_parameters["messages"] = invocation["messages"]
+        inference_parameters["tools"] = self._resident_steward_tool_definitions()
+        inference_parameters["tool_choice"] = "auto"
+        inference_parameters["parallel_tool_calls"] = False
         inference_parameters.setdefault("stop", ["</STEWARD_RESPONSE>", "</SYSTEM>"])
         # A local SLM is advisory, not an availability dependency. Bound both
         # the adapter wait and provider transport, then return deterministic
@@ -955,11 +960,22 @@ class HypervisorService:
                 },
             }
             response_mode = "deterministic_fallback"
+        action_outcome = self._resident_steward_apply_tool_calls(
+            result.get("tool_calls"),
+        ) if response_mode == "model_augmented" else None
+        if action_outcome is not None:
+            result["steward_action"] = action_outcome
+            operator_text = self._resident_steward_action_message(
+                action_outcome,
+                operator_message=message,
+            )
+            action_outcome["message"] = operator_text
         validation = validate_steward_output(
             result.get("output_text"),
             fallback=fallback,
         )
-        operator_text = validation.output_text
+        if action_outcome is None:
+            operator_text = validation.output_text
         if response_mode == "model_augmented" and not steward_output_matches_language(
             message,
             operator_text,
@@ -983,6 +999,102 @@ class HypervisorService:
             "model_profile": model_profile.as_payload(),
             "context": context,
             "suggested_questions": invocation["suggested_questions"],
+        }
+
+    @staticmethod
+    def _resident_steward_tool_definitions() -> list[dict[str, Any]]:
+        """One narrow tool: the model may select, never invent, an action."""
+
+        return [{
+            "type": "function",
+            "function": {
+                "name": "aidn.steward.execute_action",
+                "description": "Run one reviewed Hypervisor action only when its exact target is available in node context.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "action": {"type": "string", "enum": ["provider.health_check", "runtime.drain", "runtime.restart", "runtime.stop"]},
+                        "target_id": {"type": "string", "minLength": 1},
+                    },
+                    "required": ["action", "target_id"],
+                },
+            },
+        }]
+
+    @staticmethod
+    def _resident_steward_action_message(
+        outcome: dict[str, Any],
+        *,
+        operator_message: str,
+    ) -> str:
+        """Render a definite local action state when the model used a tool."""
+
+        plan = outcome.get("plan") if isinstance(outcome.get("plan"), dict) else {}
+        action = str(plan.get("action") or "requested action")
+        target = str(plan.get("target_id") or "selected target")
+        status = str(outcome.get("status") or "UNKNOWN").upper()
+        russian = any("\u0400" <= char <= "\u04ff" for char in str(operator_message))
+        if russian:
+            if status == "APPROVAL_REQUIRED":
+                return f"Действие {action} для {target} готово. Нажмите «Подтвердить и выполнить», чтобы запустить его."
+            if status == "COMPLETED":
+                return f"Steward выполнил действие {action} для {target}; результат проверен Hypervisor."
+            if status == "DENIED":
+                return f"Действие {action} для {target} запрещено текущей политикой; изменений не было."
+            return f"Действие {action} для {target}: {status.lower()}."
+        if status == "APPROVAL_REQUIRED":
+            return f"{action} for {target} is ready. Choose Approve & run to execute this exact action."
+        if status == "COMPLETED":
+            return f"Steward completed {action} for {target}; Hypervisor verified the result."
+        if status == "DENIED":
+            return f"{action} for {target} is denied by the current policy; no change was made."
+        return f"{action} for {target}: {status.lower()}."
+
+    def _resident_steward_apply_tool_calls(self, tool_calls: Any) -> dict[str, Any] | None:
+        """Apply at most one typed model tool call through the existing policy.
+
+        The model supplies only an action choice and target.  Policy lookup,
+        planning, approval, dispatch and observed verification remain local.
+        """
+
+        if not isinstance(tool_calls, list) or not tool_calls:
+            return None
+        call = tool_calls[0] if isinstance(tool_calls[0], dict) else {}
+        function = call.get("function") if isinstance(call.get("function"), dict) else {}
+        if str(function.get("name") or "") != "aidn.steward.execute_action":
+            return None
+        raw_args = function.get("arguments")
+        try:
+            arguments = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args or {})
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {"status": "DENIED", "message": "Steward returned an invalid action request; no change was made."}
+        action = str(arguments.get("action") or "").strip()
+        target_id = str(arguments.get("target_id") or "").strip()
+        if not action or not target_id:
+            return {"status": "DENIED", "message": "Steward did not identify a valid action target; no change was made."}
+        try:
+            planned = self.resident_agent_execute_action(action, target_id=target_id, mode="plan")
+        except ValueError as error:
+            return {"status": "DENIED", "message": f"{error}. Change the action policy to allow it."}
+        plan = planned.get("plan") if isinstance(planned.get("plan"), dict) else {}
+        if plan.get("requires_approval"):
+            return {
+                "status": "APPROVAL_REQUIRED",
+                "plan": plan,
+                "message": f"{action} for {target_id} is ready. Choose Approve & run to execute this exact action.",
+            }
+        applied = self.resident_agent_execute_action(
+            action,
+            target_id=target_id,
+            mode="apply",
+            plan_hash=plan.get("plan_hash"),
+        )
+        status = str(applied.get("status") or "UNKNOWN")
+        return {
+            "status": status,
+            "result": applied,
+            "message": f"{action} for {target_id}: {status.lower()}.",
         }
 
     def prepare_resident_model(self, **kwargs) -> dict:

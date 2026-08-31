@@ -104,8 +104,8 @@ def test_steward_context_is_bounded_and_decision_is_non_mutating() -> None:
     assert decision["authority"]["can_mutate_state"] is False
 
     escalation = steward.decide("Install and publish a new model")
-    assert escalation["mode"] == "ESCALATION_REQUIRED"
-    assert escalation["requires_approval"] is True
+    assert escalation["mode"] == "POLICY_CONTROLLED"
+    assert escalation["requires_approval"] is False
 
     blocked = steward.decide("Restart the provider", automation_depth=1)
     assert blocked["mode"] == "AUTOMATION_BLOCKED"
@@ -115,8 +115,8 @@ def test_steward_action_guard_links_lineage_and_enforces_cooldown() -> None:
     steward = ResidentAgentService(node_id="node-1", enabled=True)
 
     first = steward.guard_action(
-        "aidn.provider.restart",
-        target_id="provider-1",
+        "runtime.restart",
+        target_id="runtime-1",
         event_id="evt-1",
         event_type="aidn.provider.failed",
         correlation_id="incident-1",
@@ -134,8 +134,8 @@ def test_steward_action_guard_links_lineage_and_enforces_cooldown() -> None:
     assert first["claim_only"] is True
 
     second = steward.guard_action(
-        "aidn.provider.restart",
-        target_id="provider-1",
+        "runtime.restart",
+        target_id="runtime-1",
         event_id="evt-2",
         event_type="aidn.provider.failed",
         correlation_id="incident-2",
@@ -151,8 +151,8 @@ def test_steward_action_guard_links_lineage_and_enforces_cooldown() -> None:
 def test_steward_action_guard_blocks_depth_and_restores_cooldown() -> None:
     original = ResidentAgentService(node_id="node-1", enabled=True)
     blocked = original.guard_action(
-        "aidn.provider.restart",
-        target_id="provider-1",
+        "runtime.restart",
+        target_id="runtime-1",
         event_id="evt-1",
         automation_depth=1,
         persist=False,
@@ -162,8 +162,8 @@ def test_steward_action_guard_blocks_depth_and_restores_cooldown() -> None:
     assert original.status()["automation"]["active_cooldowns"] == 0
 
     allowed = original.guard_action(
-        "aidn.provider.restart",
-        target_id="provider-1",
+        "runtime.restart",
+        target_id="runtime-1",
         event_id="evt-2",
         cooldown_seconds=120,
         persist=False,
@@ -171,8 +171,8 @@ def test_steward_action_guard_blocks_depth_and_restores_cooldown() -> None:
     restored = ResidentAgentService(node_id="node-1", enabled=True)
     restored.restore_state(original.snapshot_state())
     replay = restored.guard_action(
-        "aidn.provider.restart",
-        target_id="provider-1",
+        "runtime.restart",
+        target_id="runtime-1",
         event_id="evt-3",
         cooldown_seconds=120,
         persist=False,

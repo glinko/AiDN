@@ -148,7 +148,8 @@ _EVENT_TO_TOOL = {
 def _tool_from_message(message: str) -> str | None:
     text = str(message or "").lower()
     patterns = (
-        (("out of memory", "cuda oom", "vram"), "resource.inspect_pressure"),
+        (("ping", "пинг"), "node.inspect_status"),
+        (("out of memory", "cuda oom", "vram", "ресурс", "ресурсов", "локальной модели"), "resource.inspect_pressure"),
         (("provider crashed", "provider health"), "provider.health_check"),
         (("endpoint", "timing out"), "endpoint.inspect_health"),
         (("queue", "overload"), "endpoint.inspect_queue"),
@@ -161,7 +162,17 @@ def _tool_from_message(message: str) -> str | None:
         (("download", "загруз"), "model.inspect_download"),
         (("checksum",), "model.verify_artifact"),
         (("next reviewed step", "следующ"), "installation.inspect_next_step"),
-        (("working on my node", "работает на моей ноде"), "node.inspect_status"),
+        (
+            (
+                "working on my node",
+                "работает на моей ноде",
+                "что сейчас настроено",
+                "что настроено на этом узле",
+                "состояние узла",
+                "состояние ноды",
+            ),
+            "node.inspect_status",
+        ),
     )
     for markers, tool in patterns:
         if any(marker in text for marker in markers):
@@ -180,14 +191,17 @@ def build_steward_decision(
     snapshot = diagnostic_snapshot if isinstance(diagnostic_snapshot, Mapping) else {}
     event_type = str(snapshot.get("event_type") or "").strip()
     if guard.intent in {"secret_request", "prompt_injection"}:
-        return StewardDecision(guard.intent, None, "ESCALATE", True)
+        return StewardDecision(guard.intent, None, "DENIED", False)
     tool = _EVENT_TO_TOOL.get(event_type) or _tool_from_message(message)
     if event_type == "operator_request" and bool(snapshot.get("data_loss")):
         tool = "node.factory_reset"
     if guard.requires_approval:
         return StewardDecision(guard.intent, tool, "OPERATOR_CONFIRMATION", False)
+    # A missing deterministic route is not an escalation.  The local model
+    # may still explain the bounded, secret-free context or select one of the
+    # supplied Hypervisor tools.  It never receives arbitrary shell authority.
     if tool is None:
-        return StewardDecision(guard.intent, None, "ESCALATE", True)
+        return StewardDecision(guard.intent, None, "NONE", False)
     return StewardDecision(guard.intent, tool, "NONE", False)
 
 
@@ -303,15 +317,11 @@ def classify_steward_request(message: str) -> StewardGuardDecision:
     if _MUTATION_REQUEST_RE.search(text):
         return StewardGuardDecision(
             intent="mutation_request",
-            blocked=True,
-            code="STEWARD_MUTATION_REQUIRES_APPROVAL",
-            requires_approval=True,
-            response=(
-                "I did not change the node. Restart, installation, download, "
-                "publication, network exposure and other state changes require "
-                "an explicit AiDN review and operator approval. I can explain "
-                "the safe next step or show the current observed state."
-            ),
+            # The action policy, not a blanket chat refusal, decides whether a
+            # reviewed tool is automatic, asks the operator, or is denied.
+            # Secret and prompt-injection requests above remain hard-blocked.
+            blocked=False,
+            code="STEWARD_MUTATION_POLICY_CONTROLLED",
         )
     return StewardGuardDecision(intent="information_request", blocked=False)
 

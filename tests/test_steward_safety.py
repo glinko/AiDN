@@ -17,13 +17,13 @@ def test_secret_requests_are_blocked_before_model_invocation() -> None:
     assert "private keys" in (decision.response or "")
 
 
-def test_mutations_require_the_existing_review_boundary() -> None:
+def test_mutations_are_controlled_by_the_action_policy_not_a_chat_refusal() -> None:
     decision = classify_steward_request("Restart the provider now")
 
-    assert decision.blocked is True
+    assert decision.blocked is False
     assert decision.intent == "mutation_request"
-    assert decision.requires_approval is True
-    assert decision.code == "STEWARD_MUTATION_REQUIRES_APPROVAL"
+    assert decision.requires_approval is False
+    assert decision.code == "STEWARD_MUTATION_POLICY_CONTROLLED"
 
 
 def test_prompt_injection_is_blocked_deterministically() -> None:
@@ -96,7 +96,7 @@ def test_deterministic_decision_routes_diagnostic_without_model_authority() -> N
     assert '"name":"resource.inspect_pressure"' in output
 
 
-def test_unknown_diagnostic_escalates_without_inventing_a_tool() -> None:
+def test_unknown_diagnostic_reaches_the_local_model_without_inventing_a_tool() -> None:
     message = "Something is wrong, but I cannot tell what."
     guard = classify_steward_request(message)
     decision = build_steward_decision(
@@ -106,8 +106,37 @@ def test_unknown_diagnostic_escalates_without_inventing_a_tool() -> None:
     )
 
     assert decision.tool is None
-    assert decision.approval == "ESCALATE"
-    assert decision.escalate is True
+    assert decision.approval == "NONE"
+    assert decision.escalate is False
+
+
+def test_ping_routes_to_safe_node_status() -> None:
+    decision = build_steward_decision("Пинг", guard=classify_steward_request("Пинг"))
+
+    assert decision.tool == "node.inspect_status"
+    assert decision.escalate is False
+
+
+def test_russian_node_state_question_uses_observed_status_route() -> None:
+    message = "Что сейчас настроено на этом узле?"
+    guard = classify_steward_request(message)
+
+    decision = build_steward_decision(message, guard=guard)
+    summary = deterministic_steward_summary(
+        message,
+        decision=decision,
+        context={
+            "resident_inference": {
+                "state": "RUNNING",
+                "provider_type": "llama.cpp",
+            }
+        },
+    )
+
+    assert decision.tool == "node.inspect_status"
+    assert decision.approval == "NONE"
+    assert decision.escalate is False
+    assert "Нода доступна" in summary
 
 
 def test_russian_request_rejects_english_only_model_output() -> None:

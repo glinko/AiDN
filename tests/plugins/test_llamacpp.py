@@ -389,6 +389,53 @@ def test_llamacpp_plugin_invoke_uses_chat_completions_for_role_separated_message
     assert result["usage"]["output_tokens"] == 6
 
 
+def test_llamacpp_plugin_preserves_openai_tool_contract_and_response_calls() -> None:
+    tool_definition = {
+        "type": "function",
+        "function": {
+            "name": "terminal",
+            "parameters": {"type": "object"},
+        },
+    }
+    native_call = {
+        "id": "call-1",
+        "type": "function",
+        "function": {"name": "terminal", "arguments": '{"command":"hostname"}'},
+    }
+    plugin = StubLlamaCppPlugin(
+        chat_payload={
+            "choices": [{"message": {"content": None, "tool_calls": [native_call]}}]
+        }
+    )
+    runtime = RuntimeHandle(
+        runtime_id="rt-1",
+        command=["llama-server"],
+        status="running",
+        bundle_id="phi4-llamacpp",
+        metadata={"endpoint": "http://127.0.0.1:8080", "model_id": "C:/models/phi4.gguf"},
+    )
+
+    result = plugin.invoke(
+        TaskRequest(
+            task_type="llm_text.generate",
+            payload={
+                "messages": [{"role": "user", "content": "Inspect the host"}],
+                "tools": [tool_definition],
+                "tool_choice": "auto",
+                "parallel_tool_calls": False,
+            },
+        ),
+        runtime,
+    )
+
+    payload = plugin.calls[-1][2]
+    assert payload is not None
+    assert payload["tools"] == [tool_definition]
+    assert payload["tool_choice"] == "auto"
+    assert payload["parallel_tool_calls"] is False
+    assert result["tool_calls"] == [native_call]
+
+
 def test_llamacpp_plugin_invoke_requires_prompt_payload() -> None:
     plugin = StubLlamaCppPlugin()
     runtime = RuntimeHandle(

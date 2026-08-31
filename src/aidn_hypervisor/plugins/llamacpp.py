@@ -382,6 +382,18 @@ class LlamaCppPlugin(ProviderPlugin):
             request_payload["chat_template_kwargs"] = (
                 dict(chat_template_kwargs) if isinstance(chat_template_kwargs, dict) else {"enable_thinking": False}
             )
+            # Keep the reviewed OpenAI tool contract intact.  Without these
+            # fields Qwen may emit legacy XML-looking tool markup as visible
+            # assistant text rather than a structured provider tool call.
+            tools = task.payload.get("tools")
+            if isinstance(tools, list):
+                request_payload["tools"] = tools
+            tool_choice = task.payload.get("tool_choice")
+            if isinstance(tool_choice, (str, dict)):
+                request_payload["tool_choice"] = tool_choice
+            parallel_tool_calls = task.payload.get("parallel_tool_calls")
+            if isinstance(parallel_tool_calls, bool):
+                request_payload["parallel_tool_calls"] = parallel_tool_calls
             endpoint = f"{self._endpoint(runtime_handle)}/v1/chat/completions"
         else:
             request_payload = {"prompt": prompt, "stream": False}
@@ -434,12 +446,15 @@ class LlamaCppPlugin(ProviderPlugin):
                 request_payload,
             )
         output_text = response.get("content", "")
+        tool_calls = response.get("tool_calls")
         if not output_text and isinstance(response.get("choices"), list):
             choices = response["choices"]
             if choices and isinstance(choices[0], dict):
                 message = choices[0].get("message")
                 if isinstance(message, dict):
                     output_text = message.get("content", "")
+                    if isinstance(message.get("tool_calls"), list):
+                        tool_calls = message["tool_calls"]
                 if not output_text:
                     output_text = choices[0].get("text", "")
         result = {
@@ -449,6 +464,8 @@ class LlamaCppPlugin(ProviderPlugin):
             "output_text": output_text,
             "raw": response,
         }
+        if isinstance(tool_calls, list):
+            result["tool_calls"] = tool_calls
         result["usage"] = self._usage_from_response(response)
         return result
 
