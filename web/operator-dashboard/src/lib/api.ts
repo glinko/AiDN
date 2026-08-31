@@ -487,7 +487,11 @@ async function writeDashboard<T>(path: string, init: RequestInit): Promise<T | u
   if (!response.ok) {
     const error = typeof payload === 'object' && payload !== null && 'error' in payload
       ? String((payload as { error?: { code?: string; message?: string } }).error?.message ?? (payload as { error?: { code?: string } }).error?.code ?? 'request rejected')
-      : response.statusText
+      : typeof payload === 'object' && payload !== null && 'detail' in payload
+        ? (typeof (payload as { detail?: unknown }).detail === 'string'
+            ? (payload as { detail: string }).detail
+            : JSON.stringify((payload as { detail?: unknown }).detail))
+        : response.statusText
     throw new DashboardApiError(`${path} failed: ${error || 'request rejected'}`, response.status)
   }
   return payload as T | undefined
@@ -554,6 +558,8 @@ export const dashboardApi = {
   startResidentInference: () => writeDashboard<ResidentInference>('/operators/dashboard/steward/inference/start', { method: 'POST' }),
   stopResidentInference: () => writeDashboard<ResidentInference>('/operators/dashboard/steward/inference/stop', { method: 'POST' }),
   stewardChat: (message: string) => writeDashboard<DashboardRecord>('/operators/dashboard/steward/chat', { method: 'POST', body: JSON.stringify({ message }) }),
+  stewardPrompt: (): Promise<DashboardRecord> => writeDashboard<DashboardRecord>('/operators/dashboard/steward/prompt', { method: 'GET' }) as Promise<DashboardRecord>,
+  updateStewardPrompt: (text: string, expectedSha256: string | null): Promise<DashboardRecord> => writeDashboard<DashboardRecord>('/operators/dashboard/steward/prompt', { method: 'PUT', body: JSON.stringify({ text, expected_sha256: expectedSha256 }) }) as Promise<DashboardRecord>,
   enrollmentRequests: () => writeDashboard<{ items: EnrollmentRequest[] }>('/operators/dashboard/access/enrollment-requests', { method: 'GET' }),
   approveEnrollment: (requestId: string) => writeDashboard<EnrollmentRequest>(`/operators/dashboard/access/enrollment-requests/${requestId}/approve`, { method: 'POST' }),
   rejectEnrollment: (requestId: string) => writeDashboard<EnrollmentRequest>(`/operators/dashboard/access/enrollment-requests/${requestId}/reject`, { method: 'POST' }),

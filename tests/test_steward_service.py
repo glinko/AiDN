@@ -53,6 +53,10 @@ def _service_with_stub() -> tuple[HypervisorService, _StubResidentAdapter]:
     service = object.__new__(HypervisorService)
     adapter = _StubResidentAdapter()
     service._resident_inference_adapter = adapter
+    service.resident_steward_prompt = lambda: {
+        "text": "Explain AiDN components precisely and use complete answers.",
+        "sha256": "sha256:test-operating-brief",
+    }
     service.installation_plan = lambda: {
         "available": True,
         "mode": "ai_assisted",
@@ -100,13 +104,14 @@ def test_resident_steward_chat_forces_reviewed_messages_and_safe_decoding() -> N
     assert parameters["chat_template_kwargs"] == {"enable_thinking": False}
     assert parameters["temperature"] == 0.0
     assert parameters["top_p"] == 0.8
-    assert parameters["max_tokens"] == 32
+    assert parameters["max_tokens"] == 160
     assert parameters["provider_timeout_seconds"] == 24.0
     assert parameters["timeout_seconds"] == 25.0
     assert parameters["tool_choice"] == "auto"
     assert parameters["parallel_tool_calls"] is False
     assert parameters["tools"][0]["function"]["name"] == "aidn.steward.execute_action"
     assert result["model_profile"]["profile_id"] == "qwen3-0.6b-steward.v1"
+    assert result["prompt"]["operating_brief_sha256"] == "sha256:test-operating-brief"
     assert result["safety"]["guard"]["intent"] == "information_request"
     assert result["safety"]["validation"]["accepted"] is True
 
@@ -210,3 +215,19 @@ def test_resident_steward_chat_returns_approval_card_for_local_tool_call() -> No
     assert result["steward_action"]["status"] == "APPROVAL_REQUIRED"
     assert result["steward_action"]["plan"]["target_id"] == "rt-1"
     assert "Подтвердить и выполнить" in result["output_text"]
+
+
+def test_resident_steward_chat_keeps_observed_runtime_status_from_model() -> None:
+    service, adapter = _service_with_stub()
+    adapter.infer = lambda _prompt, **_parameters: {
+        "ok": True,
+        "task_type": "llm_text.generate",
+        "model_id": "/models/steward.gguf",
+        "output_text": "На ноде запущена модель steward.gguf; runtime готов к запросам.",
+        "usage": {"input_tokens": 12, "output_tokens": 14},
+    }
+
+    result = service.resident_steward_chat("Какая модель сейчас запущена?")
+
+    assert result["response_mode"] == "model_augmented"
+    assert "steward.gguf" in result["output_text"]

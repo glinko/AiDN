@@ -17,7 +17,7 @@ def test_recommended_profile_is_qwen3_q4_cpu_no_think() -> None:
     assert profile.provider_type == "llama.cpp"
     assert profile.execution_profile == "CPU_RESIDENT"
     assert profile.context_length == 4096
-    assert profile.max_output_tokens == 32
+    assert profile.max_output_tokens == 160
     assert profile.enable_thinking is False
     assert profile.chat_parameters()["chat_template_kwargs"] == {"enable_thinking": False}
 
@@ -26,7 +26,7 @@ def test_runtime_policy_contains_only_supported_llama_parameters() -> None:
     policy = steward_runtime_parameter_policy(provider_type="llama.cpp")
 
     assert policy["context_length"] == {"value": 4096}
-    assert policy["max_tokens"] == {"value": 32}
+    assert policy["max_tokens"] == {"value": 160}
     assert policy["temperature"] == {"value": 0.0}
     assert policy["top_p"] == {"value": 0.8}
     assert "enable_thinking" not in policy

@@ -11886,3 +11886,33 @@ def test_operator_steward_policy_and_inference_read_models_are_explicit() -> Non
     inference = client.get("/operators/dashboard/steward/inference")
     assert inference.status_code == 200
     assert inference.json()["state"] in {"NOT_CONFIGURED", "DISABLED", "READY_TO_START"}
+
+
+def test_operator_can_edit_steward_operating_brief_with_version_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AIDN_STEWARD_PROMPT_PATH", str(tmp_path / "steward-prompt.md"))
+    client = TestClient(build_app(service=_service()))
+
+    initial = client.get("/operators/dashboard/steward/prompt")
+
+    assert initial.status_code == 200
+    assert "Hypervisor" in initial.json()["text"]
+    assert initial.json()["sha256"].startswith("sha256:")
+
+    updated = client.put(
+        "/operators/dashboard/steward/prompt",
+        json={
+            "text": "Explain only the observed AiDN node state in Russian.",
+            "expected_sha256": initial.json()["sha256"],
+        },
+    )
+
+    assert updated.status_code == 200
+    assert updated.json()["text"] == "Explain only the observed AiDN node state in Russian.\n"
+    stale = client.put(
+        "/operators/dashboard/steward/prompt",
+        json={"text": "stale", "expected_sha256": initial.json()["sha256"]},
+    )
+    assert stale.status_code == 409

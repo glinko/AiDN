@@ -755,6 +755,14 @@ def _is_validator_consensus_write_path(path: str, method: str | None = None) -> 
         # advisory events; none writes Ledger state.
         return True
     if (
+        parts == ["operators", "dashboard", "steward", "prompt"]
+        and (method is None or method == "PUT")
+    ):
+        # The operating brief is paired-operator local configuration. The
+        # runtime reads it on each request, while safety and tool boundaries
+        # remain in code and cannot be changed by this document.
+        return True
+    if (
         parts == ["operators", "dashboard", "access", "config", "validate"]
         and (method is None or method == "POST")
     ) or (

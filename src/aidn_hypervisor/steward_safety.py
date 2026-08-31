@@ -56,15 +56,7 @@ _ACTION_CLAIM_RE = re.compile(
     r"опубликовал(?:а|и)?|удалил(?:а|и)?|сбросил(?:а|и)?|применил(?:а|и)?|"
     r"выполнил(?:а|и)?|подписал(?:а|и)?|отправил(?:а|и)?|настроил(?:а|и)?|"
     r"изменил(?:а|и)?|включил(?:а|и)?|выключил(?:а|и)?)\b"
-    r"|\b(?:the\s+)?(?:node|model|provider|service|runtime|endpoint|installation|"
-    r"wallet)\s+(?:has\s+been|was|were|is|are)?\s*(?:restarted|rebooted|"
-    r"started|stopped|installed|downloaded|published|exposed|deleted|removed|"
-    r"reset|applied|executed|signed|sent|configured|changed|enabled|disabled)\b"
-    r"|\b(?:перезапущен(?:а|о|ы)?|перезагружен(?:а|о|ы)?|запущен(?:а|о|ы)?|"
-    r"остановлен(?:а|о|ы)?|установлен(?:а|о|ы)?|скачан(?:а|о|ы)?|опубликован(?:а|о|ы)?|"
-    r"удален(?:а|о|ы)?|сброшен(?:а|о|ы)?|применен(?:а|о|ы)?|выполнен(?:а|о|ы)?|"
-    r"подписан(?:а|о|ы)?|отправлен(?:а|о|ы)?|настроен(?:а|о|ы)?|изменен(?:а|о|ы)?|"
-    r"включен(?:а|о|ы)?|выключен(?:а|о|ы)?)\b)",
+    r")\b",
     re.IGNORECASE,
 )
 

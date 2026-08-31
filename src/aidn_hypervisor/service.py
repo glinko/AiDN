@@ -113,6 +113,8 @@ from aidn_hypervisor.steward_prompt import (
     STEWARD_PROMPT_VERSION,
     build_safe_steward_context,
     compose_steward_prompt,
+    read_steward_operating_brief,
+    update_steward_operating_brief,
 )
 from aidn_hypervisor.steward_safety import (
     build_steward_decision,
@@ -777,6 +779,24 @@ class HypervisorService:
     def invoke_resident_inference(self, prompt: str, **parameters) -> dict:
         return self._resident_inference_adapter.infer(prompt, **parameters)
 
+    def resident_steward_prompt(self) -> dict:
+        """Return the operator-editable explanation brief for the Resident Steward."""
+
+        return read_steward_operating_brief()
+
+    def update_resident_steward_prompt(
+        self,
+        text: str,
+        *,
+        expected_sha256: str | None = None,
+    ) -> dict:
+        """Update the Steward brief without changing immutable safety rules."""
+
+        return update_steward_operating_brief(
+            text,
+            expected_sha256=expected_sha256,
+        )
+
     def resident_steward_chat(self, message: str, **parameters) -> dict:
         """Invoke the local Steward with versioned rules and secret-free state."""
 
@@ -800,10 +820,13 @@ class HypervisorService:
             diagnostic_snapshot=diagnostic_snapshot,
             steward_action_policy=self.resident_agent_action_policy(),
         )
+        operating_brief = self.resident_steward_prompt()
         invocation = compose_steward_prompt(
             message,
             context,
             no_think_suffix=model_profile.enable_thinking is False,
+            operating_brief=str(operating_brief["text"]),
+            operating_brief_sha256=str(operating_brief["sha256"]),
         )
         guard = classify_steward_request(message)
         decision = build_steward_decision(
@@ -854,6 +877,7 @@ class HypervisorService:
                 "prompt": {
                     "id": invocation["prompt_id"],
                     "version": invocation["prompt_version"],
+                    "operating_brief_sha256": invocation["operating_brief_sha256"],
                 },
                 "model_profile": model_profile.as_payload(),
                 "context": context,
@@ -892,6 +916,7 @@ class HypervisorService:
                 "prompt": {
                     "id": invocation["prompt_id"],
                     "version": invocation["prompt_version"],
+                    "operating_brief_sha256": invocation["operating_brief_sha256"],
                 },
                 "model_profile": model_profile.as_payload(),
                 "context": context,
@@ -995,6 +1020,7 @@ class HypervisorService:
             "prompt": {
                 "id": invocation["prompt_id"],
                 "version": invocation["prompt_version"],
+                "operating_brief_sha256": invocation["operating_brief_sha256"],
             },
             "model_profile": model_profile.as_payload(),
             "context": context,

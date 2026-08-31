@@ -411,6 +411,13 @@ class ResidentStewardChatRequest(BaseModel):
     parameters: dict[str, object] = Field(default_factory=dict, max_length=16)
 
 
+class ResidentStewardPromptUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=24_000)
+    expected_sha256: str | None = Field(default=None, max_length=80)
+
+
 class ResidentAgentEnabledRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -2272,6 +2279,30 @@ def build_api_router(
             code = getattr(error, "code", "INFERENCE_ADAPTER_ERROR")
             status_code = 409 if code == "INFERENCE_RESOURCE_WAIT" else 422
             raise HTTPException(status_code=status_code, detail={"code": code, "message": str(error), "details": getattr(error, "details", {})}) from error
+
+    @router.get("/operators/dashboard/steward/prompt")
+    async def get_operator_steward_prompt() -> dict:
+        """Return the editable operating brief, never the immutable guardrails."""
+
+        return service.resident_steward_prompt()
+
+    @router.put("/operators/dashboard/steward/prompt")
+    async def update_operator_steward_prompt(
+        payload: ResidentStewardPromptUpdateRequest,
+    ) -> dict:
+        """Persist a version-checked Steward operating brief."""
+
+        try:
+            return service.update_resident_steward_prompt(
+                payload.text,
+                expected_sha256=payload.expected_sha256,
+            )
+        except ValueError as error:
+            changed = "changed since it was loaded" in str(error)
+            raise HTTPException(
+                status_code=409 if changed else 422,
+                detail=str(error),
+            ) from error
 
     @router.get("/operators/dashboard/installation-plan")
     async def operator_dashboard_installation_plan() -> dict:

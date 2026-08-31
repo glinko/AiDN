@@ -81,6 +81,7 @@ import { createSavedHypervisor, loadSavedHypervisors, saveSavedHypervisors, type
 import { JourneyPage } from '@/components/journey/JourneyPage'
 import { ResourceBrokerWorkspace } from '@/components/resources/ResourceBrokerWorkspace'
 import { StewardPolicyPanel } from '@/components/steward/StewardPolicyPanel'
+import { StewardPromptEditor } from '@/components/steward/StewardPromptEditor'
 import { ResidentStewardChat } from '@/components/steward/ResidentStewardChat'
 import { OperatorConfigEditor } from '@/components/settings/OperatorConfigEditor'
 import { SoftwareUpdatePanel } from '@/components/settings/SoftwareUpdatePanel'
@@ -3195,7 +3196,7 @@ function AgentsWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData;
     onPrepare={async (payload) => { await dashboardApi.prepareResidentInference(payload); refreshSteward() }}
     onStart={async () => { await dashboardApi.startResidentInference(); refreshSteward() }}
     onStop={async () => { await dashboardApi.stopResidentInference(); refreshSteward() }}
-  /><ResidentStewardChat
+  /><StewardPromptEditor /><ResidentStewardChat
     inference={data.residentInference.data}
     onChat={dashboardApi.stewardChat}
     onApproveAction={async (action, targetId, planHash) => {

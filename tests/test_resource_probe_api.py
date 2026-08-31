@@ -67,6 +67,9 @@ def test_validator_write_boundary_allows_local_resident_inference_lifecycle() ->
         "/operators/dashboard/steward/inference/restart", "POST"
     ) is False
     assert _is_validator_consensus_write_path(allowed_paths[0], "GET") is False
+    assert _is_validator_consensus_write_path(
+        "/operators/dashboard/steward/prompt", "PUT"
+    ) is True
 
 
 def test_validator_write_boundary_allows_local_config_and_software_update() -> None:
