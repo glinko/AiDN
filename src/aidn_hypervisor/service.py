@@ -846,83 +846,9 @@ class HypervisorService:
             context=context,
         )
 
-        # High-risk requests never reach the local model. This keeps a small
-        # or compromised model from turning a chat message into an action and
-        # makes the refusal deterministic across providers.
-        if guard.blocked:
-            status = self.resident_inference_status()
-            validation = validate_steward_output(
-                guard.response or fallback,
-                fallback=fallback,
-            )
-            return {
-                "ok": True,
-                "task_type": "llm_text.generate",
-                "model_id": status.get("model_path"),
-                "output_text": validation.output_text,
-                "usage": {
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "fixed_request_count": 0,
-                    "measurement_kind": "deterministic_guard",
-                    "measurement_source": "steward_safety",
-                },
-                "response_mode": "deterministic_guard",
-                "provider_error": None,
-                "safety": {
-                    "guard": guard.as_payload(),
-                    "validation": validation.as_payload(),
-                },
-                "decision": decision.as_payload(),
-                "prompt": {
-                    "id": invocation["prompt_id"],
-                    "version": invocation["prompt_version"],
-                    "operating_brief_sha256": invocation["operating_brief_sha256"],
-                },
-                "model_profile": model_profile.as_payload(),
-                "context": context,
-                "suggested_questions": invocation["suggested_questions"],
-            }
-
-        # Known status and diagnostic requests do not need to wait for a local
-        # model. The deterministic layer already owns tool selection and can
-        # answer from the bounded snapshot immediately. The SLM remains
-        # available for open-ended explanation when no reviewed route exists.
-        if context.get("diagnostic_snapshot") or decision.tool is not None:
-            status = self.resident_inference_status()
-            validation = validate_steward_output(
-                deterministic_summary,
-                fallback=fallback,
-            )
-            return {
-                "ok": True,
-                "task_type": "llm_text.generate",
-                "model_id": status.get("model_path"),
-                "output_text": validation.output_text,
-                "usage": {
-                    "input_tokens": 0,
-                    "output_tokens": 0,
-                    "fixed_request_count": 0,
-                    "measurement_kind": "deterministic_route",
-                    "measurement_source": "steward_safety",
-                },
-                "response_mode": "deterministic_route",
-                "provider_error": None,
-                "safety": {
-                    "guard": guard.as_payload(),
-                    "validation": validation.as_payload(),
-                },
-                "decision": decision.as_payload(),
-                "prompt": {
-                    "id": invocation["prompt_id"],
-                    "version": invocation["prompt_version"],
-                    "operating_brief_sha256": invocation["operating_brief_sha256"],
-                },
-                "model_profile": model_profile.as_payload(),
-                "context": context,
-                "suggested_questions": invocation["suggested_questions"],
-            }
-
+        # Every operator message reaches the local model.  The deterministic
+        # decision remains context for the model and an emergency fallback if
+        # the provider is unavailable; it is never a shortcut response path.
         # Keep the default Dashboard interaction bounded on CPU-only nodes.
         # Operators can still override this through the explicit parameters
         # object. The role-separated messages let instruction-tuned models
