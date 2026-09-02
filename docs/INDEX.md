@@ -101,6 +101,7 @@ The generated catalog includes repository-root project documents, Markdown under
 | Document | What it is |
 | --- | --- |
 | [Authorized Epoch Transition Builder](development/reference/authorized-epoch-transition-builder.md) | Current engineering reference, technical contract, or implementation note. |
+| [Codex OAuth agent bridge](development/reference/codex-oauth-agent.md) | Current engineering reference, technical contract, or implementation note. |
 | [Consensus Operation Coverage](development/reference/consensus-operation-coverage.md) | Current engineering reference, technical contract, or implementation note. |
 | [Controlled Localnet Contributor Wallet Profile](development/reference/controlled-localnet-contributor-wallet-profile.md) | Current engineering reference, technical contract, or implementation note. |
 | [Controlled Localnet Epoch Schedule Rebase](development/reference/controlled-localnet-epoch-schedule-rebase.md) | Current engineering reference, technical contract, or implementation note. |

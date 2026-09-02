@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from aidn_hypervisor.admission_planning_service import AdmissionPlanningService
+from aidn_hypervisor.agent_conversation import AgentConversationService
 from aidn_hypervisor.allocation_catalog_service import AllocationCatalogService
 from aidn_hypervisor.allocation_lifecycle_service import AllocationLifecycleService
 from aidn_hypervisor.bundle_runtime_policy_service import BundleRuntimePolicyService
@@ -403,6 +404,12 @@ class HypervisorService:
             self._event_store,
             on_change=self._persist_state,
         )
+        self._agent_conversation = AgentConversationService(
+            operator_id=self.operator_id,
+            hook_dispatcher=self._hook_dispatcher,
+            publish_event=lambda **values: self.record_event(**values),
+            on_change=self._persist_state,
+        )
         self._resident_agent_service = ResidentAgentService(
             node_id=self.node_id,
             enabled=True,
@@ -553,6 +560,24 @@ class HypervisorService:
             after_sequence=after_sequence,
             limit=limit,
         )
+
+    def agent_conversation_status(self) -> dict:
+        return self._agent_conversation.status()
+
+    def connect_agent_conversation(self, agent_id: str) -> dict:
+        return self._agent_conversation.connect(agent_id)
+
+    def send_agent_conversation_message(self, text: str) -> dict:
+        return self._agent_conversation.send(text)
+
+    def receive_agent_conversation_reply(self, *, agent_id: str, text: str) -> dict:
+        return self._agent_conversation.reply(agent_id=agent_id, text=text)
+
+    def agent_conversation_snapshot(self) -> dict:
+        return self._agent_conversation.snapshot_state()
+
+    def restore_agent_conversation(self, snapshot: object) -> None:
+        self._agent_conversation.restore_state(snapshot)
 
     @property
     def resident_agent(self) -> ResidentAgentService:

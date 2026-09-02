@@ -1641,6 +1641,32 @@ class McpControlPlane:
                     list(args.get("event_ids", [])),
                 ),
             ),
+            "aidn.operator.chat.status": McpTool(
+                "aidn.operator.chat.status",
+                "Read the external operator-to-agent conversation channel and recent message history.",
+                read_schema,
+                ("AUDIT:READ",),
+                "READ_ONLY",
+                lambda _args: self.service.agent_conversation_status(),
+            ),
+            "aidn.operator.chat.reply": McpTool(
+                "aidn.operator.chat.reply",
+                "Append a text reply to the bound operator conversation. The session Agent identity must match the channel binding.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "minLength": 1, "maxLength": 16384},
+                    },
+                    "required": ["text"],
+                    "additionalProperties": False,
+                },
+                ("CHAT:WRITE",),
+                "OPERATOR_CHAT_REPLY",
+                lambda args: self.service.receive_agent_conversation_reply(
+                    agent_id=self.session.agent_identity,
+                    text=str(args["text"]),
+                ),
+            ),
             "aidn.hook.list": McpTool(
                 "aidn.hook.list",
                 "List operator-owned RFC-0072 Hook subscriptions.",

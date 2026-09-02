@@ -1,0 +1,24 @@
+[Unit]
+Description=AiDN Codex OAuth MCP agent bridge
+After=network-online.target aidn-hypervisor.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Set this to the dedicated, unprivileged service account created for Codex.
+User=aidn-codex
+Group=aidn-codex
+Environment=CODEX_HOME=/var/lib/aidn-codex
+EnvironmentFile=/etc/aidn/codex-agent.env
+WorkingDirectory=/var/lib/aidn-codex
+ExecStart=/usr/local/bin/aidn-codex-agent --codex-home /var/lib/aidn-codex relay --mcp-url http://127.0.0.1:8766/mcp
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/aidn-codex
+
+[Install]
+WantedBy=multi-user.target

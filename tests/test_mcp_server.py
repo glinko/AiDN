@@ -185,6 +185,29 @@ def test_mcp_initialize_and_tools_are_scope_filtered() -> None:
     assert "aidn.bundle.activate" not in names
 
 
+def test_mcp_operator_chat_uses_bound_agent_identity_and_durable_inbox() -> None:
+    server = _server("AUDIT:READ", "CHAT:WRITE")
+    _initialize(server)
+    server.control.service.connect_agent_conversation("agent:test")
+    server.control.service.send_agent_conversation_message("Check the local model status.")
+
+    inbox = _call(server, "aidn.event.inbox")["structuredContent"]
+    assert any(
+        item["event_type"] == "aidn.operator.agent_message"
+        for item in inbox["items"]
+    )
+
+    reply = _call(
+        server,
+        "aidn.operator.chat.reply",
+        {"text": "The model is running and the GPU lease is healthy."},
+    )["structuredContent"]
+    assert reply["direction"] == "AGENT"
+
+    status = _call(server, "aidn.operator.chat.status")["structuredContent"]
+    assert [message["direction"] for message in status["messages"]] == ["OPERATOR", "AGENT"]
+
+
 def test_mcp_resident_escalation_is_durable_and_never_executes() -> None:
     server = _server("STEWARD:READ", "STEWARD:ESCALATE")
     _initialize(server)

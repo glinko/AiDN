@@ -366,6 +366,29 @@ const residentInferenceSchema = z.object({
   artifact: unknownRecord.default({}),
 }).passthrough()
 
+const agentConversationMessageSchema = z.object({
+  message_id: stringValue,
+  direction: z.enum(['OPERATOR', 'AGENT']).catch('OPERATOR'),
+  agent_id: stringValue,
+  text: stringValue,
+  created_at: stringValue,
+  event_id: z.string().nullable().optional(),
+}).passthrough()
+
+const agentConversationSchema = z.object({
+  agent_id: z.string().nullable().optional(),
+  connected: z.boolean().catch(false),
+  delivery: unknownRecord.nullable().optional(),
+  messages: z.array(agentConversationMessageSchema).catch([]),
+  message_limit: numberValue,
+  message_event_type: stringValue,
+  media: z.object({
+    text: z.boolean().catch(true),
+    attachments: z.boolean().catch(false),
+    detail: stringValue,
+  }).passthrough(),
+}).passthrough()
+
 const escalationTaskSchema = z.object({
   task_id: stringValue,
   idempotency_key: stringValue,
@@ -533,6 +556,8 @@ export type ResidentAgentStatus = z.infer<typeof residentAgentStatusSchema>
 export type StewardAction = z.infer<typeof stewardActionSchema>
 export type StewardActionPolicy = z.infer<typeof stewardActionPolicySchema>
 export type ResidentInference = z.infer<typeof residentInferenceSchema>
+export type AgentConversation = z.infer<typeof agentConversationSchema>
+export type AgentConversationMessage = z.infer<typeof agentConversationMessageSchema>
 export type EscalationTask = z.infer<typeof escalationTaskSchema>
 export type EscalationTasks = z.infer<typeof escalationTasksSchema>
 export type InstallationPlan = z.infer<typeof installationPlanSchema>
@@ -566,6 +591,7 @@ export const dashboardSchemas = {
   residentAgent: residentAgentStatusSchema,
   stewardActionPolicy: stewardActionPolicySchema,
   residentInference: residentInferenceSchema,
+  agentConversation: agentConversationSchema,
   escalations: escalationTasksSchema,
   installationPlan: installationPlanSchema,
   events: z.array(journalEventSchema),

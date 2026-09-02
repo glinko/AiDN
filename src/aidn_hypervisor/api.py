@@ -186,6 +186,22 @@ class HookDispatchRequest(BaseModel):
     now: str | None = None
 
 
+class AgentConversationConnectRequest(BaseModel):
+    """Bind one externally connected MCP agent to the operator channel."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    agent_id: str = Field(min_length=1, max_length=256)
+
+
+class AgentConversationMessageRequest(BaseModel):
+    """Bounded text message from the Dashboard to the bound MCP agent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=16_384)
+
+
 class ResidentAgentDecisionRequest(BaseModel):
     """Bounded, read-only request for the local Resident Steward."""
 
@@ -2146,6 +2162,30 @@ def build_api_router(
         """Return the bounded RFC-0075 Resident Node Steward projection."""
 
         return service.resident_agent_status()
+
+    @router.get("/operators/dashboard/agent-channel")
+    async def operator_dashboard_agent_channel() -> dict:
+        """Return the external MCP Agent channel and its durable history."""
+
+        return service.agent_conversation_status()
+
+    @router.post("/operators/dashboard/agent-channel/connect")
+    async def connect_operator_dashboard_agent_channel(
+        payload: AgentConversationConnectRequest,
+    ) -> dict:
+        try:
+            return service.connect_agent_conversation(payload.agent_id)
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @router.post("/operators/dashboard/agent-channel/messages")
+    async def send_operator_dashboard_agent_message(
+        payload: AgentConversationMessageRequest,
+    ) -> dict:
+        try:
+            return service.send_agent_conversation_message(payload.text)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     @router.get("/operators/dashboard/steward/action-policy")
     async def operator_dashboard_steward_action_policy() -> dict:

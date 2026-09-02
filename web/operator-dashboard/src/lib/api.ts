@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { dashboardSchemas, type AssistedInstallationAction, type BundlePayload, type CometBftDashboard, type CometBftInstall, type DashboardHome, type EndpointPayload, type EscalationTasks, type Fleet, type InstallationPlan, type JourneyGraph, type MarketDashboard, type Readiness, type RemoteEndpointsDashboard, type ResidentAgentStatus, type ResidentInference, type ResourceBrokerDashboard, type RuntimeOperations, type SessionDashboard, type StewardActionPolicy, type WalletDashboard } from '@/lib/types'
+import { dashboardSchemas, type AgentConversation, type AssistedInstallationAction, type BundlePayload, type CometBftDashboard, type CometBftInstall, type DashboardHome, type EndpointPayload, type EscalationTasks, type Fleet, type InstallationPlan, type JourneyGraph, type MarketDashboard, type Readiness, type RemoteEndpointsDashboard, type ResidentAgentStatus, type ResidentInference, type ResourceBrokerDashboard, type RuntimeOperations, type SessionDashboard, type StewardActionPolicy, type WalletDashboard } from '@/lib/types'
 
 const apiRoot = (import.meta.env.VITE_AIDN_API_ROOT ?? '').replace(/\/$/, '')
 const requestTimeoutMs = 15_000
@@ -514,6 +514,7 @@ export const dashboardApi = {
   escalations: (signal?: AbortSignal): Promise<EscalationTasks> => readDashboard('/operators/dashboard/steward/escalations?limit=64', dashboardSchemas.escalations, signal),
   stewardActionPolicy: (signal?: AbortSignal): Promise<StewardActionPolicy> => readDashboard('/operators/dashboard/steward/action-policy', dashboardSchemas.stewardActionPolicy, signal),
   residentInference: (signal?: AbortSignal): Promise<ResidentInference> => readDashboard('/operators/dashboard/steward/inference', dashboardSchemas.residentInference, signal),
+  agentConversation: (signal?: AbortSignal): Promise<AgentConversation> => readDashboard('/operators/dashboard/agent-channel', dashboardSchemas.agentConversation, signal),
   installationPlan: (signal?: AbortSignal): Promise<InstallationPlan> => readDashboard('/operators/dashboard/installation-plan', dashboardSchemas.installationPlan, signal),
   testnetParticipation: (signal?: AbortSignal): Promise<TestnetParticipationDashboard> => readDashboard('/operators/dashboard/testnet-participation', testnetParticipationDashboardSchema, signal),
   installs: (signal?: AbortSignal): Promise<ModelInstallWorkspace> => readDashboard('/operators/dashboard/installs', modelInstallWorkspaceSchema, signal),
@@ -558,6 +559,8 @@ export const dashboardApi = {
   startResidentInference: () => writeDashboard<ResidentInference>('/operators/dashboard/steward/inference/start', { method: 'POST' }),
   stopResidentInference: () => writeDashboard<ResidentInference>('/operators/dashboard/steward/inference/stop', { method: 'POST' }),
   stewardChat: (message: string) => writeDashboard<DashboardRecord>('/operators/dashboard/steward/chat', { method: 'POST', body: JSON.stringify({ message }) }),
+  connectAgentConversation: (agentId: string) => writeDashboard<AgentConversation>('/operators/dashboard/agent-channel/connect', { method: 'POST', body: JSON.stringify({ agent_id: agentId }) }),
+  sendAgentConversationMessage: (text: string) => writeDashboard<DashboardRecord>('/operators/dashboard/agent-channel/messages', { method: 'POST', body: JSON.stringify({ text }) }),
   stewardPrompt: (): Promise<DashboardRecord> => writeDashboard<DashboardRecord>('/operators/dashboard/steward/prompt', { method: 'GET' }) as Promise<DashboardRecord>,
   updateStewardPrompt: (text: string, expectedSha256: string | null): Promise<DashboardRecord> => writeDashboard<DashboardRecord>('/operators/dashboard/steward/prompt', { method: 'PUT', body: JSON.stringify({ text, expected_sha256: expectedSha256 }) }) as Promise<DashboardRecord>,
   enrollmentRequests: () => writeDashboard<{ items: EnrollmentRequest[] }>('/operators/dashboard/access/enrollment-requests', { method: 'GET' }),

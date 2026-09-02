@@ -83,6 +83,7 @@ import { ResourceBrokerWorkspace } from '@/components/resources/ResourceBrokerWo
 import { StewardPolicyPanel } from '@/components/steward/StewardPolicyPanel'
 import { StewardPromptEditor } from '@/components/steward/StewardPromptEditor'
 import { ResidentStewardChat } from '@/components/steward/ResidentStewardChat'
+import { AgentChannel } from '@/components/steward/AgentChannel'
 import { OperatorConfigEditor } from '@/components/settings/OperatorConfigEditor'
 import { SoftwareUpdatePanel } from '@/components/settings/SoftwareUpdatePanel'
 
@@ -111,7 +112,7 @@ const advancedItems: NavigationItem[] = [
   { id: 'network', label: 'Network', icon: Network, advanced: true },
   { id: 'cometbft', label: 'CometBFT', icon: GitBranch, advanced: true },
   { id: 'resources', label: 'Resources', icon: Gauge, advanced: true },
-  { id: 'hooks', label: 'Automation', icon: BellRing, advanced: true },
+  { id: 'hooks', label: 'Hooks', icon: BellRing },
 ]
 
 function inventoryRecords(value: ProviderArtifactInventory | undefined): DashboardRecord[] {
@@ -3185,7 +3186,11 @@ function HooksWorkspace({ data, onRefresh }: { data: DashboardData; onRefresh: (
 
 function AgentsWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {
   const refreshSteward = () => { void data.residentAgent.refetch(); void data.escalations.refetch(); void data.stewardActionPolicy.refetch(); void data.residentInference.refetch() }
-  return <div className="space-y-4"><StewardPolicyPanel
+  return <div className="space-y-4">
+    <AgentChannel onOpenHooks={() => onNavigate('hooks')} onOpenSettings={() => onNavigate('settings')} />
+    <details className="group rounded-xl border border-border/80 bg-card">
+      <summary className="cursor-pointer list-none px-5 py-4 text-sm font-medium text-slate-100">Local Steward runtime <span className="ml-2 text-xs font-normal text-muted-foreground">Optional local-model experiment</span></summary>
+      <div className="space-y-4 border-t border-border/70 p-4"><StewardPolicyPanel
     status={data.residentAgent.data}
     policy={data.stewardActionPolicy.data}
     inference={data.residentInference.data}
@@ -3204,7 +3209,10 @@ function AgentsWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData;
       refreshSteward()
       return result
     }}
-  /><AgentsSessionsWorkspace data={data} onNavigate={onNavigate} onRefresh={onRefresh} /></div>
+  /></div>
+    </details>
+    <AgentsSessionsWorkspace data={data} onNavigate={onNavigate} onRefresh={onRefresh} />
+  </div>
 }
 
 function AgentsSessionsWorkspace({ data, onNavigate, onRefresh }: { data: DashboardData; onNavigate: NavigationProps['onNavigate']; onRefresh: () => void }) {

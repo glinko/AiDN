@@ -119,6 +119,9 @@ class SnapshotStateService:
         reasoning_snapshot = getattr(self._host, "reasoning_provider_registry_snapshot", None)
         if callable(reasoning_snapshot):
             resident_agent_snapshot["reasoning_providers"] = reasoning_snapshot()
+        agent_conversation_snapshot = getattr(self._host, "agent_conversation_snapshot", None)
+        if callable(agent_conversation_snapshot):
+            resident_agent_snapshot["agent_conversation"] = agent_conversation_snapshot()
         retained_runtime_request_ids = self._host.runtime_protocol_store.snapshot_request_ids()
         return HypervisorStateSnapshot(
             resident_agent=resident_agent_snapshot,
@@ -450,6 +453,9 @@ class SnapshotStateService:
         restore_reasoning = getattr(self._host, "restore_reasoning_provider_registry", None)
         if callable(restore_reasoning):
             restore_reasoning(snapshot.resident_agent.get("reasoning_providers"))
+        restore_agent_conversation = getattr(self._host, "restore_agent_conversation", None)
+        if callable(restore_agent_conversation):
+            restore_agent_conversation(snapshot.resident_agent.get("agent_conversation"))
         restore_escalations = getattr(self._host, "restore_escalation_tasks", None)
         if callable(restore_escalations):
             restore_escalations(getattr(snapshot, "escalation_tasks", []))
