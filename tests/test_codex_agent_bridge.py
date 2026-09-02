@@ -6,6 +6,7 @@ from aidn_hypervisor.codex_agent_bridge import (
     CodexAgentBridge,
     CodexThreadState,
     McpRemoteClient,
+    _notification_turn_id,
     _result_text,
     extract_operator_messages,
 )
@@ -43,6 +44,11 @@ def test_extract_operator_messages_rejects_missing_inbox_shape() -> None:
 
 def test_result_text_accepts_current_app_server_message_item() -> None:
     assert _result_text({"type": "message", "text": " hello "}) == "hello"
+
+
+def test_notification_turn_id_accepts_nested_turn_shape() -> None:
+    assert _notification_turn_id({"turn": {"id": "turn-nested"}}) == "turn-nested"
+    assert _notification_turn_id({"turnId": "turn-flat", "turn": {"id": "other"}}) == "turn-flat"
 
 
 def test_mcp_remote_client_accepts_lowercase_session_header(monkeypatch) -> None:

@@ -55,7 +55,8 @@ def _result_text(item: Mapping[str, Any]) -> str:
     # older releases used ``agentMessage``.  Both are final assistant text
     # items, so the bridge normalizes the stable semantic contract instead of
     # tying the channel to one CLI release.
-    if item.get("type") not in {"agentMessage", "message"}:
+    item_type = item.get("type")
+    if not isinstance(item_type, str) or item_type.lower() not in {"agentmessage", "message"}:
         return ""
     text = item.get("text")
     if isinstance(text, str):
@@ -69,6 +70,16 @@ def _result_text(item: Mapping[str, Any]) -> str:
         ]
         return "\n".join(value for value in values if value).strip()
     return ""
+
+
+def _notification_turn_id(params: Mapping[str, Any]) -> str | None:
+    """Return a turn id from either app-server notification shape."""
+
+    turn_id = params.get("turnId")
+    if isinstance(turn_id, str) and turn_id:
+        return turn_id
+    nested_turn_id = _as_dict(params.get("turn")).get("id")
+    return nested_turn_id if isinstance(nested_turn_id, str) and nested_turn_id else None
 
 
 def extract_operator_messages(payload: object) -> list[dict[str, str]]:
@@ -452,7 +463,7 @@ class CodexAgentBridge:
             if notification is None:
                 continue
             params = _as_dict(notification.get("params"))
-            if params.get("turnId") != turn_id:
+            if _notification_turn_id(params) != turn_id:
                 continue
             if notification.get("method") == "item/completed":
                 text = _result_text(_as_dict(params.get("item")))
