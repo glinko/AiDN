@@ -1,4 +1,6 @@
 from aidn_hypervisor.codex_agent_bridge import (
+    DEFAULT_CODEX_MODEL,
+    DEFAULT_CODEX_REASONING_EFFORT,
     DEFAULT_PROTOCOL_VERSION,
     OPERATOR_MESSAGE_EVENT,
     CodexAgentBridge,
@@ -81,3 +83,5 @@ def test_new_codex_thread_uses_unrestricted_app_server_sandbox(tmp_path) -> None
 
     assert bridge._load_or_start_thread(process, CodexThreadState()) == "thread-test"
     assert process.calls[0][1]["sandbox"] == "danger-full-access"
+    assert process.calls[0][1]["model"] == DEFAULT_CODEX_MODEL
+    assert process.calls[0][1]["reasoningEffort"] == DEFAULT_CODEX_REASONING_EFFORT

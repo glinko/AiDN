@@ -31,6 +31,8 @@ from urllib.request import Request, urlopen
 DEFAULT_PROTOCOL_VERSION = "2025-06-18"
 DEFAULT_POLL_SECONDS = 2.0
 DEFAULT_TURN_TIMEOUT_SECONDS = 300.0
+DEFAULT_CODEX_MODEL = "gpt-5.6-luna"
+DEFAULT_CODEX_REASONING_EFFORT = "low"
 OPERATOR_MESSAGE_EVENT = "aidn.operator.agent_message"
 
 
@@ -404,6 +406,14 @@ class CodexAgentBridge:
                 # prompt and by the separate MCP credential, which grants
                 # only AUDIT:READ and CHAT:WRITE.
                 "sandbox": "danger-full-access",
+                # This agent is an interactive operator channel, not a
+                # long-running coding job.  Favor the available fast model
+                # and a low reasoning budget; deployments can override both
+                # without changing the bridge process.
+                "model": os.getenv("AIDN_CODEX_MODEL", DEFAULT_CODEX_MODEL),
+                "reasoningEffort": os.getenv(
+                    "AIDN_CODEX_REASONING_EFFORT", DEFAULT_CODEX_REASONING_EFFORT
+                ),
                 "personality": "pragmatic",
                 "serviceName": "aidn_codex_agent",
             },
