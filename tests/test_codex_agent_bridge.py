@@ -1,4 +1,9 @@
-from aidn_hypervisor.codex_agent_bridge import OPERATOR_MESSAGE_EVENT, extract_operator_messages
+from aidn_hypervisor.codex_agent_bridge import (
+    DEFAULT_PROTOCOL_VERSION,
+    OPERATOR_MESSAGE_EVENT,
+    McpRemoteClient,
+    extract_operator_messages,
+)
 
 
 def test_extract_operator_messages_keeps_only_valid_operator_chat_events() -> None:
@@ -29,3 +34,21 @@ def test_extract_operator_messages_keeps_only_valid_operator_chat_events() -> No
 
 def test_extract_operator_messages_rejects_missing_inbox_shape() -> None:
     assert extract_operator_messages({"items": "not-a-list"}) == []
+
+
+def test_mcp_remote_client_accepts_lowercase_session_header(monkeypatch) -> None:
+    client = McpRemoteClient(url="http://example.invalid/mcp", bearer_token="test-token")
+    calls: list[tuple[str, bool]] = []
+
+    def fake_post(method, _params, *, include_id=True):
+        calls.append((method, include_id))
+        if method == "initialize":
+            return ({"result": {"protocolVersion": DEFAULT_PROTOCOL_VERSION}}, {"mcp-session-id": "mcp-test"})
+        return ({}, {})
+
+    monkeypatch.setattr(client, "_post", fake_post)
+
+    client.initialize()
+
+    assert client._session_id == "mcp-test"
+    assert calls == [("initialize", True), ("notifications/initialized", False)]

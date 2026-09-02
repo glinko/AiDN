@@ -218,7 +218,18 @@ class McpRemoteClient:
         protocol = _as_dict(response.get("result")).get("protocolVersion")
         if protocol != DEFAULT_PROTOCOL_VERSION:
             raise BridgeError("AiDN MCP returned an incompatible protocol version")
-        session_id = headers.get("Mcp-Session-Id")
+        # HTTP field names are case-insensitive.  ``urllib`` preserves the
+        # spelling supplied by the remote server and Uvicorn emits this one
+        # as ``mcp-session-id``; treating it as a normal case-sensitive dict
+        # made the OAuth bridge reject an otherwise valid MCP initialization.
+        session_id = next(
+            (
+                value
+                for header, value in headers.items()
+                if header.lower() == "mcp-session-id"
+            ),
+            None,
+        )
         if not session_id:
             raise BridgeError("AiDN MCP did not return Mcp-Session-Id")
         self._session_id = session_id
