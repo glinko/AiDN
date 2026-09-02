@@ -52,3 +52,7 @@ def test_mcp_remote_client_accepts_lowercase_session_header(monkeypatch) -> None
 
     assert client._session_id == "mcp-test"
     assert calls == [("initialize", True), ("notifications/initialized", False)]
+
+    client.initialize()
+
+    assert calls == [("initialize", True), ("notifications/initialized", False)]

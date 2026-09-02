@@ -207,6 +207,11 @@ class McpRemoteClient:
         self._next_id = 1
 
     def initialize(self) -> None:
+        # A long-lived relay polls the inbox repeatedly.  MCP initialization
+        # creates one transport session, so repeat calls must reuse it instead
+        # of sending a second initialize request with Mcp-Session-Id attached.
+        if self._session_id:
+            return
         response, headers = self._post(
             "initialize",
             {
