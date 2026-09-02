@@ -6,6 +6,7 @@ from aidn_hypervisor.codex_agent_bridge import (
     CodexAgentBridge,
     CodexThreadState,
     McpRemoteClient,
+    _result_text,
     extract_operator_messages,
 )
 
@@ -38,6 +39,10 @@ def test_extract_operator_messages_keeps_only_valid_operator_chat_events() -> No
 
 def test_extract_operator_messages_rejects_missing_inbox_shape() -> None:
     assert extract_operator_messages({"items": "not-a-list"}) == []
+
+
+def test_result_text_accepts_current_app_server_message_item() -> None:
+    assert _result_text({"type": "message", "text": " hello "}) == "hello"
 
 
 def test_mcp_remote_client_accepts_lowercase_session_header(monkeypatch) -> None:

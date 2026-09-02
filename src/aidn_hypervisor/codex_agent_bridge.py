@@ -51,7 +51,11 @@ def _as_dict(value: object) -> dict[str, Any]:
 def _result_text(item: Mapping[str, Any]) -> str:
     """Read the final text from a Codex app-server item notification."""
 
-    if item.get("type") != "agentMessage":
+    # Current Codex app-server releases surface assistant output as ``message``;
+    # older releases used ``agentMessage``.  Both are final assistant text
+    # items, so the bridge normalizes the stable semantic contract instead of
+    # tying the channel to one CLI release.
+    if item.get("type") not in {"agentMessage", "message"}:
         return ""
     text = item.get("text")
     if isinstance(text, str):
