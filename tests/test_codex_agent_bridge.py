@@ -60,7 +60,7 @@ def test_mcp_remote_client_accepts_lowercase_session_header(monkeypatch) -> None
     assert calls == [("initialize", True), ("notifications/initialized", False)]
 
 
-def test_new_codex_thread_uses_app_server_read_only_sandbox(tmp_path) -> None:
+def test_new_codex_thread_uses_unrestricted_app_server_sandbox(tmp_path) -> None:
     class Process:
         def __init__(self) -> None:
             self.calls: list[tuple[str, dict]] = []
@@ -80,4 +80,4 @@ def test_new_codex_thread_uses_app_server_read_only_sandbox(tmp_path) -> None:
     process = Process()
 
     assert bridge._load_or_start_thread(process, CodexThreadState()) == "thread-test"
-    assert process.calls[0][1]["sandbox"] == "read-only"
+    assert process.calls[0][1]["sandbox"] == "danger-full-access"
