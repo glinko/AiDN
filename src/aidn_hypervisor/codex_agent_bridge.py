@@ -397,7 +397,7 @@ class CodexAgentBridge:
             {
                 "cwd": str(self._workspace),
                 "approvalPolicy": "never",
-                "sandbox": "readOnly",
+                "sandbox": "read-only",
                 "personality": "pragmatic",
                 "serviceName": "aidn_codex_agent",
             },

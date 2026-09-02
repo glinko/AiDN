@@ -1,4 +1,6 @@
 from aidn_hypervisor.codex_agent_bridge import (
+    CodexAgentBridge,
+    CodexThreadState,
     DEFAULT_PROTOCOL_VERSION,
     OPERATOR_MESSAGE_EVENT,
     McpRemoteClient,
@@ -52,6 +54,29 @@ def test_mcp_remote_client_accepts_lowercase_session_header(monkeypatch) -> None
 
     assert client._session_id == "mcp-test"
     assert calls == [("initialize", True), ("notifications/initialized", False)]
+
+
+def test_new_codex_thread_uses_app_server_read_only_sandbox(tmp_path) -> None:
+    class Process:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict]] = []
+
+        def request(self, method, params):
+            self.calls.append((method, params))
+            return {"thread": {"id": "thread-test"}}
+
+    bridge = CodexAgentBridge(
+        codex_command="codex",
+        codex_home=tmp_path / "codex-home",
+        state_file=tmp_path / "thread.json",
+        mcp_url="http://example.invalid/mcp",
+        mcp_token="test-token",
+        workspace=tmp_path,
+    )
+    process = Process()
+
+    assert bridge._load_or_start_thread(process, CodexThreadState()) == "thread-test"
+    assert process.calls[0][1]["sandbox"] == "read-only"
 
     client.initialize()
 
