@@ -77,8 +77,11 @@ def extract_operator_messages(payload: object) -> list[dict[str, str]]:
         record = _as_dict(item)
         if record.get("event_type") != OPERATOR_MESSAGE_EVENT:
             continue
-        details = _as_dict(record.get("details"))
-        text = details.get("text")
+        # Canonical Hypervisor events carry their application data in
+        # ``payload``.  Agent Channel messages are deliberately ordinary
+        # canonical events, not a private bridge-only record shape.
+        payload = _as_dict(record.get("payload"))
+        text = payload.get("text")
         event_id = record.get("event_id")
         if isinstance(text, str) and text.strip() and isinstance(event_id, str) and event_id:
             messages.append({"event_id": event_id, "text": text.strip()})

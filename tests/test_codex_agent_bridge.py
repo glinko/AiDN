@@ -12,17 +12,17 @@ def test_extract_operator_messages_keeps_only_valid_operator_chat_events() -> No
             {
                 "event_id": "evt-operator",
                 "event_type": OPERATOR_MESSAGE_EVENT,
-                "details": {"text": " Check resources "},
+                "payload": {"text": " Check resources "},
             },
             {
                 "event_id": "evt-other",
                 "event_type": "aidn.node.ready",
-                "details": {"text": "ignore"},
+                "payload": {"text": "ignore"},
             },
             {
                 "event_id": "evt-empty",
                 "event_type": OPERATOR_MESSAGE_EVENT,
-                "details": {"text": "   "},
+                "payload": {"text": "   "},
             },
         ]
     }
