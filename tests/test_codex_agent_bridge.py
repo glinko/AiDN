@@ -117,7 +117,7 @@ def test_codex_mcp_config_is_managed_and_idempotent(tmp_path) -> None:
     assert '[projects."/workspace"]' in first
     assert "[mcp_servers.aidn_hypervisor]" in first
     assert 'bearer_token_env_var = "AIDN_MCP_TOKEN"' in first
-    assert 'default_tools_approval_mode = "auto"' in first
+    assert 'default_tools_approval_mode = "approve"' in first
 
 
 def test_new_codex_thread_uses_unrestricted_app_server_sandbox(tmp_path) -> None:

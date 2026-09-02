@@ -65,7 +65,7 @@ def _ensure_codex_mcp_config(codex_home: Path, *, mcp_url: str) -> Path:
         + f"url = {json.dumps(mcp_url, ensure_ascii=False)}\n"
         + 'bearer_token_env_var = "AIDN_MCP_TOKEN"\n'
         + "required = true\n"
-        + 'default_tools_approval_mode = "auto"\n'
+        + 'default_tools_approval_mode = "approve"\n'
         + _AIDN_MCP_CONFIG_END
     )
     begin = existing.find(_AIDN_MCP_CONFIG_BEGIN)
