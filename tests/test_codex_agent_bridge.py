@@ -73,6 +73,35 @@ def test_mcp_remote_client_accepts_lowercase_session_header(monkeypatch) -> None
     assert calls == [("initialize", True), ("notifications/initialized", False)]
 
 
+def test_mcp_remote_client_close_releases_session(monkeypatch) -> None:
+    client = McpRemoteClient(url="http://example.invalid/mcp", bearer_token="test-token")
+    client._session_id = "mcp-test"
+    calls: list[tuple[str, str, str]] = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def fake_urlopen(request, *, timeout):
+        session_header = next(
+            value
+            for header, value in request.header_items()
+            if header.lower() == "mcp-session-id"
+        )
+        calls.append((request.method, session_header, str(timeout)))
+        return Response()
+
+    monkeypatch.setattr("aidn_hypervisor.codex_agent_bridge.urlopen", fake_urlopen)
+
+    client.close()
+
+    assert calls == [("DELETE", "mcp-test", "10")]
+    assert client._session_id is None
+
+
 def test_new_codex_thread_uses_unrestricted_app_server_sandbox(tmp_path) -> None:
     class Process:
         def __init__(self) -> None:

@@ -271,6 +271,30 @@ class McpRemoteClient:
             raise BridgeError(f"AiDN MCP tool {name} failed: {content}")
         return _as_dict(result.get("structuredContent"))
 
+    def close(self) -> None:
+        """Release the long-lived MCP transport session when the relay exits."""
+
+        session_id = self._session_id
+        if not session_id:
+            return
+        request = Request(
+            self._url,
+            headers={
+                "Authorization": f"Bearer {self._token}",
+                "Mcp-Session-Id": session_id,
+            },
+            method="DELETE",
+        )
+        try:
+            with urlopen(request, timeout=10):
+                pass
+        except (HTTPError, URLError, TimeoutError):
+            # Session cleanup is best effort.  A node restart or an expired
+            # server-side session has already reclaimed the slot in that case.
+            pass
+        finally:
+            self._session_id = None
+
     def _post(
         self,
         method: str,
@@ -550,6 +574,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         except BridgeError as error:
             print(f"aidn-codex-agent: {error}", file=sys.stderr)
             return 1
+    bridge: CodexAgentBridge | None = None
     try:
         bridge = CodexAgentBridge(
             codex_command=args.codex_command,
@@ -571,6 +596,9 @@ def main(argv: Iterable[str] | None = None) -> int:
     except BridgeError as error:
         print(f"aidn-codex-agent: {error}", file=sys.stderr)
         return 1
+    finally:
+        if bridge is not None:
+            bridge._mcp.close()
 
 
 if __name__ == "__main__":  # pragma: no cover - console entry point
