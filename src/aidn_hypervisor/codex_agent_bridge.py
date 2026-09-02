@@ -3,8 +3,8 @@
 This module deliberately runs *outside* the Hypervisor process.  Codex owns
 the ChatGPT OAuth credentials in its own ``CODEX_HOME``; AiDN receives only a
 normal, revocable MCP bearer credential.  The bridge converts durable
-operator-chat events into Codex turns and submits Codex's final text through
-the narrow ``aidn.operator.chat.reply`` MCP tool.
+operator-chat events into Codex turns and lets the Codex runtime use the
+same authenticated AiDN MCP server for the operator-authorized control plane.
 
 It is a reference runtime for a single trusted operator machine.  It is not a
 replacement for the Hypervisor's MCP gateway and never needs the dashboard
@@ -19,6 +19,7 @@ import os
 import queue
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from collections.abc import Iterable, Mapping
@@ -34,10 +35,74 @@ DEFAULT_TURN_TIMEOUT_SECONDS = 300.0
 DEFAULT_CODEX_MODEL = "gpt-5.6-luna"
 DEFAULT_CODEX_REASONING_EFFORT = "low"
 OPERATOR_MESSAGE_EVENT = "aidn.operator.agent_message"
+_AIDN_MCP_CONFIG_BEGIN = "# BEGIN AIDN HYPERVISOR MCP\n"
+_AIDN_MCP_CONFIG_END = "# END AIDN HYPERVISOR MCP\n"
 
 
 class BridgeError(RuntimeError):
     """A recoverable bridge operation error suitable for an operator log."""
+
+
+def _ensure_codex_mcp_config(codex_home: Path, *, mcp_url: str) -> Path:
+    """Configure Codex to use the authenticated AiDN Hypervisor MCP server.
+
+    ``CODEX_HOME`` is dedicated to this bridge, but it can already contain
+    project trust settings and other operator preferences. Keep those bytes
+    intact and manage one clearly delimited block so repeated bridge starts
+    are idempotent. The bearer value is deliberately not written here: Codex
+    resolves ``AIDN_MCP_TOKEN`` from the bridge service environment.
+    """
+
+    path = codex_home / "config.toml"
+    try:
+        existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    except OSError as error:
+        raise BridgeError(f"Could not read Codex config: {error}") from error
+
+    block = (
+        _AIDN_MCP_CONFIG_BEGIN
+        + "[mcp_servers.aidn_hypervisor]\n"
+        + f"url = {json.dumps(mcp_url, ensure_ascii=False)}\n"
+        + 'bearer_token_env_var = "AIDN_MCP_TOKEN"\n'
+        + "required = true\n"
+        + 'default_tools_approval_mode = "auto"\n'
+        + _AIDN_MCP_CONFIG_END
+    )
+    begin = existing.find(_AIDN_MCP_CONFIG_BEGIN)
+    end = existing.find(_AIDN_MCP_CONFIG_END)
+    if (begin == -1) != (end == -1):
+        raise BridgeError("Codex config contains an incomplete AiDN MCP block")
+    if begin >= 0:
+        end += len(_AIDN_MCP_CONFIG_END)
+        updated = existing[:begin] + block + existing[end:]
+    elif "[mcp_servers.aidn_hypervisor]" in existing:
+        raise BridgeError(
+            "Codex config already defines mcp_servers.aidn_hypervisor outside the bridge-managed block"
+        )
+    else:
+        separator = "\n" if not existing or existing.endswith("\n") else "\n\n"
+        updated = existing + separator + block
+
+    if updated != existing:
+        try:
+            codex_home.mkdir(parents=True, exist_ok=True)
+            descriptor, temporary = tempfile.mkstemp(
+                dir=codex_home,
+                prefix=".config.toml.",
+            )
+            try:
+                with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                    stream.write(updated)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.chmod(temporary, 0o600)
+                os.replace(temporary, path)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+        except OSError as error:
+            raise BridgeError(f"Could not write Codex config: {error}") from error
+    return path
 
 
 def _json_line(payload: Mapping[str, Any]) -> str:
@@ -364,11 +429,14 @@ class CodexAgentBridge:
         self._codex_command = codex_command
         self._codex_home = codex_home
         self._state_file = state_file
+        self._mcp_url = mcp_url
         self._mcp = McpRemoteClient(url=mcp_url, bearer_token=mcp_token)
         self._workspace = workspace
 
-    def _app_server(self) -> JsonLineRpcProcess:
+    def _app_server(self, *, configure_mcp: bool = True) -> JsonLineRpcProcess:
         self._codex_home.mkdir(parents=True, exist_ok=True)
+        if configure_mcp:
+            _ensure_codex_mcp_config(self._codex_home, mcp_url=self._mcp_url)
         environment = os.environ.copy()
         environment["CODEX_HOME"] = str(self._codex_home)
         process = JsonLineRpcProcess([self._codex_command, "app-server", "--stdio"], environment=environment)
@@ -438,12 +506,12 @@ class CodexAgentBridge:
             {
                 "cwd": str(self._workspace),
                 "approvalPolicy": "never",
-                # This reference bridge is commonly deployed on compact
-                # Ubuntu nodes where unprivileged user namespaces are
-                # disabled.  Codex cannot create its bubblewrap sandbox there
-                # even for ``read-only``.  The agent is still confined by its
-                # prompt and by the separate MCP credential, which grants
-                # only AUDIT:READ and CHAT:WRITE.
+                # This bridge is commonly deployed on compact Ubuntu nodes
+                # where unprivileged user namespaces are disabled. Codex
+                # cannot create its bubblewrap sandbox there even for
+                # ``read-only``. Hypervisor control remains bounded by the
+                # revocable MCP credential; the test operator explicitly
+                # grants that credential the full AiDN permission catalog.
                 "sandbox": "danger-full-access",
                 # This agent is an interactive operator channel, not a
                 # long-running coding job.  Favor the available fast model
@@ -466,11 +534,17 @@ class CodexAgentBridge:
 
     def _run_turn(self, process: JsonLineRpcProcess, thread_id: str, operator_text: str) -> str:
         prompt = (
-            "You are the external Codex agent for an AiDN Hypervisor operator. "
-            "Answer the operator's message directly and concisely in the message language. "
-            "You are connected through an audited MCP bridge: do not claim you changed a node "
-            "unless the supplied facts prove it. Do not use shell commands, files, browser, or "
-            "network tools; explain what you know and state what evidence is missing.\n\n"
+            "You are the external Codex operations agent for an AiDN Hypervisor operator. "
+            "Answer directly and concisely in the operator's language. The `aidn_hypervisor` "
+            "MCP server is connected with the operator-authorized full permission catalog. "
+            "Use its tools to inspect and manage the node: providers, runtimes, models, bundles, "
+            "endpoints, wallet, hooks, scheduler, network, consensus, settings, and other "
+            "supported resources. You may create, update, activate, stop, retire, or delete "
+            "resources when the operator requests it; no extra approval prompt is needed in this "
+            "test deployment. Prefer MCP tools over host shell commands for Hypervisor changes. "
+            "Never claim an operation succeeded without the tool result; report exact errors and "
+            "the next useful action. Use host diagnostics only when MCP cannot provide the needed "
+            "evidence.\n\n"
             f"Operator message:\n{operator_text}"
         )
         result = process.request(
@@ -546,7 +620,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         try:
             # The actual code is printed before waiting so an operator can open
             # the browser immediately.  It is not persisted or logged to AiDN.
-            process = bridge._app_server()
+            process = bridge._app_server(configure_mcp=False)
             try:
                 result = process.request("account/login/start", {"type": "chatgptDeviceCode"})
                 url = str(result.get("verificationUrl", ""))

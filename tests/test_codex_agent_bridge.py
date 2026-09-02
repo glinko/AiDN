@@ -6,6 +6,7 @@ from aidn_hypervisor.codex_agent_bridge import (
     CodexAgentBridge,
     CodexThreadState,
     McpRemoteClient,
+    _ensure_codex_mcp_config,
     _notification_turn_id,
     _result_text,
     extract_operator_messages,
@@ -100,6 +101,23 @@ def test_mcp_remote_client_close_releases_session(monkeypatch) -> None:
 
     assert calls == [("DELETE", "mcp-test", "10")]
     assert client._session_id is None
+
+
+def test_codex_mcp_config_is_managed_and_idempotent(tmp_path) -> None:
+    codex_home = tmp_path / "codex-home"
+    config = codex_home / "config.toml"
+    config.parent.mkdir()
+    config.write_text('[projects."/workspace"]\ntrust_level = "trusted"\n', encoding="utf-8")
+
+    _ensure_codex_mcp_config(codex_home, mcp_url="http://127.0.0.1:8766/mcp")
+    first = config.read_text(encoding="utf-8")
+    _ensure_codex_mcp_config(codex_home, mcp_url="http://127.0.0.1:8766/mcp")
+
+    assert config.read_text(encoding="utf-8") == first
+    assert '[projects."/workspace"]' in first
+    assert "[mcp_servers.aidn_hypervisor]" in first
+    assert 'bearer_token_env_var = "AIDN_MCP_TOKEN"' in first
+    assert 'default_tools_approval_mode = "auto"' in first
 
 
 def test_new_codex_thread_uses_unrestricted_app_server_sandbox(tmp_path) -> None:
