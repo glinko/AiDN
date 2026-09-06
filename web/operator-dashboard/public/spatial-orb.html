@@ -27,7 +27,7 @@
         background:
           radial-gradient(circle at 28% 21%, rgba(194, 219, 239, 0.58), transparent 31%),
           radial-gradient(circle at 76% 34%, rgba(214, 204, 239, 0.4), transparent 34%),
-          linear-gradient(180deg, #fbfdff 0%, #f3f7fa 40%, #e7edf2 100%);
+          linear-gradient(180deg, #fbfdff 0%, #f3f7fa 72%, #e7edf2 100%);
       }
 
       canvas {
@@ -76,8 +76,8 @@
     <!-- impeccable:direction-contract
     THESIS: A single quiet milky-glass orb makes AiDN feel spatial before any interface appears.
     OWN-WORLD: The established high-key Spatial palette, cool spectral reflections, atmospheric horizon, and soft optical depth.
-    STORY: Pale environment first, centered orb second, then restrained refraction and penumbral shadow on closer inspection.
-    FIRST VIEWPORT: One elevated upper-third sphere and its shadow only; no chrome, text, particles, orbit, controls, or competing objects.
+    STORY: Pale environment first, elevated orb second, four softly faceted cubes third, then the lowered ground and long penumbral shadows.
+    FIRST VIEWPORT: One upper-third sphere with four smaller rounded cubes to its right; no chrome, text, particles, orbit, or controls.
     FORM: Pinned reference composition; seed key: user-pinned-spatial-orb-v1.
     FINISH: Canvas 2D, responsive high-DPI rendering, subtle light drift, reduced-motion support, and a CSS fallback.
     -->
@@ -85,7 +85,7 @@
     <canvas
       id="spatial-orb"
       role="img"
-      aria-label="A translucent milky glass sphere floating over a softly illuminated iridescent background."
+      aria-label="A translucent milky glass sphere and four softly colored rounded cubes floating over a low iridescent ground."
     ></canvas>
 
     <script>
@@ -119,6 +119,68 @@
             { weight: 0.38, period: randomBetween(57000, 78000), phase: randomBetween(0, fullTurn) },
           ],
         };
+        const cubeLayout = [
+          {
+            x: 1.5,
+            y: -0.78,
+            size: 0.62,
+            rotation: -0.045,
+            colors: {
+              frontStart: "#ebe9fb",
+              frontEnd: "#9892cc",
+              topStart: "#faf9ff",
+              topEnd: "#c8c2ea",
+              sideStart: "#aaa3d6",
+              sideEnd: "#7671a5",
+              shadow: "rgba(83, 77, 124, 0.2)",
+            },
+          },
+          {
+            x: 1.88,
+            y: -0.2,
+            size: 0.48,
+            rotation: 0.035,
+            colors: {
+              frontStart: "#f6e8df",
+              frontEnd: "#bd8f7d",
+              topStart: "#fffaf6",
+              topEnd: "#dfbfae",
+              sideStart: "#cca08d",
+              sideEnd: "#966b5b",
+              shadow: "rgba(119, 77, 62, 0.18)",
+            },
+          },
+          {
+            x: 1.55,
+            y: 0.43,
+            size: 0.56,
+            rotation: -0.025,
+            colors: {
+              frontStart: "#e2f5f8",
+              frontEnd: "#76aec0",
+              topStart: "#f7feff",
+              topEnd: "#b5dce5",
+              sideStart: "#8ebdca",
+              sideEnd: "#568a9c",
+              shadow: "rgba(54, 99, 114, 0.18)",
+            },
+          },
+          {
+            x: 1.92,
+            y: 0.9,
+            size: 0.43,
+            rotation: 0.052,
+            colors: {
+              frontStart: "#e4f0e9",
+              frontEnd: "#83ad9c",
+              topStart: "#f8fcfa",
+              topEnd: "#bdd6ca",
+              sideStart: "#96b9aa",
+              sideEnd: "#648d7c",
+              shadow: "rgba(53, 91, 75, 0.17)",
+            },
+          },
+        ];
 
         function sampleWanderAxis(waves, time) {
           let weightedPosition = 0;
@@ -194,11 +256,11 @@
           );
           context.restore();
 
-          const horizon = height * 0.425;
+          const horizon = height * 0.75;
           const ground = context.createLinearGradient(0, horizon, 0, height);
-          ground.addColorStop(0, "rgba(218, 228, 236, 0.34)");
-          ground.addColorStop(0.09, "rgba(231, 237, 242, 0.54)");
-          ground.addColorStop(1, "rgba(224, 231, 237, 0.74)");
+          ground.addColorStop(0, "rgba(204, 219, 231, 0.52)");
+          ground.addColorStop(0.09, "rgba(224, 232, 239, 0.66)");
+          ground.addColorStop(1, "rgba(216, 226, 234, 0.82)");
           context.fillStyle = ground;
           context.beginPath();
           context.moveTo(0, horizon + height * 0.018);
@@ -217,7 +279,7 @@
 
           const haze = context.createLinearGradient(0, horizon - height * 0.05, 0, horizon + height * 0.11);
           haze.addColorStop(0, "rgba(255,255,255,0)");
-          haze.addColorStop(0.48, "rgba(255,255,255,0.5)");
+          haze.addColorStop(0.48, "rgba(255,255,255,0.28)");
           haze.addColorStop(1, "rgba(255,255,255,0)");
           context.fillStyle = haze;
           context.fillRect(0, horizon - height * 0.05, width, height * 0.16);
@@ -243,28 +305,28 @@
 
           context.save();
           context.translate(centerX + radius * (0.08 + drift * 0.012), shadowY);
-          context.scale(1, 0.245);
-          const broadShadow = context.createRadialGradient(0, 0, radius * 0.08, 0, 0, radius * 1.3);
-          broadShadow.addColorStop(0, "rgba(64, 80, 91, 0.27)");
-          broadShadow.addColorStop(0.36, "rgba(83, 101, 113, 0.16)");
-          broadShadow.addColorStop(0.72, "rgba(104, 125, 139, 0.055)");
+          context.scale(1.1, 0.24);
+          const broadShadow = context.createRadialGradient(0, 0, radius * 0.08, 0, 0, radius * 1.45);
+          broadShadow.addColorStop(0, "rgba(64, 80, 91, 0.18)");
+          broadShadow.addColorStop(0.36, "rgba(83, 101, 113, 0.1)");
+          broadShadow.addColorStop(0.72, "rgba(104, 125, 139, 0.035)");
           broadShadow.addColorStop(1, "rgba(104, 125, 139, 0)");
           context.fillStyle = broadShadow;
           context.beginPath();
-          context.arc(0, 0, radius * 1.3, 0, Math.PI * 2);
+          context.arc(0, 0, radius * 1.45, 0, Math.PI * 2);
           context.fill();
           context.restore();
 
           context.save();
           context.translate(centerX - radius * 0.2, shadowY - radius * 0.025);
           context.scale(1, 0.13);
-          const contactShadow = context.createRadialGradient(0, 0, 0, 0, 0, radius * 0.72);
-          contactShadow.addColorStop(0, "rgba(43, 59, 69, 0.31)");
-          contactShadow.addColorStop(0.52, "rgba(76, 94, 106, 0.13)");
+          const contactShadow = context.createRadialGradient(0, 0, 0, 0, 0, radius * 0.82);
+          contactShadow.addColorStop(0, "rgba(43, 59, 69, 0.14)");
+          contactShadow.addColorStop(0.52, "rgba(76, 94, 106, 0.06)");
           contactShadow.addColorStop(1, "rgba(76, 94, 106, 0)");
           context.fillStyle = contactShadow;
           context.beginPath();
-          context.arc(0, 0, radius * 0.72, 0, Math.PI * 2);
+          context.arc(0, 0, radius * 0.82, 0, Math.PI * 2);
           context.fill();
           context.restore();
 
@@ -281,6 +343,152 @@
           context.arc(0, 0, radius * 0.82, 0, Math.PI * 2);
           context.fill();
           context.restore();
+        }
+
+        function drawFacet(points, fillStyle, edgeWidth) {
+          context.beginPath();
+          context.moveTo(points[0].x, points[0].y);
+          for (let index = 1; index < points.length; index += 1) {
+            context.lineTo(points[index].x, points[index].y);
+          }
+          context.closePath();
+          context.fillStyle = fillStyle;
+          context.fill();
+          context.lineJoin = "round";
+          context.lineWidth = edgeWidth;
+          context.strokeStyle = fillStyle;
+          context.stroke();
+        }
+
+        function drawRoundedCube(centerX, centerY, size, colors, rotation) {
+          const half = size * 0.39;
+          const depthX = size * 0.18;
+          const depthY = -size * 0.14;
+          const cornerRadius = size * 0.145;
+
+          context.save();
+          context.translate(centerX, centerY);
+          context.rotate(rotation);
+
+          context.save();
+          context.shadowColor = colors.shadow;
+          context.shadowBlur = size * 0.3;
+          context.shadowOffsetX = size * 0.08;
+          context.shadowOffsetY = size * 0.16;
+          context.fillStyle = colors.frontEnd;
+          context.beginPath();
+          context.roundRect(-half, -half, half * 2, half * 2, cornerRadius);
+          context.fill();
+          context.restore();
+
+          const topGradient = context.createLinearGradient(-half, -half, half + depthX, -half + depthY);
+          topGradient.addColorStop(0, colors.topStart);
+          topGradient.addColorStop(1, colors.topEnd);
+          drawFacet(
+            [
+              { x: -half, y: -half },
+              { x: half, y: -half },
+              { x: half + depthX, y: -half + depthY },
+              { x: -half + depthX, y: -half + depthY },
+            ],
+            topGradient,
+            size * 0.045
+          );
+
+          const sideGradient = context.createLinearGradient(half, -half, half + depthX, half + depthY);
+          sideGradient.addColorStop(0, colors.sideStart);
+          sideGradient.addColorStop(1, colors.sideEnd);
+          drawFacet(
+            [
+              { x: half, y: -half },
+              { x: half + depthX, y: -half + depthY },
+              { x: half + depthX, y: half + depthY },
+              { x: half, y: half },
+            ],
+            sideGradient,
+            size * 0.045
+          );
+
+          const frontGradient = context.createLinearGradient(-half, -half, half, half);
+          frontGradient.addColorStop(0, colors.frontStart);
+          frontGradient.addColorStop(0.48, colors.topEnd);
+          frontGradient.addColorStop(1, colors.frontEnd);
+          context.fillStyle = frontGradient;
+          context.beginPath();
+          context.roundRect(-half, -half, half * 2, half * 2, cornerRadius);
+          context.fill();
+
+          context.save();
+          context.beginPath();
+          context.roundRect(-half, -half, half * 2, half * 2, cornerRadius);
+          context.clip();
+          const sheen = context.createRadialGradient(
+            -size * 0.2,
+            -size * 0.22,
+            0,
+            -size * 0.2,
+            -size * 0.22,
+            size * 0.5
+          );
+          sheen.addColorStop(0, "rgba(255,255,255,0.82)");
+          sheen.addColorStop(0.28, "rgba(255,255,255,0.3)");
+          sheen.addColorStop(1, "rgba(255,255,255,0)");
+          context.fillStyle = sheen;
+          context.fillRect(-half, -half, half * 2, half * 2);
+
+          const lowerShade = context.createLinearGradient(0, -half, 0, half);
+          lowerShade.addColorStop(0.45, "rgba(255,255,255,0)");
+          lowerShade.addColorStop(1, "rgba(47,62,72,0.12)");
+          context.fillStyle = lowerShade;
+          context.fillRect(-half, -half, half * 2, half * 2);
+          context.restore();
+
+          context.strokeStyle = "rgba(255,255,255,0.42)";
+          context.lineWidth = Math.max(0.8, size * 0.018);
+          context.beginPath();
+          context.roundRect(-half, -half, half * 2, half * 2, cornerRadius);
+          context.stroke();
+
+          context.strokeStyle = "rgba(255,255,255,0.72)";
+          context.lineCap = "round";
+          context.lineWidth = Math.max(1.2, size * 0.04);
+          context.beginPath();
+          context.moveTo(-size * 0.21, -size * 0.22);
+          context.lineTo(-size * 0.04, -size * 0.3);
+          context.stroke();
+
+          context.restore();
+        }
+
+        function drawCubeCluster(baseCenterX, baseCenterY, radius, groundY) {
+          for (const cube of cubeLayout) {
+            const cubeX = baseCenterX + radius * cube.x;
+            const cubeSize = radius * cube.size;
+
+            context.save();
+            context.globalAlpha = 0.44;
+            context.translate(cubeX + cubeSize * 0.12, groundY + cubeSize * 0.08);
+            context.scale(1, 0.19);
+            const shadow = context.createRadialGradient(0, 0, 0, 0, 0, cubeSize * 0.72);
+            shadow.addColorStop(0, cube.colors.shadow);
+            shadow.addColorStop(0.52, "rgba(75,92,102,0.065)");
+            shadow.addColorStop(1, "rgba(75,92,102,0)");
+            context.fillStyle = shadow;
+            context.beginPath();
+            context.arc(0, 0, cubeSize * 0.72, 0, fullTurn);
+            context.fill();
+            context.restore();
+          }
+
+          for (const cube of cubeLayout) {
+            drawRoundedCube(
+              baseCenterX + radius * cube.x,
+              baseCenterY + radius * cube.y,
+              radius * cube.size,
+              cube.colors,
+              cube.rotation
+            );
+          }
         }
 
         function drawOrb(centerX, centerY, radius, time) {
@@ -451,8 +659,9 @@
           const wander = getWanderOffset(time, radius);
           const centerX = baseCenterX + wander.x;
           const centerY = baseCenterY + wander.y;
+          const groundY = viewportHeight * 0.765;
           const shadowCenterX = baseCenterX + wander.x * 0.38;
-          const shadowCenterY = baseCenterY + radius * 0.22 + wander.y * 0.1;
+          const shadowCenterY = groundY - radius * 0.94;
 
           context.setTransform(1, 0, 0, 1, 0, 0);
           context.clearRect(0, 0, canvas.width, canvas.height);
@@ -460,6 +669,7 @@
 
           drawBackground(time);
           drawShadow(shadowCenterX, shadowCenterY, radius, time);
+          drawCubeCluster(baseCenterX, baseCenterY, radius, groundY);
           drawOrb(centerX, centerY, radius, time);
 
           document.body.classList.add("is-rendered");
