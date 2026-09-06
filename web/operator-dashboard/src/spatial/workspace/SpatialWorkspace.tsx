@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 
 import { useReducedMotion } from 'motion/react'
-import { X } from 'lucide-react'
+import { Activity, Box, ChevronRight, Command, Database, Network, Settings2, Sparkles, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 
 import { cn } from '@/lib/utils'
@@ -141,6 +141,12 @@ function DefaultWorkspaceOverlay({ state, onReturn, rendererState }: { state: Sp
   const primaryPresence = state.primaryAgentPresence
   const hasSelection = Boolean(state.selectedNodeId && state.selectedNodeId !== 'mock-agent' && state.selectedNodeId !== 'mock-endpoint')
   const dataStatus = dataStatusLabel(state.workspaceData.state)
+  const entityCounts = {
+    subagents: state.workspaceData.projection.entities.filter((entity) => entity.kind === 'subagent').length,
+    endpoints: state.workspaceData.projection.entities.filter((entity) => entity.kind === 'endpoint').length,
+    artifacts: state.workspaceData.projection.entities.filter((entity) => entity.kind === 'artifact').length,
+    attention: state.workspaceData.projection.entities.filter((entity) => entity.kind === 'attention').length,
+  }
 
   const handleNavigationKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape' && state.camera.focusId) {
@@ -163,13 +169,105 @@ function DefaultWorkspaceOverlay({ state, onReturn, rendererState }: { state: Sp
             setFeedback(`SHOW_IN_WORKSPACE requested for ${component.component_type}; canonical presence was not mutated.`)
           }}
         /> : null}
-      <SpatialInteractive className="aidn-spatial-data-pill" data-aidn-spatial-data-status={state.workspaceData.state}>
-        <StatusLabel status={dataStatus.status}>{dataStatus.label}</StatusLabel>
+      <SpatialInteractive className="aidn-spatial-shell-header">
+        <div className="aidn-spatial-brand" aria-label="AiDN Spatial Workspace">
+          <span className="aidn-spatial-brand-mark" aria-hidden="true"><Sparkles size={16} strokeWidth={1.8} /></span>
+          <div className="aidn-spatial-brand-copy">
+            <strong>AiDN</strong>
+            <span>Spatial Workspace</span>
+          </div>
+        </div>
+        <div className="aidn-spatial-header-divider" aria-hidden="true" />
+        <div className="aidn-spatial-node-context">
+          <span className="aidn-spatial-node-context-label">Local Hypervisor</span>
+          <strong>{state.workspaceData.scope.node_id}</strong>
+          <span className="aidn-spatial-node-context-meta">rev {state.workspaceData.projection.sourceRevision}</span>
+        </div>
+        <div className="aidn-spatial-header-status" data-aidn-spatial-data-status={state.workspaceData.state}>
+          <StatusLabel status={dataStatus.status}>{dataStatus.label}</StatusLabel>
+        </div>
+        <div className="aidn-spatial-shell-actions">
+          <Button
+            size="sm"
+            variant="outline"
+            accent="cyan"
+            onClick={state.openPanel}
+            aria-label="Open GlassFrame"
+          >
+            <Box size={15} aria-hidden="true" />
+            <span>Open GlassFrame</span>
+          </Button>
+          {onReturn ? <Button size="sm" variant="ghost" accent="neutral" onClick={onReturn}>Classic UI</Button> : null}
+        </div>
       </SpatialInteractive>
-      <SpatialInteractive className="aidn-spatial-workspace-trigger">
-        {!state.panelOpen ? (
-          <Button variant="outline" accent="cyan" onClick={state.openPanel}>Open GlassFrame</Button>
-        ) : null}
+
+      <SpatialInteractive className="aidn-spatial-sidebar">
+        <div className="aidn-spatial-sidebar-heading">
+          <span>Workspace</span>
+          <span className="aidn-spatial-sidebar-node">{state.workspaceData.scope.node_id}</span>
+        </div>
+        <nav aria-label="Spatial workspace navigation" className="aidn-spatial-sidebar-nav">
+          <button type="button" className="is-active" onClick={state.openPanel}>
+            <Box size={16} aria-hidden="true" />
+            <span>Overview</span>
+            <ChevronRight size={14} aria-hidden="true" />
+          </button>
+          <button type="button" onClick={() => { state.selectNode(FOCUS_PRIMARY_AGENT); state.focusPrimaryAgent() }}>
+            <Activity size={16} aria-hidden="true" />
+            <span>Primary Agent</span>
+          </button>
+          <button type="button" onClick={state.openPanel}>
+            <Network size={16} aria-hidden="true" />
+            <span>Topology</span>
+            <span className="aidn-spatial-sidebar-count">{entityCounts.subagents + entityCounts.endpoints}</span>
+          </button>
+          <button type="button" onClick={state.openPanel}>
+            <Database size={16} aria-hidden="true" />
+            <span>Memory</span>
+          </button>
+        </nav>
+        <div className="aidn-spatial-sidebar-footer">
+          <button type="button" onClick={state.openPanel}>
+            <Settings2 size={16} aria-hidden="true" />
+            <span>Node settings</span>
+          </button>
+          <span className="aidn-spatial-sidebar-hint">Drag to orbit · scroll to zoom</span>
+        </div>
+      </SpatialInteractive>
+
+      <SpatialInteractive className="aidn-spatial-scene-intro">
+        <h1>Node workspace</h1>
+        <p>Operate the local execution surface with the Primary Agent at the center of the graph.</p>
+        <div className="aidn-spatial-scene-legend" aria-label="Workspace legend">
+          <span><i className="aidn-spatial-legend-dot aidn-spatial-legend-dot--agent" />Primary Agent</span>
+          <span><i className="aidn-spatial-legend-dot aidn-spatial-legend-dot--endpoint" />Endpoints</span>
+          <span><i className="aidn-spatial-legend-dot aidn-spatial-legend-dot--artifact" />Artifacts</span>
+        </div>
+      </SpatialInteractive>
+
+      <SpatialInteractive className="aidn-spatial-signal-strip" aria-label="Node signals">
+        <div className="aidn-spatial-signal-heading">
+          <span className="aidn-spatial-signal-pulse" aria-hidden="true" />
+          <span>Live signals</span>
+        </div>
+        <div className="aidn-spatial-signal-grid">
+          <div><span>Agent</span><strong>{primaryVisual.label}</strong></div>
+          <div><span>Graph</span><strong>{entityCounts.subagents + entityCounts.endpoints + entityCounts.artifacts} entities</strong></div>
+          <div><span>Attention</span><strong>{entityCounts.attention ? `${entityCounts.attention} open` : 'Clear'}</strong></div>
+        </div>
+      </SpatialInteractive>
+
+      <SpatialInteractive className="aidn-spatial-commandbar">
+        <Button size="sm" variant="solid" accent="blue" onClick={state.openInteraction}>
+          <Command size={15} aria-hidden="true" />
+          <span>Ask Primary Agent</span>
+          <kbd>⌘K</kbd>
+        </Button>
+        <span className="aidn-spatial-commandbar-context">Presentation-only preview · Node state remains authoritative</span>
+        <button type="button" className="aidn-spatial-commandbar-inspect" onClick={state.openPanel}>
+          <span>Inspect workspace</span>
+          <ChevronRight size={15} aria-hidden="true" />
+        </button>
       </SpatialInteractive>
       {state.panelOpen ? (
         <SpatialInteractive className="aidn-spatial-workspace-panel">
@@ -179,13 +277,18 @@ function DefaultWorkspaceOverlay({ state, onReturn, rendererState }: { state: Sp
                 <StatusLabel status={state.selectedNodeId ? 'ready' : 'unknown'}>
                   {state.selectedNodeId ? 'Selected Node' : 'Awaiting selection'}
                 </StatusLabel>
-                <h2 id="hybrid-shell-title">Hybrid renderer shell</h2>
+                <h2 id="hybrid-shell-title">Workspace inspector</h2>
               </div>
               <IconButton aria-label="Close GlassFrame" variant="ghost" accent="neutral" onClick={state.closePanel}>
                 <X aria-hidden="true" />
               </IconButton>
             </div>
-            <p>DOM GlassFrame stays above the mock scene. Empty overlay space passes pointer events through to canvas orbit/pan.</p>
+            <p>Inspect the Node-owned projection without losing the spatial context underneath.</p>
+            <div className="aidn-spatial-panel-summary" aria-label="Workspace summary">
+              <div><span>Node</span><strong>{state.workspaceData.scope.node_id}</strong></div>
+              <div><span>Entities</span><strong>{entityCounts.subagents + entityCounts.endpoints + entityCounts.artifacts}</strong></div>
+              <div><span>Renderer</span><strong>{rendererState === 'ready' ? 'Ready' : 'Fallback'}</strong></div>
+            </div>
             {isSpatialInteractionEnabled() ? <ConversationSurface state={state} openRequest={state.interactionRequest} /> : null}
             {isSpatialTopologyEnabled() ? <SpatialTopologySurface workspaceData={state.workspaceData} prefersReducedMotion={state.prefersReducedMotion} /> : null}
             <SpatialMemorySurface workspaceData={state.workspaceData} prefersReducedMotion={state.prefersReducedMotion} />
