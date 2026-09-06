@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#edf2f6" />
+    <title>AiDN Spatial Orb</title>
+    <style>
+      :root {
+        color-scheme: light;
+        background: #edf2f6;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+      }
+
+      body {
+        background:
+          radial-gradient(circle at 28% 21%, rgba(194, 219, 239, 0.58), transparent 31%),
+          radial-gradient(circle at 76% 34%, rgba(214, 204, 239, 0.4), transparent 34%),
+          linear-gradient(180deg, #fbfdff 0%, #f3f7fa 40%, #e7edf2 100%);
+      }
+
+      canvas {
+        position: fixed;
+        inset: 0;
+        z-index: 1;
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      .fallback-orb {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        width: min(40vmin, 24rem);
+        aspect-ratio: 1;
+        z-index: 0;
+        border: 1px solid rgba(125, 146, 159, 0.2);
+        border-radius: 50%;
+        background:
+          radial-gradient(circle at 31% 25%, rgba(255, 255, 255, 0.98) 0 5%, transparent 17%),
+          radial-gradient(circle at 68% 67%, rgba(198, 185, 235, 0.36), transparent 48%),
+          radial-gradient(circle at 28% 73%, rgba(151, 211, 219, 0.3), transparent 43%),
+          radial-gradient(circle at 38% 30%, #fbfdfe 0%, #e9eef2 55%, #bdc8cf 100%);
+        box-shadow:
+          inset -1rem -1.2rem 2.4rem rgba(101, 123, 137, 0.22),
+          inset 0.8rem 0.8rem 2rem rgba(255, 255, 255, 0.9),
+          0 2.2rem 2.8rem -2rem rgba(66, 82, 94, 0.42);
+        transform: translate(-50%, -50%);
+        transition: opacity 180ms ease;
+      }
+
+      body.is-rendered .fallback-orb {
+        opacity: 0;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .fallback-orb {
+          transition: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- impeccable:direction-contract
+    THESIS: A single quiet milky-glass orb makes AiDN feel spatial before any interface appears.
+    OWN-WORLD: The established high-key Spatial palette, cool spectral reflections, atmospheric horizon, and soft optical depth.
+    STORY: Pale environment first, centered orb second, then restrained refraction and penumbral shadow on closer inspection.
+    FIRST VIEWPORT: One centered sphere and its shadow only; no chrome, text, particles, orbit, controls, or competing objects.
+    FORM: Pinned reference composition; seed key: user-pinned-spatial-orb-v1.
+    FINISH: Canvas 2D, responsive high-DPI rendering, subtle light drift, reduced-motion support, and a CSS fallback.
+    -->
+    <div class="fallback-orb" aria-hidden="true"></div>
+    <canvas
+      id="spatial-orb"
+      role="img"
+      aria-label="A translucent milky glass sphere floating over a softly illuminated iridescent background."
+    ></canvas>
+
+    <script>
+      (() => {
+        "use strict";
+
+        const canvas = document.querySelector("#spatial-orb");
+        const context = canvas.getContext("2d", { alpha: false });
+
+        if (!context) return;
+
+        const motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+        let reducedMotion = motionQuery.matches;
+        let viewportWidth = 0;
+        let viewportHeight = 0;
+        let animationFrame = 0;
+        let lastPaint = -Infinity;
+
+        const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, value));
+
+        function fillRadialGlow(x, y, radius, innerColor, outerColor = "rgba(255,255,255,0)") {
+          const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
+          gradient.addColorStop(0, innerColor);
+          gradient.addColorStop(1, outerColor);
+          context.fillStyle = gradient;
+          context.fillRect(x - radius, y - radius, radius * 2, radius * 2);
+        }
+
+        function drawBackground(time) {
+          const width = viewportWidth;
+          const height = viewportHeight;
+          const drift = reducedMotion ? 0 : Math.sin(time * 0.00014);
+          const counterDrift = reducedMotion ? 0 : Math.cos(time * 0.00011);
+
+          const sky = context.createLinearGradient(0, 0, 0, height);
+          sky.addColorStop(0, "#fcfdff");
+          sky.addColorStop(0.34, "#f7fafc");
+          sky.addColorStop(0.58, "#eef3f7");
+          sky.addColorStop(1, "#e5ebf0");
+          context.fillStyle = sky;
+          context.fillRect(0, 0, width, height);
+
+          context.save();
+          context.globalCompositeOperation = "source-over";
+          fillRadialGlow(
+            width * (0.26 + drift * 0.012),
+            height * (0.22 + counterDrift * 0.008),
+            Math.max(width, height) * 0.48,
+            "rgba(159, 204, 235, 0.28)"
+          );
+          fillRadialGlow(
+            width * (0.78 - drift * 0.01),
+            height * (0.3 + drift * 0.006),
+            Math.max(width, height) * 0.44,
+            "rgba(199, 185, 235, 0.22)"
+          );
+          fillRadialGlow(
+            width * 0.54,
+            height * (0.76 + counterDrift * 0.008),
+            Math.max(width, height) * 0.42,
+            "rgba(162, 218, 215, 0.13)"
+          );
+          fillRadialGlow(
+            width * (0.65 + counterDrift * 0.008),
+            height * 0.72,
+            Math.max(width, height) * 0.3,
+            "rgba(238, 207, 188, 0.12)"
+          );
+          context.restore();
+
+          const horizon = height * 0.425;
+          const ground = context.createLinearGradient(0, horizon, 0, height);
+          ground.addColorStop(0, "rgba(218, 228, 236, 0.34)");
+          ground.addColorStop(0.09, "rgba(231, 237, 242, 0.54)");
+          ground.addColorStop(1, "rgba(224, 231, 237, 0.74)");
+          context.fillStyle = ground;
+          context.beginPath();
+          context.moveTo(0, horizon + height * 0.018);
+          context.bezierCurveTo(
+            width * 0.29,
+            horizon - height * 0.025,
+            width * 0.68,
+            horizon - height * 0.012,
+            width,
+            horizon + height * 0.008
+          );
+          context.lineTo(width, height);
+          context.lineTo(0, height);
+          context.closePath();
+          context.fill();
+
+          const haze = context.createLinearGradient(0, horizon - height * 0.05, 0, horizon + height * 0.11);
+          haze.addColorStop(0, "rgba(255,255,255,0)");
+          haze.addColorStop(0.48, "rgba(255,255,255,0.5)");
+          haze.addColorStop(1, "rgba(255,255,255,0)");
+          context.fillStyle = haze;
+          context.fillRect(0, horizon - height * 0.05, width, height * 0.16);
+
+          const vignette = context.createRadialGradient(
+            width * 0.5,
+            height * 0.45,
+            Math.min(width, height) * 0.24,
+            width * 0.5,
+            height * 0.48,
+            Math.max(width, height) * 0.77
+          );
+          vignette.addColorStop(0, "rgba(255,255,255,0)");
+          vignette.addColorStop(0.76, "rgba(178,195,206,0.025)");
+          vignette.addColorStop(1, "rgba(126,149,165,0.095)");
+          context.fillStyle = vignette;
+          context.fillRect(0, 0, width, height);
+        }
+
+        function drawShadow(centerX, centerY, radius, time) {
+          const drift = reducedMotion ? 0 : Math.sin(time * 0.00016);
+          const shadowY = centerY + radius * 0.94;
+
+          context.save();
+          context.translate(centerX + radius * (0.08 + drift * 0.012), shadowY);
+          context.scale(1, 0.245);
+          const broadShadow = context.createRadialGradient(0, 0, radius * 0.08, 0, 0, radius * 1.3);
+          broadShadow.addColorStop(0, "rgba(64, 80, 91, 0.27)");
+          broadShadow.addColorStop(0.36, "rgba(83, 101, 113, 0.16)");
+          broadShadow.addColorStop(0.72, "rgba(104, 125, 139, 0.055)");
+          broadShadow.addColorStop(1, "rgba(104, 125, 139, 0)");
+          context.fillStyle = broadShadow;
+          context.beginPath();
+          context.arc(0, 0, radius * 1.3, 0, Math.PI * 2);
+          context.fill();
+          context.restore();
+
+          context.save();
+          context.translate(centerX - radius * 0.2, shadowY - radius * 0.025);
+          context.scale(1, 0.13);
+          const contactShadow = context.createRadialGradient(0, 0, 0, 0, 0, radius * 0.72);
+          contactShadow.addColorStop(0, "rgba(43, 59, 69, 0.31)");
+          contactShadow.addColorStop(0.52, "rgba(76, 94, 106, 0.13)");
+          contactShadow.addColorStop(1, "rgba(76, 94, 106, 0)");
+          context.fillStyle = contactShadow;
+          context.beginPath();
+          context.arc(0, 0, radius * 0.72, 0, Math.PI * 2);
+          context.fill();
+          context.restore();
+
+          context.save();
+          context.globalCompositeOperation = "source-over";
+          context.translate(centerX - radius * 0.46, shadowY + radius * 0.055);
+          context.scale(1, 0.16);
+          const reflectedLight = context.createRadialGradient(0, 0, 0, 0, 0, radius * 0.82);
+          reflectedLight.addColorStop(0, "rgba(149, 211, 222, 0.19)");
+          reflectedLight.addColorStop(0.5, "rgba(175, 192, 235, 0.09)");
+          reflectedLight.addColorStop(1, "rgba(255,255,255,0)");
+          context.fillStyle = reflectedLight;
+          context.beginPath();
+          context.arc(0, 0, radius * 0.82, 0, Math.PI * 2);
+          context.fill();
+          context.restore();
+        }
+
+        function drawOrb(centerX, centerY, radius, time) {
+          const lightDrift = reducedMotion ? 0 : Math.sin(time * 0.00018);
+          const lightCounterDrift = reducedMotion ? 0 : Math.cos(time * 0.00013);
+
+          context.save();
+          context.shadowColor = "rgba(87, 107, 120, 0.2)";
+          context.shadowBlur = radius * 0.13;
+          context.shadowOffsetY = radius * 0.045;
+          context.fillStyle = "rgba(218, 227, 232, 0.84)";
+          context.beginPath();
+          context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+          context.fill();
+          context.restore();
+
+          context.save();
+          context.beginPath();
+          context.arc(centerX, centerY, radius - 0.7, 0, Math.PI * 2);
+          context.clip();
+
+          const glass = context.createRadialGradient(
+            centerX - radius * 0.33,
+            centerY - radius * 0.4,
+            radius * 0.045,
+            centerX + radius * 0.08,
+            centerY + radius * 0.1,
+            radius * 1.08
+          );
+          glass.addColorStop(0, "rgba(255,255,255,0.99)");
+          glass.addColorStop(0.24, "rgba(250,252,253,0.97)");
+          glass.addColorStop(0.57, "rgba(232,238,242,0.96)");
+          glass.addColorStop(0.82, "rgba(211,221,227,0.96)");
+          glass.addColorStop(1, "rgba(164,181,191,0.98)");
+          context.fillStyle = glass;
+          context.fillRect(centerX - radius, centerY - radius, radius * 2, radius * 2);
+
+          context.globalCompositeOperation = "source-over";
+          fillRadialGlow(
+            centerX + radius * (0.45 + lightDrift * 0.08),
+            centerY + radius * (0.18 + lightCounterDrift * 0.05),
+            radius * 0.92,
+            "rgba(180, 168, 232, 0.28)"
+          );
+          fillRadialGlow(
+            centerX - radius * (0.5 - lightCounterDrift * 0.06),
+            centerY + radius * (0.47 + lightDrift * 0.04),
+            radius * 0.79,
+            "rgba(112, 201, 214, 0.25)"
+          );
+          fillRadialGlow(
+            centerX + radius * (0.24 + lightCounterDrift * 0.05),
+            centerY + radius * 0.68,
+            radius * 0.72,
+            "rgba(238, 196, 173, 0.2)"
+          );
+          fillRadialGlow(
+            centerX - radius * 0.36,
+            centerY - radius * (0.37 + lightDrift * 0.025),
+            radius * 0.62,
+            "rgba(173, 213, 239, 0.17)"
+          );
+
+          context.globalCompositeOperation = "multiply";
+          const innerShade = context.createRadialGradient(
+            centerX - radius * 0.22,
+            centerY - radius * 0.28,
+            radius * 0.38,
+            centerX,
+            centerY,
+            radius
+          );
+          innerShade.addColorStop(0, "rgba(255,255,255,0)");
+          innerShade.addColorStop(0.66, "rgba(157,177,189,0.018)");
+          innerShade.addColorStop(0.86, "rgba(91,115,130,0.08)");
+          innerShade.addColorStop(1, "rgba(62,85,100,0.22)");
+          context.fillStyle = innerShade;
+          context.fillRect(centerX - radius, centerY - radius, radius * 2, radius * 2);
+
+          const lowerRefraction = context.createLinearGradient(
+            0,
+            centerY + radius * 0.24,
+            0,
+            centerY + radius
+          );
+          lowerRefraction.addColorStop(0, "rgba(98,126,143,0)");
+          lowerRefraction.addColorStop(0.62, "rgba(95,124,141,0.045)");
+          lowerRefraction.addColorStop(1, "rgba(67,94,111,0.17)");
+          context.fillStyle = lowerRefraction;
+          context.fillRect(centerX - radius, centerY, radius * 2, radius);
+
+          context.globalCompositeOperation = "screen";
+          const bloom = context.createRadialGradient(
+            centerX - radius * 0.4,
+            centerY - radius * 0.47,
+            0,
+            centerX - radius * 0.4,
+            centerY - radius * 0.47,
+            radius * 0.61
+          );
+          bloom.addColorStop(0, "rgba(255,255,255,0.96)");
+          bloom.addColorStop(0.18, "rgba(255,255,255,0.58)");
+          bloom.addColorStop(0.56, "rgba(255,255,255,0.12)");
+          bloom.addColorStop(1, "rgba(255,255,255,0)");
+          context.fillStyle = bloom;
+          context.fillRect(centerX - radius, centerY - radius, radius * 1.45, radius * 1.45);
+
+          context.restore();
+
+          context.save();
+          context.lineWidth = Math.max(1, radius * 0.008);
+          const rim = context.createLinearGradient(
+            centerX - radius,
+            centerY - radius,
+            centerX + radius,
+            centerY + radius
+          );
+          rim.addColorStop(0, "rgba(255,255,255,0.96)");
+          rim.addColorStop(0.32, "rgba(234,242,247,0.7)");
+          rim.addColorStop(0.7, "rgba(132,153,166,0.35)");
+          rim.addColorStop(1, "rgba(80,104,119,0.52)");
+          context.strokeStyle = rim;
+          context.beginPath();
+          context.arc(centerX, centerY, radius - context.lineWidth, 0, Math.PI * 2);
+          context.stroke();
+          context.restore();
+
+          context.save();
+          context.globalCompositeOperation = "screen";
+          context.strokeStyle = "rgba(255,255,255,0.78)";
+          context.lineCap = "round";
+          context.lineWidth = radius * 0.027;
+          context.shadowColor = "rgba(255,255,255,0.78)";
+          context.shadowBlur = radius * 0.07;
+          context.beginPath();
+          context.arc(
+            centerX,
+            centerY,
+            radius * 0.885,
+            Math.PI * 1.03,
+            Math.PI * 1.36
+          );
+          context.stroke();
+          context.restore();
+
+          context.save();
+          context.globalCompositeOperation = "screen";
+          fillRadialGlow(
+            centerX - radius * 0.31,
+            centerY - radius * 0.43,
+            radius * 0.095,
+            "rgba(255,255,255,0.92)"
+          );
+          fillRadialGlow(
+            centerX - radius * 0.18,
+            centerY - radius * 0.58,
+            radius * 0.035,
+            "rgba(255,255,255,0.9)"
+          );
+          context.restore();
+        }
+
+        function paint(time = 0) {
+          const shortestSide = Math.min(viewportWidth, viewportHeight);
+          const radius = clamp(shortestSide * 0.205, 86, 230);
+          const floatOffset = reducedMotion ? 0 : Math.sin(time * 0.00058) * Math.min(2.2, radius * 0.012);
+          const centerX = viewportWidth * 0.5;
+          const centerY = viewportHeight * 0.5 - radius * 0.035 + floatOffset;
+
+          context.setTransform(1, 0, 0, 1, 0, 0);
+          context.clearRect(0, 0, canvas.width, canvas.height);
+          context.setTransform(canvas.width / viewportWidth, 0, 0, canvas.height / viewportHeight, 0, 0);
+
+          drawBackground(time);
+          drawShadow(centerX, centerY, radius, time);
+          drawOrb(centerX, centerY, radius, time);
+
+          document.body.classList.add("is-rendered");
+        }
+
+        function resize() {
+          viewportWidth = Math.max(1, window.innerWidth);
+          viewportHeight = Math.max(1, window.innerHeight);
+          const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+          canvas.width = Math.round(viewportWidth * pixelRatio);
+          canvas.height = Math.round(viewportHeight * pixelRatio);
+          paint(performance.now());
+        }
+
+        function animate(time) {
+          if (time - lastPaint >= 1000 / 30) {
+            paint(time);
+            lastPaint = time;
+          }
+          animationFrame = window.requestAnimationFrame(animate);
+        }
+
+        function startAnimation() {
+          window.cancelAnimationFrame(animationFrame);
+          if (reducedMotion || document.hidden) {
+            paint(performance.now());
+            return;
+          }
+          lastPaint = -Infinity;
+          animationFrame = window.requestAnimationFrame(animate);
+        }
+
+        function handleMotionChange(event) {
+          reducedMotion = event.matches;
+          startAnimation();
+        }
+
+        function handleVisibilityChange() {
+          startAnimation();
+        }
+
+        window.addEventListener("resize", resize, { passive: true });
+        document.addEventListener("visibilitychange", handleVisibilityChange);
+        if (typeof motionQuery.addEventListener === "function") {
+          motionQuery.addEventListener("change", handleMotionChange);
+        } else {
+          motionQuery.addListener(handleMotionChange);
+        }
+
+        resize();
+        startAnimation();
+      })();
+    </script>
+  </body>
+</html>
