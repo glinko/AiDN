@@ -10,4 +10,8 @@ web/website/dist/
 web/website/*.tsbuildinfo
 web/website/vite.config.js
 web/website/vite.config.d.ts
+web/operator-dashboard/node_modules/
+web/operator-dashboard/dist/
+web/operator-dashboard/test-results/
+web/operator-dashboard/playwright-report/
 design-artifacts/website-qa/

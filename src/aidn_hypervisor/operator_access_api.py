@@ -784,6 +784,15 @@ def build_operator_access_router(
         if finality.get("consensus_finalized"):
             hypervisor_service.discard_pending_consensus_envelopes(pending.operation_id)
             hypervisor_service.discard_pending_consensus_operations(pending.operation_id)
+            # Materialize the canonical nonce locally before the next
+            # advertisement/registry read.  The local pre-consensus nonce is
+            # not authoritative and must not be reported as a conflict.
+            try:
+                hypervisor_service.wallet_identity_read_model(wallet_id)
+            except Exception:
+                # Finality is already proven; a temporarily unavailable read
+                # source must not turn a successful registration into a 500.
+                pass
             return {
                 "status": "FINALIZED",
                 "wallet_id": wallet_id,

@@ -65,6 +65,60 @@ class ProviderInventoryApplicationService:
         self._host._persist_state()
         return dict(self._host._wallet_identities[wallet_id])
 
+    def reconcile_wallet_identity_from_canonical(self, canonical_identity: dict) -> bool:
+        """Apply a verified canonical identity to this node's local cache.
+
+        External-RPC nodes keep a local identity so they can advertise and
+        recover operations, but that copy can contain the nonce from a
+        pre-consensus attempt.  Once the canonical chain answers with the
+        registered identity, the public key must still match; only the
+        canonical registration metadata is refreshed locally.
+        """
+        if not isinstance(canonical_identity, dict):
+            return False
+        wallet_id = str(canonical_identity.get("wallet_id") or "").strip()
+        public_key = str(canonical_identity.get("public_key") or "").strip()
+        registration_nonce = str(canonical_identity.get("registration_nonce") or "").strip()
+        registered_at = str(canonical_identity.get("registered_at") or "").strip()
+        if not wallet_id or not public_key or not registration_nonce:
+            return False
+
+        local = self._host._wallet_identities.get(wallet_id)
+        # Do not create identities from read-only peer data and never replace
+        # a local key with a remotely reported key.
+        if local is None or str(local.get("public_key") or "") != public_key:
+            return False
+        updated = dict(local)
+        updated["registration_nonce"] = registration_nonce
+        if registered_at:
+            updated["registered_at"] = registered_at
+        if updated == local:
+            return False
+
+        from aidn_hypervisor.canonical_projection import project_registry_objects
+
+        registry_service = self._host.registry_service
+        previous = dict(local)
+        self._host._wallet_identities[wallet_id] = updated
+        try:
+            if registry_service is not None:
+                record = next(
+                    (
+                        item.model_dump(mode="json")
+                        for item in project_registry_objects(self._host, [])
+                        if item.object_type == "wallet_identity"
+                        and item.source_reference == wallet_id
+                    ),
+                    None,
+                )
+                if record is not None:
+                    registry_service.replace_local_wallet_identity_object(record)
+            self._host._persist_state()
+        except Exception:
+            self._host._wallet_identities[wallet_id] = previous
+            raise
+        return True
+
     def wallet_identity(self, wallet_id: str) -> dict | None:
         identity = self._host._wallet_identities.get(wallet_id)
         return dict(identity) if identity is not None else None

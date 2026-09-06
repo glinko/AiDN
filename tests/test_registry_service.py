@@ -1583,6 +1583,44 @@ def test_registry_service_prefers_explicit_source_metadata_for_store_backed_obje
     assert fetched["sources"] == listed[0]["sources"]
 
 
+def test_registry_service_reingests_same_object_when_only_source_metadata_changes() -> None:
+    service = RegistryService()
+    record = {
+        "object_id": "sha256:source-refresh",
+        "object_type": "wallet_identity",
+        "object_version": "wallet-identity.v1",
+        "namespace": "identity",
+        "payload_hash": "sha256:source-refresh-payload",
+        "payload_encoding": "canonical_json",
+        "source_reference": "wallet-owner",
+        "payload": {
+            "wallet_id": "wallet-owner",
+            "public_key": "ed25519:" + "11" * 32,
+            "registration_nonce": "nonce-1",
+        },
+    }
+
+    service.ingest_registry_objects([record])
+    service.ingest_registry_objects(
+        [
+            {
+                **record,
+                "_source": {
+                    "node_id": "node-local",
+                    "operator_id": "operator-local",
+                    "status": "ready",
+                },
+            }
+        ]
+    )
+
+    fetched = service.get_registry_object(record["object_id"], include_payload=True)
+    assert fetched["payload"]["registration_nonce"] == "nonce-1"
+    assert fetched["sources"] == [
+        {"node_id": "node-local", "operator_id": "operator-local", "status": "ready"}
+    ]
+
+
 def test_registry_service_persists_store_backed_objects_across_restart(
     tmp_path: Path,
 ) -> None:

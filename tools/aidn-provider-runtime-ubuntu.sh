@@ -9,7 +9,7 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  aidn-provider-runtime-ubuntu.sh <whisper|ollama|llama.cpp|vllm|consensus> \
+  aidn-provider-runtime-ubuntu.sh <whisper|ollama|llama.cpp|vllm|nemo-speech|consensus> \
     <install|start|status|stop|remove> [provider options]
 
 The dispatcher never accepts a script path or arbitrary shell command.
@@ -48,6 +48,7 @@ case "$provider" in
   ollama) provider_script="$script_dir/aidn-ollama-runtime-ubuntu.sh" ;;
   llama.cpp|llamacpp) provider_script="$script_dir/aidn-llamacpp-runtime-ubuntu.sh" ;;
   vllm) provider_script="$script_dir/aidn-vllm-runtime-ubuntu.sh" ;;
+  nemo-speech) provider_script="$script_dir/aidn-nemo-speech-runtime-ubuntu.sh" ;;
   consensus) provider_script="$script_dir/aidn-consensus-runtime-ubuntu.sh" ;;
   -h|--help) usage; exit 0 ;;
   *) die "unsupported Provider runtime: $provider" ;;

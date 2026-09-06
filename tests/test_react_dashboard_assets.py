@@ -8,13 +8,16 @@ from aidn_hypervisor.main import build_app
 
 
 def test_react_dashboard_navigation_stays_inside_react_workspace() -> None:
-    app_source = (
-        Path(__file__).resolve().parents[1]
-        / "web"
-        / "operator-dashboard"
-        / "src"
-        / "App.tsx"
-    ).read_text(encoding="utf-8")
+    dashboard_src = Path(__file__).resolve().parents[1] / "web" / "operator-dashboard" / "src"
+    app_source = "\n".join(
+        (dashboard_src / path).read_text(encoding="utf-8")
+        for path in (
+            "App.tsx",
+            "app/classic-dashboard.tsx",
+            "app/dashboard-routing.ts",
+            "app/screen-registry.ts",
+        )
+    )
 
     assert "id: 'legacy'" not in app_source
     assert "window.location.assign('/operators/dashboard')" not in app_source

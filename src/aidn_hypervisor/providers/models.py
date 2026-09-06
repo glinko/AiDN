@@ -733,7 +733,7 @@ class ProviderRuntimeInstallerDescriptor(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     installer_id: Literal["aidn-provider-runtime-ubuntu.v1"]
-    provider: Literal["whisper", "ollama", "llama.cpp", "vllm"]
+    provider: Literal["whisper", "ollama", "llama.cpp", "vllm", "nemo-speech"]
     platform: Literal["ubuntu"]
     script: Literal["tools/aidn-provider-runtime-ubuntu.sh"]
     pinned_version: str
@@ -758,6 +758,7 @@ _PROVIDER_RUNTIME_ARGUMENT_KEYS = {
     "ollama": {"version", "model"},
     "llama.cpp": {"ref", "backend", "model", "root"},
     "vllm": {"version", "python", "model", "served_model_name", "root"},
+    "nemo-speech": {"version", "backend", "model", "port", "root"},
 }
 
 
@@ -770,7 +771,7 @@ class ProviderRuntimeInvocation(BaseModel):
     plan_hash: str
     configuration_hash: str
     installer_id: Literal["aidn-provider-runtime-ubuntu.v1"]
-    provider: Literal["whisper", "ollama", "llama.cpp", "vllm"]
+    provider: Literal["whisper", "ollama", "llama.cpp", "vllm", "nemo-speech"]
     action: ProviderRuntimeAction
     pinned_version: str
     arguments: dict[str, str] = Field(default_factory=dict)

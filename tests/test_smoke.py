@@ -74,9 +74,17 @@ def test_default_app_exposes_builtin_plugins(tmp_path, monkeypatch) -> None:
         "proxy-openai",
         "vllm",
         "whisper",
+        "nemo-speech",
     ]
     for plugin in plugins:
-        if plugin["plugin_id"] in {"llama.cpp", "ollama", "vllm", "whisper"}:
+        if plugin["plugin_id"] == "nemo-speech":
+            continue
+        if plugin["plugin_id"] in {
+            "llama.cpp",
+            "ollama",
+            "vllm",
+            "whisper",
+        }:
             assert plugin["plugin_version"] == "0.2.0"
             assert plugin["plugin_capability_flags"] == [
                 "CAN_ATTACH_EXISTING",
@@ -99,7 +107,7 @@ def test_default_app_exposes_builtin_plugins(tmp_path, monkeypatch) -> None:
                 "CAN_ATTACH_EXISTING",
                 "CAN_DISCOVER_MODELS",
             ]
-    whisper = plugins[-1]
+    whisper = plugins[-2]
     assert whisper["plugin_version"] == "0.2.0"
     assert whisper["display_name"] == "Whisper HTTP Provider"
     assert whisper["plugin_capability_flags"] == [
@@ -140,6 +148,21 @@ def test_default_app_exposes_builtin_plugins(tmp_path, monkeypatch) -> None:
         "fallback_policy": "fixed_request_estimate",
         "missing_usage_behavior": "strict_accounting",
     }
+    nemo = plugins[-1]
+    assert nemo["plugin_version"] == "0.1.0"
+    assert nemo["display_name"] == "NVIDIA NeMo-Speech.cpp"
+    assert nemo["plugin_capability_flags"] == [
+        "CAN_ATTACH_EXISTING",
+        "CAN_INSTALL_PROVIDER",
+        "CAN_DISCOVER_MODELS",
+    ]
+    assert nemo["supported_aidn_capabilities"] == ["speech.stt"]
+    assert nemo["workload_types"] == ["speech_to_text"]
+    assert nemo["runtime_installers"][0]["provider"] == "nemo-speech"
+    assert nemo["runtime_installers"][0]["pinned_version"] == "0.1.0"
+    assert nemo["installation_recipes"][0]["recipe_id"] == (
+        "nemo-speech-parakeet-ubuntu-cuda"
+    )
 
 
 def test_default_app_exposes_bundles_loaded_from_configured_registry(

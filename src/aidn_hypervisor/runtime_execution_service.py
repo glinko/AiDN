@@ -62,6 +62,7 @@ class RuntimeExecutionService:
             "proxy-openai",
             "vllm-openai",
             "whisper-http",
+            "nemo-speech-http",
         }
 
     def uses_approved_llamacpp_runtime(self, endpoint_manifest) -> bool:

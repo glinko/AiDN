@@ -786,6 +786,42 @@ class AllowlistedProviderRuntimeInstallationExecutor(RecordedProviderInstallatio
                     raise ValueError("vLLM Python version is not reviewed")
                 if str(configuration.get("backend") or "cuda") != "cuda":
                     raise ValueError("managed vLLM runtime requires the reviewed CUDA backend")
+            elif runtime.provider == "nemo-speech":
+                arguments["version"] = runtime.pinned_version
+                backend = str(configuration.get("backend") or "cuda").strip().lower()
+                if backend not in {"cpu", "cuda"}:
+                    raise ValueError("NeMo-Speech runtime backend is not reviewed")
+                arguments["backend"] = backend
+                model_path = configuration.get("model_path")
+                if model_path:
+                    arguments["model"] = str(model_path)
+                endpoint = str(configuration.get("endpoint") or "").strip()
+                if endpoint:
+                    from urllib.parse import urlsplit
+
+                    parsed_endpoint = urlsplit(endpoint)
+                    if parsed_endpoint.port is not None:
+                        arguments["port"] = str(parsed_endpoint.port)
+
+        # NeMo's start/status lifecycle needs the same selected model and
+        # listener port as installation.  Keep those values typed and
+        # allowlisted for every action instead of relying on mutable shell
+        # defaults in the runtime script.
+        if runtime.provider == "nemo-speech" and action != "install":
+            backend = str(configuration.get("backend") or "cuda").strip().lower()
+            if backend not in {"cpu", "cuda"}:
+                raise ValueError("NeMo-Speech runtime backend is not reviewed")
+            arguments["backend"] = backend
+            model_path = configuration.get("model_path")
+            if model_path:
+                arguments["model"] = str(model_path)
+            endpoint = str(configuration.get("endpoint") or "").strip()
+            if endpoint:
+                from urllib.parse import urlsplit
+
+                parsed_endpoint = urlsplit(endpoint)
+                if parsed_endpoint.port is not None:
+                    arguments["port"] = str(parsed_endpoint.port)
 
         configured_version = configuration.get("runtime_version") or configuration.get("runtime_ref")
         if configured_version is not None and str(configured_version) != runtime.pinned_version:

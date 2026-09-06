@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from aidn_hypervisor.accounting.llamacpp import build_llamacpp_usage_profile
 from aidn_hypervisor.accounting.models import AccountingContract
+from aidn_hypervisor.accounting.nemo_speech import build_nemo_speech_usage_profile
 from aidn_hypervisor.accounting.ollama import build_ollama_usage_profile
 from aidn_hypervisor.accounting.proxy import build_proxy_opaque_usage_profile
 from aidn_hypervisor.accounting.tts import build_tts_usage_profile
@@ -13,6 +14,7 @@ from aidn_hypervisor.accounting.vllm import build_vllm_usage_profile
 from aidn_hypervisor.accounting.whisper import build_whisper_usage_profile
 from aidn_hypervisor.dispatcher.models import DispatcherRoute
 from aidn_hypervisor.runtime_protocol.adapters.llamacpp import LlamaCppOpenAIAdapter
+from aidn_hypervisor.runtime_protocol.adapters.nemo_speech import NemoSpeechHttpAdapter
 from aidn_hypervisor.runtime_protocol.adapters.ollama import OllamaGenerateAdapter
 from aidn_hypervisor.runtime_protocol.adapters.proxy import ProxyOpenAIAdapter
 from aidn_hypervisor.runtime_protocol.adapters.tts import OpenAITtsAdapter
@@ -107,6 +109,7 @@ class ApprovedRuntimeDispatcher:
             "proxy-openai",
             "vllm-openai",
             "whisper-http",
+            "nemo-speech-http",
         }:
             raise ApprovedRuntimeDispatchError(
                 f"Unsupported approved Runtime Adapter: {binding.adapter_id}"
@@ -220,6 +223,7 @@ class ApprovedRuntimeDispatcher:
             "proxy-openai": ProxyOpenAIAdapter,
             "vllm-openai": VllmOpenAIAdapter,
             "whisper-http": WhisperHttpAdapter,
+            "nemo-speech-http": NemoSpeechHttpAdapter,
         }[binding.adapter_id]
         adapter_kwargs = {
             "endpoint": endpoint_url,
@@ -281,6 +285,13 @@ class ApprovedRuntimeDispatcher:
                 runtime_generation=binding.runtime_generation,
                 runtime_configuration_hash=binding.runtime_configuration_hash,
                 adapter_version=binding.adapter_version or "whisper-http.v1",
+            )
+        if binding.adapter_id == "nemo-speech-http":
+            return build_nemo_speech_usage_profile(
+                runtime_id=binding.runtime_id,
+                runtime_generation=binding.runtime_generation,
+                runtime_configuration_hash=binding.runtime_configuration_hash,
+                adapter_version=binding.adapter_version or "nemo-speech-http.v1",
             )
         return build_vllm_usage_profile(
             runtime_id=binding.runtime_id,

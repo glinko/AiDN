@@ -316,3 +316,53 @@ The generated catalog includes repository-root project documents, Markdown under
 | [AiDN Faucet Treasury](../services/aidn-faucet/README.md) | Setup and development guide for a service. |
 | [AiDN Operator Dashboard](../web/operator-dashboard/README.md) | Setup and development guide for a web surface. |
 | [AiDN public website](../web/website/README.md) | Setup and development guide for a web surface. |
+
+## Other documentation
+
+| Document | What it is |
+| --- | --- |
+| [ADR-001 — Node-scoped Primary Agent](spatial/ADR-001-primary-agent-scope.md) | Repository documentation reference. |
+| [ADR-002 — Node Workspace Ownership](spatial/ADR-002-node-workspace-ownership.md) | Repository documentation reference. |
+| [ADR-003 — Orbital Attention System](spatial/ADR-003-orbital-attention-system.md) | Repository documentation reference. |
+| [ADR-004 — Primary Agent Visual State Language](spatial/ADR-004-primary-agent-visual-state-language.md) | Repository documentation reference. |
+| [ADR-005 — Spatial Entity Topology: Endpoints, Subagents and Remote Agents](spatial/ADR-005-spatial-entity-topology.md) | Repository documentation reference. |
+| [ADR-006 — Workspace Sessions and Context Graph](spatial/ADR-006-workspace-sessions-context-graph.md) | Repository documentation reference. |
+| [ADR-007 — Spatial Memory, Aging and Clustering](spatial/ADR-007-spatial-memory-aging-clustering.md) | Repository documentation reference. |
+| [ADR-008 — Entity Uniqueness and Provenance References](spatial/ADR-008-entity-uniqueness-and-provenance.md) | Repository documentation reference. |
+| [ADR-009 — Multi-Device Workspace and Mobile Spatial Navigation](spatial/ADR-009-multi-device-workspace-and-mobile-navigation.md) | Repository documentation reference. |
+| [ADR-010 — Node Status and Recovery Access](spatial/ADR-010-node-status-and-recovery-access.md) | Repository documentation reference. |
+| [ADR-011 — Agent-Mediated Component Interface and Resource Semantics](spatial/ADR-011-agent-mediated-component-interface.md) | Repository documentation reference. |
+| [ADR-012 — Local Trust Boundary and Mediated Remote Resource Access](spatial/ADR-012-local-trust-boundary-and-mediated-remote-resources.md) | Repository documentation reference. |
+| [ADR-013 — AiDN Milky Glass Neumorphism Visual Design System](spatial/ADR-013-aidn-milky-glass-neumorphism-visual-design.md) | Repository documentation reference. |
+| [ADR-014 — Spatial UI Technical Architecture and Rendering Boundary](spatial/ADR-014-spatial-ui-technical-architecture.md) | Repository documentation reference. |
+| [AiDN Spatial Agent Interface](spatial/AiDN-Spatial-Agent-Interface-Implementation-Plan.md) | Repository documentation reference. |
+| [AiDN Spatial Agent Interface — Detailed Development Roadmap](spatial/DEVELOPMENT-ROADMAP.md) | Repository documentation reference. |
+| [Spatial UI Implementation Coverage](spatial/IMPLEMENTATION-COVERAGE.md) | Repository documentation reference. |
+| [AiDN Spatial Agent Interface — Implementation Handoff](spatial/IMPLEMENTATION-HANDOFF.md) | Repository documentation reference. |
+| [M0.5 Spatial dependencies and bundle baseline](spatial/M0.5-DEPENDENCIES-AND-BUNDLE.md) | Repository documentation reference. |
+| [M1.1 Milky Glass token package](spatial/M1.1-MILKY-GLASS-TOKENS.md) | Repository documentation reference. |
+| [M1.2 Spatial DOM primitives](spatial/M1.2-DOM-PRIMITIVES.md) | Repository documentation reference. |
+| [M1.3 Hybrid renderer shell](spatial/M1.3-HYBRID-RENDERER-SHELL.md) | Repository documentation reference. |
+| [M1.4 White atmospheric environment](spatial/M1.4-WHITE-ATMOSPHERIC-ENVIRONMENT.md) | Repository documentation reference. |
+| [M1.5 Primary Agent material prototype](spatial/M1.5-PRIMARY-AGENT-MATERIAL.md) | Repository documentation reference. |
+| [M1.6 Mock spatial entities and picking](spatial/M1.6-MOCK-ENTITIES-PICKING.md) | Repository documentation reference. |
+| [M1.7 Camera and navigation prototype](spatial/M1.7-CAMERA-NAVIGATION.md) | Repository documentation reference. |
+| [M1.8 Prototype A performance and UX gate](spatial/M1.8-PROTOTYPE-A-GATE.md) | Repository documentation reference. |
+| [M10 · Agent-mediated Components and Resource Semantics](spatial/M10-AGENT-MEDIATED-COMPONENTS.md) | Repository documentation reference. |
+| [M11 Hardening, Evaluation and Controlled Operator Preview](spatial/M11-HARDENING-EVALUATION-ROLLOUT.md) | Repository documentation reference. |
+| [M2.1 — Shared Spatial Schemas](spatial/M2.1-SHARED-SCHEMAS.md) | Repository documentation reference. |
+| [M2.2 — Spatial Domain Clients and Query Keys](spatial/M2.2-DOMAIN-CLIENTS.md) | Repository documentation reference. |
+| [M2.3 — Live Event Gateway](spatial/M2.3-LIVE-EVENT-GATEWAY.md) | Repository documentation reference. |
+| [M2.4 — Spatial View Models](spatial/M2.4-VIEW-MODELS.md) | Repository documentation reference. |
+| [M2.5 — Node-owned Workspace Domain Model](spatial/M2.5-WORKSPACE-DOMAIN-MODEL.md) | Repository documentation reference. |
+| [M2.6 — Workspace API and Persistence](spatial/M2.6-WORKSPACE-PERSISTENCE.md) | Repository documentation reference. |
+| [M2.7 — Spatial Runtime Connected to Mock-real Data](spatial/M2.7-RUNTIME-DATA-INTEGRATION.md) | Repository documentation reference. |
+| [M3.1 — Primary Agent Slot domain model](spatial/M3.1-PRIMARY-AGENT-SLOT.md) | Repository documentation reference. |
+| [M3.2–M3.6 — Primary Agent lifecycle](spatial/M3.X-PRIMARY-AGENT-LIFECYCLE.md) | Repository documentation reference. |
+| [M4.x — Interaction, Conversation and Presentation](spatial/M4.X-INTERACTION-AND-PRESENTATION.md) | Repository documentation reference. |
+| [M5.x — Topology, Provenance and Attention](spatial/M5.X-TOPOLOGY-PROVENANCE-ATTENTION.md) | Repository documentation reference. |
+| [M6 — Node Status, System Menu, and Recovery](spatial/M6.X-STATUS-RECOVERY.md) | Repository documentation reference. |
+| [M7 — Mediated Remote Resources and Endpoint Test Frame](spatial/M7.X-REMOTE-MEDIATION.md) | Repository documentation reference. |
+| [M8 — Spatial Memory, Aging and Clustering](spatial/M8.X-SPATIAL-MEMORY.md) | Repository documentation reference. |
+| [M9.x Multi-device Workspace and Mobile Navigation](spatial/M9.X-MULTI-DEVICE.md) | Repository documentation reference. |
+| [AiDN Spatial Agent Interface — реестр открытых вопросов](spatial/OPEN-QUESTIONS.md) | Repository documentation reference. |

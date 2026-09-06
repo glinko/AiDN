@@ -54,6 +54,8 @@ jobs:
       - name: Verify documentation catalog
         run: |
           uv run python tools/verify-docs-links.py
+          uv run python tools/verify-spatial-coverage.py
+          uv run python tools/verify-dashboard-seams.py
           uv run python tools/generate-docs-index.py
           git diff --exit-code -- docs/INDEX.md
 
@@ -96,8 +98,33 @@ jobs:
       - name: Check and build Dashboard
         working-directory: web/operator-dashboard
         run: |
+          pnpm verify:licenses
+          pnpm verify:theme
           pnpm lint
+          pnpm typecheck
+          pnpm test
           pnpm build
+          pnpm bundle:report
+          pnpm bundle:repro
+      - name: Install Dashboard browser engines
+        working-directory: web/operator-dashboard
+        run: pnpm exec playwright install --with-deps chromium webkit
+      - name: Run Dashboard browser and accessibility tests
+        working-directory: web/operator-dashboard
+        run: |
+          pnpm test:e2e
+          pnpm test:a11y
+          pnpm test:theme
+          pnpm test:bundle
+      - name: Upload Dashboard browser failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operator-dashboard-browser-${{ github.sha }}
+          path: |
+            web/operator-dashboard/test-results/
+            web/operator-dashboard/playwright-report/
+          if-no-files-found: ignore
       - name: Install Website dependencies
         working-directory: web/website
         run: pnpm install --frozen-lockfile

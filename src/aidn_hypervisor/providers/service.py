@@ -12,6 +12,7 @@ from threading import RLock
 from uuid import uuid4
 
 from aidn_hypervisor.accounting.llamacpp import build_llamacpp_usage_profile
+from aidn_hypervisor.accounting.nemo_speech import build_nemo_speech_usage_profile
 from aidn_hypervisor.accounting.ollama import build_ollama_usage_profile
 from aidn_hypervisor.accounting.proxy import build_proxy_opaque_usage_profile
 from aidn_hypervisor.accounting.tts import build_tts_usage_profile
@@ -3065,6 +3066,7 @@ class ProviderInventoryService:
             "proxy-openai": build_proxy_opaque_usage_profile,
             "vllm-openai": build_vllm_usage_profile,
             "whisper-http": build_whisper_usage_profile,
+            "nemo-speech-http": build_nemo_speech_usage_profile,
         }.get(binding.adapter_id)
         if profile_builder is not None:
             profile = profile_builder(

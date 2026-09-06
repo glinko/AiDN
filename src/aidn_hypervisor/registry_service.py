@@ -1481,8 +1481,23 @@ class RegistryService:
         normalized = deepcopy(record)
         self._validate_wallet_identity_objects([normalized])
         existing = self._registry_objects.get(object_id)
-        if existing is not None and existing != normalized:
-            raise ValueError(f"Conflicting registry object for {object_id}")
+        if existing is not None:
+            # ``_source`` is local provenance metadata, not part of the
+            # immutable canonical object.  A node advertisement is ingested
+            # on every registry read and may add/update that metadata; it must
+            # remain idempotent with an object previously persisted without
+            # it.  All canonical fields (including payload) still have to be
+            # byte-for-byte equal.
+            existing_canonical = {
+                key: value for key, value in existing.items() if key != "_source"
+            }
+            normalized_canonical = {
+                key: value for key, value in normalized.items() if key != "_source"
+            }
+            if existing_canonical != normalized_canonical:
+                raise ValueError(f"Conflicting registry object for {object_id}")
+            if "_source" not in normalized and "_source" in existing:
+                normalized["_source"] = deepcopy(existing["_source"])
         was_expired = object_id in self._expired_registry_objects
         self._registry_objects[object_id] = normalized
         self._expired_registry_objects.discard(object_id)
@@ -1523,6 +1538,52 @@ class RegistryService:
             self._registry_objects = previous_registry_objects
             raise
         return stored
+
+    def replace_local_wallet_identity_object(self, record: dict) -> dict:
+        """Replace a local Wallet identity cache after canonical finality.
+
+        A non-validator may have staged a locally generated identity object
+        before the Wallet registration was included by the remote chain.  The
+        canonical transaction is allowed to use a different registration
+        nonce, so retaining the pre-consensus cache makes every registry read
+        look like a conflicting identity.  This method replaces only the
+        local object for the same Wallet; peer advertisements remain evidence
+        and continue to be checked by the normal conflict paths.
+
+        The operation is intentionally narrow and does not provide a general
+        registry overwrite primitive.  The caller must supply a fully formed
+        ``wallet_identity`` object produced from verified canonical state.
+        """
+        wallet_id = self._wallet_identity_record_key(record)
+        if wallet_id is None:
+            raise ValueError("local Wallet identity replacement requires a wallet_identity object")
+        normalized = deepcopy(record)
+        object_id = str(normalized.get("object_id") or "")
+        if not object_id:
+            raise ValueError("local Wallet identity replacement requires an object_id")
+
+        with self._snapshot_lock:
+            previous_objects = deepcopy(self._registry_objects)
+            previous_expired = set(self._expired_registry_objects)
+            stale_ids = [
+                existing_id
+                for existing_id, existing in self._registry_objects.items()
+                if self._wallet_identity_record_key(existing) == wallet_id
+            ]
+            try:
+                for stale_id in stale_ids:
+                    self._registry_objects.pop(stale_id, None)
+                    self._expired_registry_objects.discard(stale_id)
+                self._registry_objects[object_id] = normalized
+                self._expired_registry_objects.discard(object_id)
+                self._rebuild_wallet_identity_resolution_state()
+                self._persist_registry_object_snapshot()
+            except Exception:
+                self._registry_objects = previous_objects
+                self._expired_registry_objects = previous_expired
+                self._rebuild_wallet_identity_resolution_state()
+                raise
+        return deepcopy(normalized)
 
     def list_registry_objects(
         self, query: RegistryObjectQuery | dict | None = None

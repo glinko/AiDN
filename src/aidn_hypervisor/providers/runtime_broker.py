@@ -88,6 +88,12 @@ class AllowlistedProviderRuntimeBroker:
                 "served_model_name",
                 "--served-model-name",
             )
+        elif invocation.provider == "nemo-speech":
+            self._append_if_present(argv, arguments, "version", "--version")
+            self._append_if_present(argv, arguments, "backend", "--backend")
+            self._append_if_present(argv, arguments, "root", "--root")
+            self._append_if_present(argv, arguments, "model", "--model")
+            self._append_if_present(argv, arguments, "port", "--port")
         else:  # pragma: no cover - ProviderRuntimeInvocation validates this union.
             raise ValueError("runtime broker received an unsupported Provider")
         return argv

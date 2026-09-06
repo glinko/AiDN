@@ -1566,8 +1566,10 @@ class HypervisorService:
             query_identity = getattr(consensus, "query_wallet_identity", None)
             if consensus is not None and bool(getattr(consensus, "is_enabled", False)) and callable(query_identity):
                 try:
+                    identity = query_identity(wallet_id)
+                    self._reconcile_wallet_identity_projection(identity)
                     return {
-                        "identity": query_identity(wallet_id),
+                        "identity": identity,
                         "source": "consensus_rpc",
                         "error": None,
                     }
@@ -1585,8 +1587,10 @@ class HypervisorService:
                 "error": None,
             }
         try:
+            identity = provider(wallet_id)
+            self._reconcile_wallet_identity_projection(identity)
             return {
-                "identity": provider(wallet_id),
+                "identity": identity,
                 "source": "remote_consensus_quorum",
                 "error": None,
             }
@@ -1596,6 +1600,19 @@ class HypervisorService:
                 "source": "local_projection_unverified",
                 "error": f"{type(error).__name__}: {error}",
             }
+
+    def _reconcile_wallet_identity_projection(self, canonical_identity: dict | None) -> bool:
+        """Refresh a local identity cache from verified canonical state."""
+        if not isinstance(canonical_identity, dict):
+            return False
+        reconciler = getattr(
+            self._provider_inventory_application_facade(),
+            "reconcile_wallet_identity_from_canonical",
+            None,
+        )
+        if not callable(reconciler):
+            return False
+        return bool(reconciler(canonical_identity))
 
     def get_session_funding_account(self, session_id: str) -> SessionFundingAccount:
         return self._settlement_application_facade().get_session_funding_account(

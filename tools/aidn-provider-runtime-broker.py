@@ -32,7 +32,7 @@ MAX_OUTPUT_BYTES = 64 * 1024
 MAX_TIMEOUT_SECONDS = 3600
 MAX_JOB_EVENTS = 64
 MAX_EVENT_OFFSET = 1_000_000_000
-PROVIDERS = {"whisper", "ollama", "llama.cpp", "vllm", "consensus"}
+PROVIDERS = {"whisper", "ollama", "llama.cpp", "vllm", "nemo-speech", "consensus"}
 ACTIONS = {"install", "start", "status", "stop", "remove"}
 JOB_TERMINAL_STATUSES = {"SUCCEEDED", "FAILED", "CANCELLED"}
 OPTIONS = {
@@ -40,6 +40,7 @@ OPTIONS = {
     "ollama": {"--version", "--model"},
     "llama.cpp": {"--ref", "--backend", "--root", "--model"},
     "vllm": {"--version", "--python", "--root", "--model", "--served-model-name"},
+    "nemo-speech": {"--version", "--backend", "--root", "--model", "--port"},
     "consensus": {
         "--version", "--home", "--binary-path", "--service-name", "--chain-id",
         "--moniker", "--rpc-host", "--rpc-port", "--p2p-host", "--p2p-port",

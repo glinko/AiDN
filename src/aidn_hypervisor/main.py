@@ -66,6 +66,7 @@ from aidn_hypervisor.operator_config_service import OperatorConfigService
 from aidn_hypervisor.operator_update_service import OperatorUpdateService
 from aidn_hypervisor.persistence import FileStateStore
 from aidn_hypervisor.plugins.llamacpp import LlamaCppPlugin
+from aidn_hypervisor.plugins.nemo_speech import NemoSpeechPlugin
 from aidn_hypervisor.plugins.ollama import OllamaPlugin
 from aidn_hypervisor.plugins.openai_tts import OpenAITtsPlugin
 from aidn_hypervisor.plugins.proxy_openai import ProxyOpenAIPlugin
@@ -304,6 +305,26 @@ def build_app(
         resolved_service.canonical_wallet_sequence_provider = (
             _build_default_canonical_wallet_sequence_provider()
         )
+    # A non-validator may have a durable identity object from a pre-consensus
+    # bootstrap attempt.  Reconcile it once before registry advertisements are
+    # served so the local cache cannot conflict with the canonical chain.
+    if (
+        resolved_service.canonical_wallet_identity_provider is not None
+        or bool(
+            resolved_consensus_service is not None
+            and getattr(resolved_consensus_service, "is_enabled", False)
+        )
+    ):
+        try:
+            owner_wallet = resolved_service.owner_wallet_state()
+            owner_wallet_id = owner_wallet.get("wallet_id") if owner_wallet.get("configured") else None
+            if owner_wallet_id:
+                resolved_service.wallet_identity_read_model(str(owner_wallet_id))
+        except Exception as error:  # pragma: no cover - startup remains fail-open for unavailable RPC
+            logger.warning(
+                "Canonical Wallet identity reconciliation skipped: %s",
+                type(error).__name__,
+            )
     participation_settlement_monitor = _build_default_testnet_participation_monitor(
         hypervisor_service=resolved_service,
         consensus_service=resolved_consensus_service,
@@ -1053,6 +1074,7 @@ def _build_default_service(
     plugins.register(ProxyOpenAIPlugin())
     plugins.register(VllmPlugin())
     plugins.register(WhisperPlugin())
+    plugins.register(NemoSpeechPlugin())
     bundles = _default_bundle_registry(plugins).load(plugins)
     plugin_host_secret_manager = load_file_secret_manager_from_environment()
     resource_probe = load_resource_probe_from_environment()

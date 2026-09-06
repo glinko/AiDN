@@ -67,6 +67,13 @@ components:
 
 ## Overview
 
+The new Spatial Agent Interface has a separate material direction documented
+in [ADR-013 — AiDN Milky Glass Neumorphism Visual Design System](docs/spatial/ADR-013-aidn-milky-glass-neumorphism-visual-design.md).
+That specification is placement-independent and applies to Spatial UI
+components and future modern surfaces. It does not silently replace this
+dashboard's current dark control-plane palette; migration is a separate,
+reviewed slice.
+
 **Creative North Star: "The Bundle Control Plane"**
 
 AiDN is a dense, calm operational surface rather than an AI chat product or a decorative monitoring screen. The active Hypervisor, stable navigation, Bundle execution chain, and real resource state remain legible before any secondary workflow. The visual world follows the supplied professional virtualization-control-plane reference: deep navy surfaces, thin technical rules, quiet cyan route state, and semantic color that never replaces a label.
