@@ -41,7 +41,7 @@
 
       .fallback-orb {
         position: fixed;
-        top: 50%;
+        top: 33.333%;
         left: 50%;
         width: min(40vmin, 24rem);
         aspect-ratio: 1;
@@ -77,7 +77,7 @@
     THESIS: A single quiet milky-glass orb makes AiDN feel spatial before any interface appears.
     OWN-WORLD: The established high-key Spatial palette, cool spectral reflections, atmospheric horizon, and soft optical depth.
     STORY: Pale environment first, centered orb second, then restrained refraction and penumbral shadow on closer inspection.
-    FIRST VIEWPORT: One centered sphere and its shadow only; no chrome, text, particles, orbit, controls, or competing objects.
+    FIRST VIEWPORT: One elevated upper-third sphere and its shadow only; no chrome, text, particles, orbit, controls, or competing objects.
     FORM: Pinned reference composition; seed key: user-pinned-spatial-orb-v1.
     FINISH: Canvas 2D, responsive high-DPI rendering, subtle light drift, reduced-motion support, and a CSS fallback.
     -->
@@ -105,6 +105,44 @@
         let lastPaint = -Infinity;
 
         const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, value));
+        const fullTurn = Math.PI * 2;
+        const randomBetween = (minimum, maximum) => minimum + Math.random() * (maximum - minimum);
+        const wanderProfile = {
+          x: [
+            { weight: 1, period: randomBetween(18000, 26000), phase: randomBetween(0, fullTurn) },
+            { weight: 0.62, period: randomBetween(33000, 47000), phase: randomBetween(0, fullTurn) },
+            { weight: 0.38, period: randomBetween(52000, 71000), phase: randomBetween(0, fullTurn) },
+          ],
+          y: [
+            { weight: 1, period: randomBetween(21000, 29000), phase: randomBetween(0, fullTurn) },
+            { weight: 0.62, period: randomBetween(37000, 51000), phase: randomBetween(0, fullTurn) },
+            { weight: 0.38, period: randomBetween(57000, 78000), phase: randomBetween(0, fullTurn) },
+          ],
+        };
+
+        function sampleWanderAxis(waves, time) {
+          let weightedPosition = 0;
+          let totalWeight = 0;
+
+          for (const wave of waves) {
+            weightedPosition += Math.sin((time / wave.period) * fullTurn + wave.phase) * wave.weight;
+            totalWeight += wave.weight;
+          }
+
+          return weightedPosition / totalWeight;
+        }
+
+        function getWanderOffset(time, radius) {
+          if (reducedMotion) return { x: 0, y: 0 };
+
+          // Each axis stays within 17.4% of the radius, keeping the diagonal
+          // travel envelope just under one quarter of the sphere radius.
+          const axisSpan = radius * 0.174;
+          return {
+            x: sampleWanderAxis(wanderProfile.x, time) * axisSpan,
+            y: sampleWanderAxis(wanderProfile.y, time) * axisSpan,
+          };
+        }
 
         function fillRadialGlow(x, y, radius, innerColor, outerColor = "rgba(255,255,255,0)") {
           const gradient = context.createRadialGradient(x, y, 0, x, y, radius);
@@ -408,16 +446,20 @@
         function paint(time = 0) {
           const shortestSide = Math.min(viewportWidth, viewportHeight);
           const radius = clamp(shortestSide * 0.205, 86, 230);
-          const floatOffset = reducedMotion ? 0 : Math.sin(time * 0.00058) * Math.min(2.2, radius * 0.012);
-          const centerX = viewportWidth * 0.5;
-          const centerY = viewportHeight * 0.5 - radius * 0.035 + floatOffset;
+          const baseCenterX = viewportWidth * 0.5;
+          const baseCenterY = clamp(viewportHeight / 3, radius * 1.28, viewportHeight - radius * 1.3);
+          const wander = getWanderOffset(time, radius);
+          const centerX = baseCenterX + wander.x;
+          const centerY = baseCenterY + wander.y;
+          const shadowCenterX = baseCenterX + wander.x * 0.38;
+          const shadowCenterY = baseCenterY + radius * 0.22 + wander.y * 0.1;
 
           context.setTransform(1, 0, 0, 1, 0, 0);
           context.clearRect(0, 0, canvas.width, canvas.height);
           context.setTransform(canvas.width / viewportWidth, 0, 0, canvas.height / viewportHeight, 0, 0);
 
           drawBackground(time);
-          drawShadow(centerX, centerY, radius, time);
+          drawShadow(shadowCenterX, shadowCenterY, radius, time);
           drawOrb(centerX, centerY, radius, time);
 
           document.body.classList.add("is-rendered");
