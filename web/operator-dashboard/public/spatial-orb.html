@@ -79,7 +79,7 @@
     STORY: Pale environment first, elevated orb second, four sharp faceted cubes third, then the lowered ground and long penumbral shadows.
     FIRST VIEWPORT: One upper-third sphere with four smaller hard-edged cubes to its right; no chrome, text, particles, orbit, or controls.
     FORM: Pinned reference composition; seed key: user-pinned-spatial-orb-v1.
-    FINISH: Canvas 2D, responsive high-DPI rendering, subtle light drift, independent cube drift and vertical-axis yaw, reduced-motion support, and a CSS fallback.
+    FINISH: Canvas 2D, responsive high-DPI rendering, fixed top-left-front cube lighting, continuous specular travel, independent cube drift and vertical-axis yaw, reduced-motion support, and a CSS fallback.
     -->
     <div class="fallback-orb" aria-hidden="true"></div>
     <canvas
@@ -106,6 +106,11 @@
 
         const clamp = (value, minimum, maximum) => Math.min(maximum, Math.max(minimum, value));
         const fullTurn = Math.PI * 2;
+        // Scene-space vectors stay fixed while each cube turns beneath them.
+        const cubeLightDirection = { x: -0.55, y: -0.72, z: 0.42 };
+        const cubeHalfDirection = { x: -0.313, y: -0.513, z: 0.8 };
+        const cubeHighlightTone = { r: 255, g: 255, b: 255 };
+        const cubeShadowTone = { r: 58, g: 70, b: 82 };
         const randomBetween = (minimum, maximum) => minimum + Math.random() * (maximum - minimum);
         const wanderProfile = {
           x: [
@@ -413,6 +418,73 @@
           };
         }
 
+        function dotVector(vectorA, vectorB) {
+          return vectorA.x * vectorB.x + vectorA.y * vectorB.y + vectorA.z * vectorB.z;
+        }
+
+        function parseHexColor(color) {
+          const numericColor = Number.parseInt(color.slice(1), 16);
+          return {
+            r: (numericColor >> 16) & 255,
+            g: (numericColor >> 8) & 255,
+            b: numericColor & 255,
+          };
+        }
+
+        function mixRgb(colorA, colorB, amount) {
+          const mixAmount = clamp(amount, 0, 1);
+          return {
+            r: colorA.r + (colorB.r - colorA.r) * mixAmount,
+            g: colorA.g + (colorB.g - colorA.g) * mixAmount,
+            b: colorA.b + (colorB.b - colorA.b) * mixAmount,
+          };
+        }
+
+        function rgbColor(color) {
+          return `rgb(${Math.round(color.r)}, ${Math.round(color.g)}, ${Math.round(color.b)})`;
+        }
+
+        function getCubeFaceLighting(normal, facing = 1) {
+          const diffuse = Math.max(0, dotVector(normal, cubeLightDirection));
+          const edgeVisibility = clamp((facing - 0.018) / 0.16, 0, 1);
+          const specular =
+            Math.pow(Math.max(0, dotVector(normal, cubeHalfDirection)), 10) * edgeVisibility;
+          return {
+            diffuse,
+            brightness: 0.34 + diffuse * 0.66,
+            specular,
+          };
+        }
+
+        function getLitFaceColors(baseColor, lighting) {
+          const neutralBrightness = 0.62;
+          const balancedColor =
+            lighting.brightness >= neutralBrightness
+              ? mixRgb(
+                  baseColor,
+                  cubeHighlightTone,
+                  (lighting.brightness - neutralBrightness) * 0.62
+                )
+              : mixRgb(
+                  baseColor,
+                  cubeShadowTone,
+                  (neutralBrightness - lighting.brightness) * 0.72
+                );
+          return {
+            start: mixRgb(
+              balancedColor,
+              cubeHighlightTone,
+              0.2 + lighting.diffuse * 0.12
+            ),
+            middle: balancedColor,
+            end: mixRgb(
+              balancedColor,
+              cubeShadowTone,
+              0.12 + (1 - lighting.diffuse) * 0.08
+            ),
+          };
+        }
+
         function projectCubeVertex(x, y, z, yaw, depthTilt) {
           const cosine = Math.cos(yaw);
           const sine = Math.sin(yaw);
@@ -421,6 +493,7 @@
           return {
             x: rotatedX,
             y: y + rotatedZ * depthTilt,
+            z: rotatedZ,
           };
         }
 
@@ -466,20 +539,86 @@
 
           if (Math.abs(cosine) > 0.018) {
             verticalFaces.push({
-              kind: "front",
+              kind: cosine >= 0 ? "front" : "back",
               points: cosine >= 0 ? faces.front : faces.back,
               facing: Math.abs(cosine),
+              normal:
+                cosine >= 0
+                  ? { x: sine, y: 0, z: cosine }
+                  : { x: -sine, y: 0, z: -cosine },
             });
           }
           if (Math.abs(sine) > 0.018) {
             verticalFaces.push({
-              kind: "side",
+              kind: sine >= 0 ? "left" : "right",
               points: sine >= 0 ? faces.left : faces.right,
               facing: Math.abs(sine),
+              normal:
+                sine >= 0
+                  ? { x: -cosine, y: 0, z: sine }
+                  : { x: cosine, y: 0, z: -sine },
             });
           }
-          verticalFaces.sort((faceA, faceB) => faceA.facing - faceB.facing);
-          const visibleFaces = [{ kind: "top", points: faces.top }, ...verticalFaces];
+          for (const face of verticalFaces) {
+            face.depth =
+              face.points.reduce((depth, point) => depth + point.z, 0) /
+              face.points.length;
+          }
+          verticalFaces.sort(
+            (faceA, faceB) =>
+              faceA.depth - faceB.depth || faceA.kind.localeCompare(faceB.kind)
+          );
+          const visibleFaces = [
+            {
+              kind: "top",
+              points: faces.top,
+              facing: 1,
+              normal: { x: 0, y: -1, z: 0 },
+            },
+            ...verticalFaces,
+          ];
+
+          const localHalfDirection = {
+            x: cubeHalfDirection.x * cosine - cubeHalfDirection.z * sine,
+            y: cubeHalfDirection.y,
+            z: cubeHalfDirection.x * sine + cubeHalfDirection.z * cosine,
+          };
+          const highlightTravel = half * 0.7;
+          const highlightInset = half * 0.985;
+          const highlightLocalX = clamp(
+            localHalfDirection.x * highlightTravel,
+            -half * 0.72,
+            half * 0.72
+          );
+          const highlightLocalY = clamp(
+            localHalfDirection.y * highlightTravel,
+            -half * 0.72,
+            half * 0.72
+          );
+          const highlightLocalZ = clamp(
+            localHalfDirection.z * highlightTravel,
+            -half * 0.72,
+            half * 0.72
+          );
+          const getHighlightAnchor = (kind) => {
+            if (kind === "top") {
+              return vertex(highlightLocalX, -highlightInset, highlightLocalZ);
+            }
+            if (kind === "front") {
+              return vertex(highlightLocalX, highlightLocalY, highlightInset);
+            }
+            if (kind === "back") {
+              return vertex(highlightLocalX, highlightLocalY, -highlightInset);
+            }
+            if (kind === "left") {
+              return vertex(-highlightInset, highlightLocalY, highlightLocalZ);
+            }
+            return vertex(highlightInset, highlightLocalY, highlightLocalZ);
+          };
+          for (const face of visibleFaces) {
+            face.lighting = getCubeFaceLighting(face.normal, face.facing);
+            face.highlightAnchor = getHighlightAnchor(face.kind);
+          }
 
           context.save();
           context.translate(centerX, centerY);
@@ -495,105 +634,77 @@
           context.fill();
           context.restore();
 
-          const topBounds = getFacetBounds(faces.top);
-          const topGradient = context.createLinearGradient(
-            topBounds.left,
-            topBounds.top,
-            topBounds.right,
-            topBounds.bottom
+          const baseColor = mixRgb(
+            parseHexColor(colors.frontStart),
+            parseHexColor(colors.frontEnd),
+            0.46
           );
-          topGradient.addColorStop(0, colors.topStart);
-          topGradient.addColorStop(1, colors.topEnd);
-          drawFacet(faces.top, topGradient, Math.max(0.7, size * 0.012));
-
-          for (const face of verticalFaces) {
+          for (const face of visibleFaces) {
             const bounds = getFacetBounds(face.points);
+            const litColors = getLitFaceColors(baseColor, face.lighting);
             const faceGradient = context.createLinearGradient(
               bounds.left,
               bounds.top,
               bounds.right,
               bounds.bottom
             );
-            if (face.kind === "front") {
-              faceGradient.addColorStop(0, colors.frontStart);
-              faceGradient.addColorStop(0.48, colors.topEnd);
-              faceGradient.addColorStop(1, colors.frontEnd);
-            } else {
-              faceGradient.addColorStop(0, colors.sideStart);
-              faceGradient.addColorStop(1, colors.sideEnd);
-            }
+            faceGradient.addColorStop(0, rgbColor(litColors.start));
+            faceGradient.addColorStop(0.52, rgbColor(litColors.middle));
+            faceGradient.addColorStop(1, rgbColor(litColors.end));
             drawFacet(face.points, faceGradient, Math.max(0.7, size * 0.012));
           }
 
-          const highlightFace = verticalFaces[verticalFaces.length - 1];
-          const highlightBounds = getFacetBounds(highlightFace.points);
-          const highlightWidth = highlightBounds.right - highlightBounds.left;
-          const highlightHeight = highlightBounds.bottom - highlightBounds.top;
+          for (const face of visibleFaces) {
+            const bounds = getFacetBounds(face.points);
+            const width = bounds.right - bounds.left;
+            const height = bounds.bottom - bounds.top;
+            const { x: highlightX, y: highlightY } = face.highlightAnchor;
+            const sheenOpacity =
+              0.035 + face.lighting.diffuse * 0.055 + face.lighting.specular * 0.72;
 
-          context.save();
-          context.beginPath();
-          traceFacet(highlightFace.points);
-          context.clip();
-          const sheen = context.createRadialGradient(
-            highlightBounds.left + highlightWidth * 0.24,
-            highlightBounds.top + highlightHeight * 0.22,
-            0,
-            highlightBounds.left + highlightWidth * 0.24,
-            highlightBounds.top + highlightHeight * 0.22,
-            size * 0.5
-          );
-          sheen.addColorStop(0, "rgba(255,255,255,0.82)");
-          sheen.addColorStop(0.28, "rgba(255,255,255,0.3)");
-          sheen.addColorStop(1, "rgba(255,255,255,0)");
-          context.fillStyle = sheen;
-          context.fillRect(
-            highlightBounds.left,
-            highlightBounds.top,
-            highlightWidth,
-            highlightHeight
-          );
+            context.save();
+            context.beginPath();
+            traceFacet(face.points);
+            context.clip();
+            context.globalCompositeOperation = "screen";
+            context.globalAlpha = clamp(sheenOpacity, 0, 0.72);
+            const sheen = context.createRadialGradient(
+              highlightX,
+              highlightY,
+              size * 0.015,
+              highlightX,
+              highlightY,
+              size * 0.43
+            );
+            sheen.addColorStop(0, "rgba(255,255,255,0.98)");
+            sheen.addColorStop(0.24, "rgba(255,255,255,0.5)");
+            sheen.addColorStop(1, "rgba(255,255,255,0)");
+            context.fillStyle = sheen;
+            context.fillRect(bounds.left, bounds.top, width, height);
 
-          const lowerShade = context.createLinearGradient(
-            0,
-            highlightBounds.top,
-            0,
-            highlightBounds.bottom
-          );
-          lowerShade.addColorStop(0.45, "rgba(255,255,255,0)");
-          lowerShade.addColorStop(1, "rgba(47,62,72,0.12)");
-          context.fillStyle = lowerShade;
-          context.fillRect(
-            highlightBounds.left,
-            highlightBounds.top,
-            highlightWidth,
-            highlightHeight
-          );
-          context.restore();
+            const streakOpacity = clamp(face.lighting.specular * 1.35, 0, 0.78);
+            if (streakOpacity > 0.012) {
+              context.globalAlpha = streakOpacity;
+              context.strokeStyle = "rgba(255,255,255,0.92)";
+              context.lineCap = "round";
+              context.lineWidth = Math.max(1.1, size * 0.035);
+              context.beginPath();
+              context.moveTo(highlightX - size * 0.075, highlightY + size * 0.018);
+              context.lineTo(highlightX + size * 0.09, highlightY - size * 0.052);
+              context.stroke();
+            }
+            context.restore();
+          }
 
-          context.strokeStyle = "rgba(255,255,255,0.42)";
-          context.lineWidth = Math.max(0.8, size * 0.018);
-          context.beginPath();
-          traceFacet(highlightFace.points);
-          context.stroke();
-
-          context.save();
-          context.beginPath();
-          traceFacet(highlightFace.points);
-          context.clip();
-          context.strokeStyle = "rgba(255,255,255,0.72)";
-          context.lineCap = "round";
-          context.lineWidth = Math.max(1.2, size * 0.04);
-          context.beginPath();
-          context.moveTo(
-            highlightBounds.left + highlightWidth * 0.22,
-            highlightBounds.top + highlightHeight * 0.25
-          );
-          context.lineTo(
-            highlightBounds.left + highlightWidth * 0.44,
-            highlightBounds.top + highlightHeight * 0.17
-          );
-          context.stroke();
-          context.restore();
+          for (const face of visibleFaces) {
+            context.strokeStyle = `rgba(255,255,255,${0.12 + face.lighting.diffuse * 0.16})`;
+            context.lineJoin = "miter";
+            context.miterLimit = 4;
+            context.lineWidth = Math.max(0.75, size * 0.012);
+            context.beginPath();
+            traceFacet(face.points);
+            context.stroke();
+          }
 
           context.restore();
         }
