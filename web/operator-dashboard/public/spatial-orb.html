@@ -77,7 +77,7 @@
     THESIS: A single quiet milky-glass orb makes AiDN feel spatial before any interface appears.
     OWN-WORLD: The established high-key Spatial palette, cool spectral reflections, atmospheric horizon, and soft optical depth.
     STORY: Pale environment first, elevated orb second, four softly faceted cubes third, then the lowered ground and long penumbral shadows.
-    FIRST VIEWPORT: One upper-third sphere with four smaller rounded cubes to its right; no chrome, text, particles, orbit, or controls.
+    FIRST VIEWPORT: One upper-third sphere with four smaller hard-edged cubes to its right; no chrome, text, particles, orbit, or controls.
     FORM: Pinned reference composition; seed key: user-pinned-spatial-orb-v1.
     FINISH: Canvas 2D, responsive high-DPI rendering, subtle light drift, reduced-motion support, and a CSS fallback.
     -->
@@ -85,7 +85,7 @@
     <canvas
       id="spatial-orb"
       role="img"
-      aria-label="A translucent milky glass sphere and four softly colored rounded cubes floating over a low iridescent ground."
+      aria-label="A translucent milky glass sphere and four softly colored cubes floating over a low iridescent ground."
     ></canvas>
 
     <script>
@@ -354,17 +354,17 @@
           context.closePath();
           context.fillStyle = fillStyle;
           context.fill();
-          context.lineJoin = "round";
+          context.lineJoin = "miter";
+          context.miterLimit = 4;
           context.lineWidth = edgeWidth;
           context.strokeStyle = fillStyle;
           context.stroke();
         }
 
-        function drawRoundedCube(centerX, centerY, size, colors, rotation) {
+        function drawCube(centerX, centerY, size, colors, rotation) {
           const half = size * 0.39;
           const depthX = size * 0.18;
           const depthY = -size * 0.14;
-          const cornerRadius = size * 0.145;
 
           context.save();
           context.translate(centerX, centerY);
@@ -377,7 +377,7 @@
           context.shadowOffsetY = size * 0.16;
           context.fillStyle = colors.frontEnd;
           context.beginPath();
-          context.roundRect(-half, -half, half * 2, half * 2, cornerRadius);
+          context.rect(-half, -half, half * 2, half * 2);
           context.fill();
           context.restore();
 
@@ -392,7 +392,7 @@
               { x: -half + depthX, y: -half + depthY },
             ],
             topGradient,
-            size * 0.045
+            Math.max(0.7, size * 0.012)
           );
 
           const sideGradient = context.createLinearGradient(half, -half, half + depthX, half + depthY);
@@ -406,7 +406,7 @@
               { x: half, y: half },
             ],
             sideGradient,
-            size * 0.045
+            Math.max(0.7, size * 0.012)
           );
 
           const frontGradient = context.createLinearGradient(-half, -half, half, half);
@@ -415,12 +415,12 @@
           frontGradient.addColorStop(1, colors.frontEnd);
           context.fillStyle = frontGradient;
           context.beginPath();
-          context.roundRect(-half, -half, half * 2, half * 2, cornerRadius);
+          context.rect(-half, -half, half * 2, half * 2);
           context.fill();
 
           context.save();
           context.beginPath();
-          context.roundRect(-half, -half, half * 2, half * 2, cornerRadius);
+          context.rect(-half, -half, half * 2, half * 2);
           context.clip();
           const sheen = context.createRadialGradient(
             -size * 0.2,
@@ -446,7 +446,7 @@
           context.strokeStyle = "rgba(255,255,255,0.42)";
           context.lineWidth = Math.max(0.8, size * 0.018);
           context.beginPath();
-          context.roundRect(-half, -half, half * 2, half * 2, cornerRadius);
+          context.rect(-half, -half, half * 2, half * 2);
           context.stroke();
 
           context.strokeStyle = "rgba(255,255,255,0.72)";
@@ -481,7 +481,7 @@
           }
 
           for (const cube of cubeLayout) {
-            drawRoundedCube(
+            drawCube(
               baseCenterX + radius * cube.x,
               baseCenterY + radius * cube.y,
               radius * cube.size,
