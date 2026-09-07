@@ -76,10 +76,10 @@
     <!-- impeccable:direction-contract
     THESIS: A single quiet milky-glass orb makes AiDN feel spatial before any interface appears.
     OWN-WORLD: The established high-key Spatial palette, cool spectral reflections, atmospheric horizon, and soft optical depth.
-    STORY: Pale environment first, elevated orb second, four softly faceted cubes third, then the lowered ground and long penumbral shadows.
+    STORY: Pale environment first, elevated orb second, four sharp faceted cubes third, then the lowered ground and long penumbral shadows.
     FIRST VIEWPORT: One upper-third sphere with four smaller hard-edged cubes to its right; no chrome, text, particles, orbit, or controls.
     FORM: Pinned reference composition; seed key: user-pinned-spatial-orb-v1.
-    FINISH: Canvas 2D, responsive high-DPI rendering, subtle light drift, reduced-motion support, and a CSS fallback.
+    FINISH: Canvas 2D, responsive high-DPI rendering, subtle light drift, independent cube drift and rotation, reduced-motion support, and a CSS fallback.
     -->
     <div class="fallback-orb" aria-hidden="true"></div>
     <canvas
@@ -137,7 +137,7 @@
           },
           {
             x: 1.88,
-            y: -0.2,
+            y: -0.1,
             size: 0.48,
             rotation: 0.035,
             colors: {
@@ -152,7 +152,7 @@
           },
           {
             x: 1.55,
-            y: 0.43,
+            y: 0.55,
             size: 0.56,
             rotation: -0.025,
             colors: {
@@ -167,7 +167,7 @@
           },
           {
             x: 1.92,
-            y: 0.9,
+            y: 1.2,
             size: 0.43,
             rotation: 0.052,
             colors: {
@@ -181,6 +181,26 @@
             },
           },
         ];
+        const cubeMotionProfiles = cubeLayout.map((_, index) => ({
+          x: [
+            { weight: 1, period: randomBetween(28000, 44000), phase: randomBetween(0, fullTurn) },
+            { weight: 0.6, period: randomBetween(50000, 70000), phase: randomBetween(0, fullTurn) },
+            { weight: 0.34, period: randomBetween(80000, 110000), phase: randomBetween(0, fullTurn) },
+          ],
+          y: [
+            { weight: 1, period: randomBetween(32000, 48000), phase: randomBetween(0, fullTurn) },
+            { weight: 0.6, period: randomBetween(56000, 76000), phase: randomBetween(0, fullTurn) },
+            { weight: 0.34, period: randomBetween(88000, 118000), phase: randomBetween(0, fullTurn) },
+          ],
+          rotationDirection: index % 2 === 0 ? 1 : -1,
+          rotationOffset: randomBetween(-0.075, 0.075),
+          rotationPeriod: randomBetween(190000, 310000),
+          wobbleAmplitude: randomBetween(0.025, 0.055),
+          wobblePeriod: randomBetween(45000, 75000),
+          wobblePhase: randomBetween(0, fullTurn),
+          perspectivePeriod: randomBetween(38000, 62000),
+          perspectivePhase: randomBetween(0, fullTurn),
+        }));
 
         function sampleWanderAxis(waves, time) {
           let weightedPosition = 0;
@@ -203,6 +223,27 @@
           return {
             x: sampleWanderAxis(wanderProfile.x, time) * axisSpan,
             y: sampleWanderAxis(wanderProfile.y, time) * axisSpan,
+          };
+        }
+
+        function getCubeMotion(index, time, size, baseRotation) {
+          if (reducedMotion) {
+            return { x: 0, y: 0, rotation: baseRotation, perspective: 0 };
+          }
+
+          const profile = cubeMotionProfiles[index];
+          const axisSpan = size * 0.174;
+          return {
+            x: sampleWanderAxis(profile.x, time) * axisSpan,
+            y: sampleWanderAxis(profile.y, time) * axisSpan,
+            rotation:
+              baseRotation +
+              profile.rotationOffset +
+              (time / profile.rotationPeriod) * fullTurn * profile.rotationDirection +
+              Math.sin((time / profile.wobblePeriod) * fullTurn + profile.wobblePhase) *
+                profile.wobbleAmplitude,
+            perspective:
+              Math.sin((time / profile.perspectivePeriod) * fullTurn + profile.perspectivePhase),
           };
         }
 
@@ -361,10 +402,10 @@
           context.stroke();
         }
 
-        function drawCube(centerX, centerY, size, colors, rotation) {
+        function drawCube(centerX, centerY, size, colors, rotation, perspective) {
           const half = size * 0.39;
-          const depthX = size * 0.18;
-          const depthY = -size * 0.14;
+          const depthX = size * (0.18 + perspective * 0.012);
+          const depthY = -size * (0.14 - perspective * 0.009);
 
           context.save();
           context.translate(centerX, centerY);
@@ -460,33 +501,60 @@
           context.restore();
         }
 
-        function drawCubeCluster(baseCenterX, baseCenterY, radius, groundY) {
-          for (const cube of cubeLayout) {
-            const cubeX = baseCenterX + radius * cube.x;
-            const cubeSize = radius * cube.size;
+        function drawCubeCluster(baseCenterX, baseCenterY, radius, groundY, time) {
+          const renderedCubes = cubeLayout.map((cube, index) => {
+            const size = radius * cube.size;
+            const motion = getCubeMotion(index, time, size, cube.rotation);
+            const baseX = baseCenterX + radius * cube.x;
+            const maximumDrift = size * 0.174;
+            const maximumRotatedExtent = size * 0.79;
+            const edgeShift = Math.max(
+              0,
+              baseX + maximumDrift + maximumRotatedExtent + 4 - viewportWidth
+            );
+
+            return {
+              cube,
+              size,
+              motion,
+              baseX: baseX - edgeShift,
+              x: baseX - edgeShift + motion.x,
+              y: baseCenterY + radius * cube.y + motion.y,
+            };
+          });
+
+          for (const renderedCube of renderedCubes) {
+            const { cube, size, motion, baseX } = renderedCube;
+            const liftRatio = clamp(motion.y / (size * 0.174 || 1), -1, 1);
+            const shadowScale = 1 - liftRatio * 0.055;
 
             context.save();
-            context.globalAlpha = 0.44;
-            context.translate(cubeX + cubeSize * 0.12, groundY + cubeSize * 0.08);
-            context.scale(1, 0.19);
-            const shadow = context.createRadialGradient(0, 0, 0, 0, 0, cubeSize * 0.72);
+            context.globalAlpha = 0.42 + liftRatio * 0.055;
+            context.translate(
+              baseX + motion.x * 0.38 + size * 0.12,
+              groundY + size * 0.08
+            );
+            context.scale(shadowScale, 0.19 * shadowScale);
+            const shadow = context.createRadialGradient(0, 0, 0, 0, 0, size * 0.72);
             shadow.addColorStop(0, cube.colors.shadow);
             shadow.addColorStop(0.52, "rgba(75,92,102,0.065)");
             shadow.addColorStop(1, "rgba(75,92,102,0)");
             context.fillStyle = shadow;
             context.beginPath();
-            context.arc(0, 0, cubeSize * 0.72, 0, fullTurn);
+            context.arc(0, 0, size * 0.72, 0, fullTurn);
             context.fill();
             context.restore();
           }
 
-          for (const cube of cubeLayout) {
+          for (const renderedCube of renderedCubes) {
+            const { cube, size, motion, x, y } = renderedCube;
             drawCube(
-              baseCenterX + radius * cube.x,
-              baseCenterY + radius * cube.y,
-              radius * cube.size,
+              x,
+              y,
+              size,
               cube.colors,
-              cube.rotation
+              motion.rotation,
+              motion.perspective
             );
           }
         }
@@ -669,7 +737,7 @@
 
           drawBackground(time);
           drawShadow(shadowCenterX, shadowCenterY, radius, time);
-          drawCubeCluster(baseCenterX, baseCenterY, radius, groundY);
+          drawCubeCluster(baseCenterX, baseCenterY, radius, groundY, time);
           drawOrb(centerX, centerY, radius, time);
 
           document.body.classList.add("is-rendered");
