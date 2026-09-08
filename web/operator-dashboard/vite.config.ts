@@ -27,6 +27,14 @@ function offlineDashboardApiFixture(): Plugin {
 export default defineConfig({
   base: '/operators/dashboard/react/',
   plugins: [offlineDashboardApiFixture(), react(), tailwindcss()],
+  build: {
+    rolldownOptions: {
+      input: {
+        dashboard: fileURLToPath(new URL('./index.html', import.meta.url)),
+        calibration: fileURLToPath(new URL('./spatial-calibration.html', import.meta.url)),
+      },
+    },
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
