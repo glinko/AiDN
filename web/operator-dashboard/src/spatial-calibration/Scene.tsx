@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
-import { Billboard, Edges, Environment, Lightformer, MeshReflectorMaterial, MeshTransmissionMaterial, OrbitControls, RoundedBox } from '@react-three/drei'
+import { Billboard, Environment, Lightformer, OrbitControls, RoundedBox } from '@react-three/drei'
 import { Color, Group, HalfFloatType, NeutralToneMapping, Vector2, WebGLRenderTarget } from 'three'
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
@@ -9,7 +9,8 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 
 import { DEFAULT_CALIBRATION, createCalibrationEntities } from './model'
-import { createAtmosphereMaterial, createHaloMaterial, createPearlMaterial } from './materials'
+import { createAtmosphereMaterial, createGlassFinish, createHaloMaterial, createPearlMaterial } from './materials'
+import { MilkGround } from './MilkGround'
 
 export type SceneProps = {
   paused: boolean
@@ -37,18 +38,6 @@ function StudioEnvironment() {
     <directionalLight position={[-4, 7, 5]} intensity={2.1} color="#fffaf5" />
     <directionalLight position={[4, 2, -1]} intensity={0.4} color="#c5c6f5" />
   </>
-}
-
-function MilkGround({ compact }: { compact: boolean }) {
-  return <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.015, 0]}>
-    <planeGeometry args={[160, 160]} />
-    <MeshReflectorMaterial
-      color="#f0f3fa" metalness={0.12} roughness={0.65}
-      resolution={compact ? 256 : 512} blur={[160, 80]}
-      mixBlur={1} mixStrength={0.65} mirror={0.45} mixContrast={0.85}
-      depthScale={0} minDepthThreshold={0.4} maxDepthThreshold={1.5}
-    />
-  </mesh>
 }
 
 // A soft analytic penumbra complements the actual reflected scene above the floor.
@@ -107,8 +96,7 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
   const time = useRef(0)
   const firstFrame = useRef(true)
   const pearl = useMemo(() => createPearlMaterial(0.58), [])
-  const cubeInner = useMemo(() => createPearlMaterial(0.22), [])
-  const cubeSurface = useMemo(() => createPearlMaterial(0.38), [])
+  const cubeSurface = useMemo(() => createGlassFinish(entities.cube.size), [entities])
   const halo = useMemo(createHaloMaterial, [])
 
   useEffect(() => {
@@ -119,7 +107,7 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
     return () => window.clearInterval(timer)
   }, [paused, reducedMotion, invalidate])
 
-  useEffect(() => () => { pearl.dispose(); cubeInner.dispose(); cubeSurface.dispose(); halo.dispose() }, [pearl, cubeInner, cubeSurface, halo])
+  useEffect(() => () => { pearl.dispose(); cubeSurface.dispose(); halo.dispose() }, [pearl, cubeSurface, halo])
   useEffect(() => {
     gl.toneMapping = NeutralToneMapping
     gl.toneMappingExposure = 1.05
@@ -144,8 +132,6 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
       cubeGroup.current.rotation.fromArray([...entities.cube.rotation, 'XYZ'])
     }
     pearl.uniforms.uTime.value = time.current
-    cubeInner.uniforms.uTime.value = time.current * 0.6
-    cubeSurface.uniforms.uTime.value = time.current * 0.6
     if (firstFrame.current) { firstFrame.current = false; onReady() }
   })
 
@@ -162,10 +148,7 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
       </mesh>
       <mesh>
         <sphereGeometry args={[entities.orb.radius, 64, 48]} />
-        <MeshTransmissionMaterial
-          resolution={compact ? 256 : 512} samples={compact ? 3 : 5}
-          {...entities.orb.material}
-        />
+        <meshPhysicalMaterial {...entities.orb.material} />
       </mesh>
       <Billboard>
         <mesh position={[0, 0, -0.04]} material={halo}>
@@ -178,19 +161,8 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
       <mesh material={cubeSurface} scale={1.003} renderOrder={2}>
         <boxGeometry args={[entities.cube.size, entities.cube.size, entities.cube.size]} />
       </mesh>
-      <mesh>
-        <boxGeometry args={[entities.cube.size, entities.cube.size, entities.cube.size]} />
-        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-        <Edges color="#ffffff" transparent opacity={0.85} />
-      </mesh>
-      <mesh scale={[0.29, 0.36, 0.27]} material={cubeInner}>
-        <sphereGeometry args={[1, 24, 20]} />
-      </mesh>
       <RoundedBox args={[entities.cube.size, entities.cube.size, entities.cube.size]} radius={0.016} smoothness={3}>
-        <MeshTransmissionMaterial
-          resolution={compact ? 256 : 512} samples={compact ? 3 : 5}
-          {...entities.cube.material}
-        />
+        <meshPhysicalMaterial depthWrite={false} {...entities.cube.material} />
       </RoundedBox>
     </group>
     <OrbitControls ref={controls} makeDefault enablePan={false} enableZoom={false}

@@ -49,9 +49,9 @@ The canvas fills the viewport without scrolling. The orb sits left of center and
 
 ## Elevation & Depth
 
-Depth combines real-time rasterized transmission and planar reflection with deliberately authored shader layers. The orb uses `MeshTransmissionMaterial` under a slightly expanded transparent pearl shell. That shell draws fixed world-direction color lobes, a view-dependent bright rim, a softbox highlight, and a slowly changing local cloud pattern. A billboard ring adds a separate halo. This is not a physically accurate pearl volume or ray-traced light transport.
+Depth combines native Three.js physical transmission and planar reflection with deliberately authored shader layers. The orb uses `MeshPhysicalMaterial` under a slightly expanded transparent pearl shell. That shell draws fixed world-direction color lobes, a view-dependent bright rim, a softbox highlight, and a slowly changing local cloud pattern. A billboard ring adds a separate halo. This is not a physically accurate pearl volume or ray-traced light transport.
 
-The rounded glass cube uses transmission and attenuation, an inner shader sphere, and explicit white edge lines. Its luminous outline is partly authored geometry rather than solely a material reflection. The milk floor uses a blurred `MeshReflectorMaterial`; analytic radial penumbras supplement it. Neutral tone mapping and a restrained bloom pass finish the image.
+The rounded glass cube uses full physical transmission and attenuation, plus a distinct two-sided glass finish: clear face centers, tinted grazing angles, luminous edge regions, and subdued rear edges. It no longer contains the opaque pearl face layer or inner pearl sphere. Its finish samples a fixed world-space softbox direction, not an animated light. The milk floor uses a Three.js `Reflector` and a normalized 25-tap blur, composed in linear light rather than re-lit as diffuse material. Reflection opacity fades toward the viewer and horizon; analytic radial penumbras supplement it. Neutral tone mapping and a restrained bloom pass finish the image.
 
 The environment is captured once from fixed rectangular lightformers, with fixed ambient and directional lights. Lights do not travel around the objects. Changing highlights come from object/camera movement and the time-driven shader pattern. Current limitations include approximate internal scattering and caustics, synthetic halo/edge treatments, finite reflection and transmission buffers, and angle-dependent differences from the reference.
 
@@ -61,11 +61,11 @@ One smooth sphere and one nearly sharp rounded cube carry the entire composition
 
 ## Components
 
-The scene uses demand rendering, DPR 1, and a timer that requests frames at approximately 30Hz while motion is active. This is an invalidation cadence, not a guaranteed measured frame rate or an absolute cap during interaction. Reflection/transmission buffers use 512px normally and 256px below the compact breakpoint; transmission samples drop from five to three.
+The scene uses demand rendering, DPR 1, and a timer that requests frames at approximately 30Hz while motion is active. This is an invalidation cadence, not a guaranteed measured frame rate or an absolute cap during interaction. Reflection buffers use 768px normally and 384px below the compact breakpoint. Native physical transmission replaces the per-object Drei capture buffers so mirrored views are rendered with the reflection camera.
 
 Pause freezes the animation clock while preserving camera inspection. Reduced-motion preference stops automatic motion, removes control transitions and camera damping, and disables the pause toggle. Hidden documents stop rendering and timer invalidation. Drag inspection is bounded, with pan and zoom disabled; reset restores the initial camera view. Loading, WebGL fallback, and retry states communicate scene availability without exposing operational status.
 
-To run locally from `web/operator-dashboard`, use `pnpm dev --host 127.0.0.1 --port 5173` and open `http://127.0.0.1:5173/spatial-calibration.html`. If Vite reports another port, use that reported port. Check model behavior with `pnpm test -- tests/unit/spatial-calibration-model.test.ts` and TypeScript with `pnpm typecheck`. These commands are verification instructions, not a claim of passing results. Visually inspect desktop and portrait framing, drag/reset, pause, reduced motion, and loading/failure behavior in a WebGL 2 browser; unit tests cannot establish material fidelity.
+To run locally from `web/operator-dashboard`, use `pnpm dev --host 127.0.0.1 --port 5173` and open `http://127.0.0.1:5173/operators/dashboard/react/spatial-calibration.html`. If Vite reports another port, use that reported port. Check behavior with `pnpm test -- tests/unit/spatial-calibration-model.test.ts tests/unit/spatial-calibration-optics.test.ts` and TypeScript with `pnpm typecheck`. These commands are verification instructions, not a claim of passing results. Visually inspect desktop and portrait framing, drag/reset, pause, reduced motion, and loading/failure behavior in a WebGL 2 browser; unit tests cannot establish material fidelity.
 
 ## Do's and Don'ts
 

@@ -19,10 +19,6 @@ export interface OrbMaterialConfig {
   readonly iridescence: number
   readonly iridescenceIOR: number
   readonly iridescenceThicknessRange: [number, number]
-  readonly chromaticAberration: number
-  readonly anisotropicBlur: number
-  readonly distortion: number
-  readonly temporalDistortion: number
 }
 
 export interface CubeMaterialConfig {
@@ -40,10 +36,6 @@ export interface CubeMaterialConfig {
   readonly iridescence: number
   readonly iridescenceIOR: number
   readonly iridescenceThicknessRange: [number, number]
-  readonly chromaticAberration: number
-  readonly anisotropicBlur: number
-  readonly distortion: number
-  readonly temporalDistortion: number
 }
 
 export interface OrbConfig {
@@ -98,20 +90,12 @@ export interface CalibrationConfig {
   readonly floor: {
     readonly size: number
     readonly color: string
-    readonly roughness: number
-    readonly metalness: number
-    readonly opacity: number
     readonly reflection: {
       readonly resolution: number
       readonly compactResolution: number
-      readonly blur: [number, number]
-      readonly mixBlur: number
-      readonly mixStrength: number
-      readonly mirror: number
-      readonly mixContrast: number
-      readonly depthScale: number
-      readonly minDepthThreshold: number
-      readonly maxDepthThreshold: number
+      readonly strength: number
+      readonly blurNear: number
+      readonly blurFar: number
     }
   }
   readonly orb: OrbConfig
@@ -147,20 +131,12 @@ export const DEFAULT_CALIBRATION: CalibrationConfig = {
   floor: {
     size: 160,
     color: '#f0f3fa',
-    roughness: 0.65,
-    metalness: 0.12,
-    opacity: 1,
     reflection: {
-      resolution: 512,
-      compactResolution: 256,
-      blur: [160, 80],
-      mixBlur: 1,
-      mixStrength: 0.65,
-      mirror: 0.45,
-      mixContrast: 0.85,
-      depthScale: 0,
-      minDepthThreshold: 0.4,
-      maxDepthThreshold: 1.5,
+      resolution: 768,
+      compactResolution: 384,
+      strength: 0.6,
+      blurNear: 0.0015,
+      blurFar: 0.005,
     },
   },
   orb: {
@@ -180,10 +156,6 @@ export const DEFAULT_CALIBRATION: CalibrationConfig = {
       iridescence: 0.48,
       iridescenceIOR: 1.25,
       iridescenceThicknessRange: [180, 390],
-      chromaticAberration: 0.012,
-      anisotropicBlur: 0.06,
-      distortion: 0,
-      temporalDistortion: 0,
     },
     motion: { driftAmplitude: 0.08, driftFrequency: 0.36 },
   },
@@ -193,24 +165,20 @@ export const DEFAULT_CALIBRATION: CalibrationConfig = {
     size: 0.92,
     baseYaw: -0.45,
     material: {
-      color: '#f1f6ff',
-      roughness: 0.16,
+      color: '#f3f8ff',
+      roughness: 0.075,
       metalness: 0,
-      transmission: 0.94,
-      thickness: 0.6,
-      ior: 1.17,
-      envMapIntensity: 0.75,
+      transmission: 1,
+      thickness: 0.38,
+      ior: 1.38,
+      envMapIntensity: 1.1,
       clearcoat: 1,
-      clearcoatRoughness: 0.1,
-      attenuationColor: '#cdd4ec',
-      attenuationDistance: 4,
-      iridescence: 0.26,
-      iridescenceIOR: 1.2,
-      iridescenceThicknessRange: [210, 380],
-      chromaticAberration: 0.015,
-      anisotropicBlur: 0.05,
-      distortion: 0,
-      temporalDistortion: 0,
+      clearcoatRoughness: 0.08,
+      attenuationColor: '#c1d4ef',
+      attenuationDistance: 2.8,
+      iridescence: 0.18,
+      iridescenceIOR: 1.25,
+      iridescenceThicknessRange: [180, 350],
     },
     motion: { driftAmplitude: 0.055, driftFrequency: 0.28, yawSpeed: 0.045 },
   },

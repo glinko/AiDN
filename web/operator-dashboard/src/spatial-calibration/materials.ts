@@ -1,4 +1,4 @@
-import { BackSide, ShaderMaterial } from 'three'
+import { BackSide, DoubleSide, ShaderMaterial } from 'three'
 
 const vertex = /* glsl */ `
   varying vec3 vNormalWorld;
@@ -71,6 +71,42 @@ export function createAtmosphereMaterial() {
         sky = mix(sky, vec3(0.91,0.87,0.97), lilac * 0.16);
         sky += horizon * 0.035;
         gl_FragColor = vec4(sky,1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }
+    `,
+  })
+}
+
+/** Thin glass finish: clear face centers, softly luminous physical edge regions. */
+export function createGlassFinish(size: number) {
+  return new ShaderMaterial({
+    transparent: true, depthWrite: false, side: DoubleSide,
+    uniforms: { uHalfSize: { value: size / 2 } },
+    vertexShader: vertex,
+    fragmentShader: `
+      uniform float uHalfSize;
+      varying vec3 vNormalWorld;
+      varying vec3 vWorld;
+      varying vec3 vLocal;
+      void main() {
+        vec3 n = normalize(vNormalWorld);
+        vec3 v = normalize(cameraPosition-vWorld);
+        vec3 p = abs(vLocal/uHalfSize);
+        float second = min(max(p.x,p.y), min(max(p.x,p.z),max(p.y,p.z)));
+        float edge = smoothstep(0.89, 0.998, second);
+        float fresnel = pow(1.0-abs(dot(n,v)),3.0);
+        vec3 r = reflect(-v,n);
+        float softbox = pow(max(dot(r,normalize(vec3(-0.6,0.8,0.9))),0.0),12.0);
+        float cyan = max(dot(n,normalize(vec3(-1.0,0.2,0.6))),0.0);
+        float peach = max(dot(n,normalize(vec3(1.0,0.4,0.1))),0.0);
+        vec3 tint = mix(vec3(0.53,0.57,0.80),vec3(0.38,0.70,0.85),cyan);
+        tint = mix(tint,vec3(0.92,0.70,0.62),peach*0.6);
+        vec3 glass = mix(tint,vec3(1.25),edge*0.9);
+        glass += softbox * 0.42;
+        float alpha = 0.045 + fresnel*0.07 + edge*0.58 + softbox*0.18;
+        if (!gl_FrontFacing) alpha *= 0.52;
+        gl_FragColor = vec4(glass,alpha);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }
