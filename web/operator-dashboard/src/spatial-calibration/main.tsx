@@ -38,7 +38,7 @@ function App() {
       <Canvas camera={{ position: [0.2, 3.15, 9.8], fov: 33, near: 0.1, far: 180 }}
         dpr={1} frameloop={hidden ? 'never' : 'demand'}
         gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
-        aria-label="Шар — основной агент, стеклянный куб — артефакт диалога. Маленькое солнце с короной и тремя спутниками — эндпоинт. Можно менять ракурс перетаскиванием."
+        aria-label="Шар — основной агент, стеклянный куб — артефакт диалога. Маленькое солнце с короной и тремя спутниками — эндпоинт. Меняйте ракурс перетаскиванием, нажмите объект для приближения."
         fallback={<div className="scene-message" role="alert">Для этой сцены нужен браузер с поддержкой WebGL 2.</div>}>
         <Suspense fallback={null}>
           <CalibrationScene paused={paused} reducedMotion={reducedMotion} resetKey={resetKey} onReady={onReady} />
@@ -47,7 +47,7 @@ function App() {
       {!ready && <p className="loading" role="status">Подготавливаем свет…</p>}
     </SceneBoundary>
     <footer className="scene-controls">
-      <span>Перетащите, чтобы осмотреть</span>
+      <span>Перетащите · нажмите объект</span>
       <div>
         <button aria-label={paused ? 'Продолжить движение' : 'Приостановить движение'}
           aria-pressed={paused} disabled={reducedMotion} onClick={() => setPaused(value => !value)}>

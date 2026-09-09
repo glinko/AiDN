@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import { Billboard, Environment, Lightformer, OrbitControls, RoundedBox } from '@react-three/drei'
-import { Color, Group, HalfFloatType, NeutralToneMapping, Vector2, WebGLRenderTarget } from 'three'
+import { AdditiveBlending, Color, Group, HalfFloatType, NeutralToneMapping, Vector2, Vector3, WebGLRenderTarget } from 'three'
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
@@ -20,6 +20,43 @@ export type SceneProps = {
   reducedMotion: boolean
   resetKey: number
   onReady: () => void
+}
+
+type FocusableId = 'orb' | 'cube' | 'endpoint'
+
+type CameraFocus =
+  | { kind: 'object'; id: FocusableId; distance: number; direction: Vector3; targetOffset: Vector3 }
+  | { kind: 'home'; position: Vector3; target: Vector3 }
+
+const FOCUS_DISTANCE: Record<FocusableId, number> = { orb: 4.4, cube: 3.7, endpoint: 2.8 }
+const FOCUS_TARGET_OFFSET: Record<FocusableId, [number, number, number]> = {
+  orb: [0, 0, 0],
+  cube: [0, 0, 0],
+  endpoint: [0, 0, 0],
+}
+
+function FocusMarker({
+  position,
+  radius,
+  color,
+  visible,
+}: {
+  position: [number, number, number]
+  radius: number
+  color: string
+  visible: boolean
+}) {
+  const group = useRef<Group>(null)
+  useFrame(() => group.current?.position.fromArray(position))
+  return <group ref={group} visible={visible} name="focus-marker">
+    <Billboard>
+      <mesh raycast={() => null} renderOrder={7}>
+        <ringGeometry args={[radius * 0.92, radius, 64]} />
+        <meshBasicMaterial color={color} transparent opacity={0.42} depthWrite={false} depthTest={false}
+          blending={AdditiveBlending} toneMapped={false} />
+      </mesh>
+    </Billboard>
+  </group>
 }
 
 function StudioEnvironment() {
@@ -99,13 +136,89 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
   const controls = useRef<OrbitControlsImpl>(null)
   const time = useRef(0)
   const firstFrame = useRef(true)
+  const cameraFocus = useRef<CameraFocus | null>(null)
+  const pointerGesture = useRef({ active: false, moved: false, x: 0, y: 0 })
+  const [selectedId, setSelectedId] = useState<FocusableId | null>(null)
+  const focusDirection = useMemo(() => new Vector3(), [])
+  const desiredPosition = useMemo(() => new Vector3(), [])
+  const desiredTarget = useMemo(() => new Vector3(), [])
+  const homeTarget = useMemo(() => new Vector3().fromArray(DEFAULT_CALIBRATION.camera.target), [])
   const pearl = useMemo(() => createPearlMaterial(
     0.70,
-    entities.orb.material.pulseColor,
-    entities.orb.material.pulseColorAmount,
+    entities.orb.colorPulse.color,
+    entities.orb.colorPulse.amount,
   ), [entities])
   const cubeSurface = useMemo(() => createGlassFinish(entities.cube.size), [entities])
   const halo = useMemo(createHaloMaterial, [])
+
+  const getObjectPosition = useCallback((id: FocusableId) => {
+    if (id === 'orb') return entities.orb.position
+    if (id === 'cube') return entities.cube.position
+    return endpoint.position
+  }, [endpoint, entities])
+
+  const focusObject = useCallback((id: FocusableId) => {
+    const activeFocus = cameraFocus.current
+    if (activeFocus?.kind === 'object' && activeFocus.id === id) {
+      cameraFocus.current = {
+        kind: 'home',
+        position: new Vector3().fromArray(compact ? DEFAULT_CALIBRATION.camera.compactPosition : DEFAULT_CALIBRATION.camera.position),
+        target: homeTarget.clone(),
+      }
+      setSelectedId(null)
+      invalidate()
+      return
+    }
+
+    const currentTarget = controls.current?.target ?? homeTarget
+    focusDirection.copy(camera.position).sub(currentTarget)
+    if (focusDirection.lengthSq() < 1e-6) focusDirection.set(0, 0, 1)
+    focusDirection.normalize()
+    cameraFocus.current = {
+      kind: 'object',
+      id,
+      distance: FOCUS_DISTANCE[id] * (compact ? 1.18 : 1),
+      direction: focusDirection.clone(),
+      targetOffset: new Vector3().fromArray(FOCUS_TARGET_OFFSET[id]),
+    }
+    setSelectedId(id)
+    invalidate()
+  }, [camera, compact, focusDirection, homeTarget, invalidate])
+
+  const cancelFocus = useCallback(() => {
+    if (!cameraFocus.current) return
+    cameraFocus.current = null
+    setSelectedId(null)
+    invalidate()
+  }, [invalidate])
+
+  useEffect(() => {
+    const element = gl.domElement
+    const handlePointerDown = (event: PointerEvent) => {
+      pointerGesture.current = { active: true, moved: false, x: event.clientX, y: event.clientY }
+    }
+    const handlePointerMove = (event: PointerEvent) => {
+      const gesture = pointerGesture.current
+      if (!gesture.active || gesture.moved) return
+      if (Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) > 6) {
+        gesture.moved = true
+        cancelFocus()
+      }
+    }
+    const handlePointerUp = () => {
+      pointerGesture.current.active = false
+    }
+    element.addEventListener('pointerdown', handlePointerDown)
+    element.addEventListener('pointermove', handlePointerMove)
+    element.addEventListener('pointerup', handlePointerUp)
+    element.addEventListener('pointercancel', handlePointerUp)
+    return () => {
+      element.removeEventListener('pointerdown', handlePointerDown)
+      element.removeEventListener('pointermove', handlePointerMove)
+      element.removeEventListener('pointerup', handlePointerUp)
+      element.removeEventListener('pointercancel', handlePointerUp)
+    }
+  }, [cancelFocus, gl])
 
   useEffect(() => {
     if (paused || reducedMotion) { invalidate(); return }
@@ -123,6 +236,8 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
   }, [gl])
   useEffect(() => {
     // Keep both silhouettes in view on portrait screens without scaling objects independently.
+    cameraFocus.current = null
+    setSelectedId(null)
     camera.position.fromArray(compact ? DEFAULT_CALIBRATION.camera.compactPosition : DEFAULT_CALIBRATION.camera.position)
     camera.lookAt(...DEFAULT_CALIBRATION.camera.target)
     controls.current?.target.fromArray(DEFAULT_CALIBRATION.camera.target)
@@ -144,6 +259,27 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
       cubeGroup.current.position.fromArray(entities.cube.position)
       cubeGroup.current.rotation.fromArray([...entities.cube.rotation, 'XYZ'])
     }
+
+    const activeFocus = cameraFocus.current
+    const orbitControl = controls.current
+    const orbitTarget = orbitControl?.target
+    if (activeFocus && orbitControl && orbitTarget) {
+      if (activeFocus.kind === 'home') {
+        desiredPosition.copy(activeFocus.position)
+        desiredTarget.copy(activeFocus.target)
+      } else {
+        desiredTarget.fromArray(getObjectPosition(activeFocus.id)).add(activeFocus.targetOffset)
+        desiredPosition.copy(desiredTarget).addScaledVector(activeFocus.direction, activeFocus.distance)
+      }
+      const blend = reducedMotion ? 1 : 1 - Math.exp(-Math.min(delta, 0.05) * 8)
+      camera.position.lerp(desiredPosition, blend)
+      orbitTarget.lerp(desiredTarget, blend)
+      orbitControl.update()
+      const arrived = camera.position.distanceToSquared(desiredPosition) < 0.0004
+        && orbitTarget.distanceToSquared(desiredTarget) < 0.0004
+      if (activeFocus.kind === 'home' && arrived) cameraFocus.current = null
+      if (!arrived) invalidate()
+    }
     pearl.uniforms.uTime.value = time.current
     if (firstFrame.current) { firstFrame.current = false; onReady() }
   })
@@ -155,7 +291,8 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
     <Penumbra x={-1.1} z={0} scale={[1.1, 0.65, 1]} />
     <Penumbra x={1.35} z={0.4} scale={[0.6, 0.45, 1]} />
 
-    <group ref={orbGroup} position={entities.orb.position} scale={entities.orb.scale} name="primary-orb">
+    <group ref={orbGroup} position={entities.orb.position} scale={entities.orb.scale} name="primary-orb"
+      onClick={(event) => { event.stopPropagation(); focusObject('orb') }}>
       <mesh scale={1.002} material={pearl} renderOrder={2}>
         <sphereGeometry args={[entities.orb.radius, 64, 48]} />
       </mesh>
@@ -169,8 +306,10 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
         </mesh>
       </Billboard>
     </group>
+    <FocusMarker position={entities.orb.position} radius={1.14} color="#b8e3ff" visible={selectedId === 'orb'} />
 
-    <group ref={cubeGroup} position={entities.cube.position} name="session-cube">
+    <group ref={cubeGroup} position={entities.cube.position} name="session-cube"
+      onClick={(event) => { event.stopPropagation(); focusObject('cube') }}>
       <mesh material={cubeSurface} scale={1.003} renderOrder={2}>
         <boxGeometry args={[entities.cube.size, entities.cube.size, entities.cube.size]} />
       </mesh>
@@ -178,8 +317,12 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
         <meshPhysicalMaterial depthWrite={false} {...entities.cube.material} />
       </RoundedBox>
     </group>
+    <FocusMarker position={entities.cube.position} radius={0.68} color="#b9d8ff" visible={selectedId === 'cube'} />
     <SpatialThreads connections={entities.connections} orb={entities.orb} cube={entities.cube} endpoint={endpoint} />
-    <SolarEndpoint entity={endpoint} />
+    <group onClick={(event) => { event.stopPropagation(); focusObject('endpoint') }}>
+      <SolarEndpoint entity={endpoint} />
+    </group>
+    <FocusMarker position={endpoint.position} radius={0.38} color="#d8c9ff" visible={selectedId === 'endpoint'} />
     <OrbitControls ref={controls} makeDefault enablePan={false} enableZoom={false}
       enableDamping={!reducedMotion} dampingFactor={0.06} rotateSpeed={0.32}
       minPolarAngle={1.12} maxPolarAngle={1.5} minAzimuthAngle={-0.45} maxAzimuthAngle={0.45}
