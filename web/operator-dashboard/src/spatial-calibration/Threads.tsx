@@ -65,10 +65,10 @@ function ThreadConnection({ entity, sourcePosition, targetPosition }: ThreadConn
         curve.getPoint(progress, point)
         dummy.position.copy(point)
         const swell = 0.5 + 0.5 * Math.sin(entity.time * 2.2 + index * 1.7)
-        dummy.scale.setScalar(0.035 + swell * 0.014)
+        dummy.scale.setScalar(0.052 + swell * 0.018)
         dummy.updateMatrix()
         beads.current.setMatrixAt(index, dummy.matrix)
-        dummy.scale.setScalar(0.013 + swell * 0.006)
+        dummy.scale.setScalar(0.019 + swell * 0.008)
         dummy.updateMatrix()
         beadCores.current.setMatrixAt(index, dummy.matrix)
       }
@@ -84,11 +84,11 @@ function ThreadConnection({ entity, sourcePosition, targetPosition }: ThreadConn
       blending={AdditiveBlending} depthWrite={false} toneMapped={false} renderOrder={2} />
     <instancedMesh ref={beads} args={[undefined, undefined, beadCount]} frustumCulled={false} renderOrder={3}>
       <sphereGeometry args={[1, 10, 8]} />
-      <meshBasicMaterial color={entity.color} toneMapped={false} transparent opacity={0.92} blending={AdditiveBlending} />
+      <meshBasicMaterial color={entity.color} toneMapped={false} transparent opacity={0.98} blending={AdditiveBlending} />
     </instancedMesh>
     <instancedMesh ref={beadCores} args={[undefined, undefined, beadCount]} frustumCulled={false} renderOrder={4}>
       <sphereGeometry args={[1, 8, 6]} />
-      <meshBasicMaterial color="#ffffff" toneMapped={false} transparent opacity={0.94} blending={AdditiveBlending} />
+      <meshBasicMaterial color="#ffffff" toneMapped={false} transparent opacity={0.98} blending={AdditiveBlending} />
     </instancedMesh>
   </group>
 }
