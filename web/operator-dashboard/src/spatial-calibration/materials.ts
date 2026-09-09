@@ -46,7 +46,7 @@ export function createPearlMaterial(opacity = 0.76) {
         pearl = mix(vec3(0.86, 0.91, 0.97), pearl, front);
         pearl *= mix(1.04, 0.80, front);
         // A restrained chroma breath keeps the optical color alive without moving the light source.
-        float colorBreath = 0.5 + 0.5 * sin(uTime * 0.55 + n.y * 1.6);
+        float colorBreath = 0.5 + 0.5 * sin(uTime * 1.04719755 + n.y * 1.6);
         vec3 colorTint = mix(vec3(1.0), vec3(0.91, 0.88, 1.08), colorBreath * 0.16);
         pearl *= colorTint;
         float spectral = sin((1.0 - facing) * 10.0 + n.y * 2.2 + cloud * 0.2);

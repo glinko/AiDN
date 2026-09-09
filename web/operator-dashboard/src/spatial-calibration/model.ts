@@ -13,6 +13,52 @@ export interface OrbMotionConfig extends DriftConfig {
   readonly pulseFrequency: number
 }
 
+export interface ConnectionMotionConfig {
+  /** Normalized progress units per second for the travelling light beads. */
+  readonly flowSpeed: number
+  /** Normalized distance between successive beads. */
+  readonly beadSpacing: number
+  /** Initial normalized progress offset. */
+  readonly phase: number
+}
+
+export interface ConnectionConfig {
+  readonly id: string
+  readonly sourceId: string
+  readonly targetId: string
+  readonly color: string
+  readonly startOffset: Vector3Tuple
+  readonly endOffset: Vector3Tuple
+  readonly bendA: Vector3Tuple
+  readonly bendB: Vector3Tuple
+  readonly motion: ConnectionMotionConfig
+}
+
+export const DEFAULT_CONNECTIONS: ReadonlyArray<ConnectionConfig> = [
+  {
+    id: 'agent-artifact-thread',
+    sourceId: 'calibration-orb',
+    targetId: 'calibration-cube',
+    color: '#78c9ee',
+    startOffset: [0.74, -0.36, 0.12],
+    endOffset: [-0.38, 0.24, -0.04],
+    bendA: [-0.12, 0.10, 0.24],
+    bendB: [0.12, -0.10, 0.22],
+    motion: { flowSpeed: 0.17, beadSpacing: 0.31, phase: 0.08 },
+  },
+  {
+    id: 'agent-endpoint-thread',
+    sourceId: 'calibration-orb',
+    targetId: 'calibration-endpoint',
+    color: '#d1b7ff',
+    startOffset: [0.80, 0.22, -0.08],
+    endOffset: [-0.23, -0.05, 0.02],
+    bendA: [-0.10, 0.32, 0.22],
+    bendB: [0.15, 0.18, 0.16],
+    motion: { flowSpeed: 0.13, beadSpacing: 0.34, phase: 0.52 },
+  },
+]
+
 export interface OrbMaterialConfig {
   readonly color: string
   readonly roughness: number
@@ -107,6 +153,7 @@ export interface CalibrationConfig {
   }
   readonly orb: OrbConfig
   readonly cube: CubeConfig
+  readonly connections: ReadonlyArray<ConnectionConfig>
 }
 
 /** A local visual preset: it carries no runtime or Node binding. */
@@ -164,7 +211,7 @@ export const DEFAULT_CALIBRATION: CalibrationConfig = {
       iridescenceIOR: 1.25,
       iridescenceThicknessRange: [180, 390],
     },
-    motion: { driftAmplitude: 0.08, driftFrequency: 0.36, pulseAmplitude: 0.045, pulseFrequency: 0.62 },
+    motion: { driftAmplitude: 0.08, driftFrequency: 0.36, pulseAmplitude: 0.15, pulseFrequency: 1.04719755 },
   },
   cube: {
     id: 'calibration-cube',
@@ -189,6 +236,7 @@ export const DEFAULT_CALIBRATION: CalibrationConfig = {
     },
     motion: { driftAmplitude: 0.055, driftFrequency: 0.28, yawSpeed: 0.045 },
   },
+  connections: DEFAULT_CONNECTIONS,
 }
 
 function snapshotMaterial<T extends { readonly iridescenceThicknessRange: [number, number] }>(material: T): T {
@@ -228,6 +276,64 @@ export abstract class SceneEntity {
   }
 
   abstract update(timeSeconds: number, reducedMotion?: boolean): void
+}
+
+function freezeTuple(value: Vector3Tuple): Vector3Tuple {
+  return Object.freeze([...value] as Vector3Tuple) as unknown as Vector3Tuple
+}
+
+/** A renderer-independent curved link between two scene entities. */
+export class ConnectionEntity {
+  readonly id: string
+  readonly sourceId: string
+  readonly targetId: string
+  readonly color: string
+  readonly startOffset: Vector3Tuple
+  readonly endOffset: Vector3Tuple
+  readonly bendA: Vector3Tuple
+  readonly bendB: Vector3Tuple
+  readonly motion: ConnectionMotionConfig
+  time = 0
+
+  constructor(config: ConnectionConfig) {
+    this.id = config.id
+    this.sourceId = config.sourceId
+    this.targetId = config.targetId
+    this.color = config.color
+    this.startOffset = freezeTuple(config.startOffset)
+    this.endOffset = freezeTuple(config.endOffset)
+    this.bendA = freezeTuple(config.bendA)
+    this.bendB = freezeTuple(config.bendB)
+    this.motion = Object.freeze({ ...config.motion })
+  }
+
+  update(timeSeconds: number, reducedMotion = false): void {
+    this.time = Number.isFinite(timeSeconds) && !reducedMotion ? timeSeconds : 0
+  }
+
+  getControlPoints(sourcePosition: Vector3Tuple, targetPosition: Vector3Tuple): [Vector3Tuple, Vector3Tuple, Vector3Tuple, Vector3Tuple] {
+    const start = [
+      sourcePosition[0] + this.startOffset[0],
+      sourcePosition[1] + this.startOffset[1],
+      sourcePosition[2] + this.startOffset[2],
+    ] as Vector3Tuple
+    const end = [
+      targetPosition[0] + this.endOffset[0],
+      targetPosition[1] + this.endOffset[1],
+      targetPosition[2] + this.endOffset[2],
+    ] as Vector3Tuple
+    const control = (amount: number, bend: Vector3Tuple): Vector3Tuple => [
+      start[0] + (end[0] - start[0]) * amount + bend[0],
+      start[1] + (end[1] - start[1]) * amount + bend[1],
+      start[2] + (end[2] - start[2]) * amount + bend[2],
+    ]
+    return [start, control(0.32, this.bendA), control(0.68, this.bendB), end]
+  }
+
+  getFlowProgress(index: number): number {
+    const raw = this.time * this.motion.flowSpeed + this.motion.phase + index * this.motion.beadSpacing
+    return raw - Math.floor(raw)
+  }
 }
 
 export class OrbEntity extends SceneEntity {
@@ -273,6 +379,11 @@ export class CubeEntity extends SceneEntity {
 export function createCalibrationEntities(config: CalibrationConfig = DEFAULT_CALIBRATION): {
   orb: OrbEntity
   cube: CubeEntity
+  connections: ConnectionEntity[]
 } {
-  return { orb: new OrbEntity(config.orb), cube: new CubeEntity(config.cube) }
+  return {
+    orb: new OrbEntity(config.orb),
+    cube: new CubeEntity(config.cube),
+    connections: config.connections.map((connection) => new ConnectionEntity(connection)),
+  }
 }

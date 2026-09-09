@@ -13,6 +13,7 @@ import { createAtmosphereMaterial, createGlassFinish, createHaloMaterial, create
 import { MilkGround } from './MilkGround'
 import { SolarEndpoint } from './SolarEndpoint'
 import { EndpointEntity } from './endpoint'
+import { SpatialThreads } from './Threads'
 
 export type SceneProps = {
   paused: boolean
@@ -130,6 +131,7 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
     entities.orb.update(time.current, reducedMotion)
     entities.cube.update(time.current, reducedMotion)
     endpoint.update(time.current, reducedMotion)
+    entities.connections.forEach((connection) => connection.update(time.current, reducedMotion))
     if (orbGroup.current) {
       orbGroup.current.position.fromArray(entities.orb.position)
       orbGroup.current.scale.fromArray(entities.orb.scale)
@@ -172,6 +174,7 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
         <meshPhysicalMaterial depthWrite={false} {...entities.cube.material} />
       </RoundedBox>
     </group>
+    <SpatialThreads connections={entities.connections} orb={entities.orb} cube={entities.cube} endpoint={endpoint} />
     <SolarEndpoint entity={endpoint} />
     <OrbitControls ref={controls} makeDefault enablePan={false} enableZoom={false}
       enableDamping={!reducedMotion} dampingFactor={0.06} rotateSpeed={0.32}
