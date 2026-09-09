@@ -34,8 +34,12 @@ describe('calibration optics', () => {
   it('keeps the face-to-rim gradients authored in the optical materials', () => {
     const pearl = createPearlMaterial(0.7)
     const glass = createGlassFinish(0.92)
+    expect(DEFAULT_CALIBRATION.orb.motion.pulseAmplitude).toBe(0.06)
+    expect(pearl.uniforms).toHaveProperty('uPulseColor')
+    expect(pearl.uniforms.uPulseColorAmount.value).toBe(DEFAULT_CALIBRATION.orb.material.pulseColorAmount)
     expect(pearl.fragmentShader).toContain('float front = smoothstep')
     expect(pearl.fragmentShader).toContain('float colorBreath')
+    expect(pearl.fragmentShader).toContain('uPulseColor')
     expect(pearl.fragmentShader).toContain('volumeAlpha')
     expect(glass.fragmentShader).toContain('float front = smoothstep')
     expect(glass.fragmentShader).toContain('tint * mix(0.48, 0.84, front)')

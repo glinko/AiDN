@@ -99,7 +99,11 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
   const controls = useRef<OrbitControlsImpl>(null)
   const time = useRef(0)
   const firstFrame = useRef(true)
-  const pearl = useMemo(() => createPearlMaterial(0.70), [])
+  const pearl = useMemo(() => createPearlMaterial(
+    0.70,
+    entities.orb.material.pulseColor,
+    entities.orb.material.pulseColorAmount,
+  ), [entities])
   const cubeSurface = useMemo(() => createGlassFinish(entities.cube.size), [entities])
   const halo = useMemo(createHaloMaterial, [])
 

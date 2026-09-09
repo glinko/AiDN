@@ -24,7 +24,7 @@ describe('calibration scene connections', () => {
     expect(entity.getControlPoints(source, [target[0], target[1] + 0.08, target[2]])[3][1]).toBeCloseTo(end[1] + 0.08)
   })
 
-  it('keeps travelling beads deterministic, bounded, and still under reduced motion', () => {
+  it('keeps the travelling photon deterministic, bounded, and still under reduced motion', () => {
     const entity = new ConnectionEntity(DEFAULT_CONNECTIONS[1])
     entity.update(7)
     const firstProgress = entity.getFlowProgress(0)

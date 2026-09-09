@@ -61,6 +61,10 @@ export const DEFAULT_CONNECTIONS: ReadonlyArray<ConnectionConfig> = [
 
 export interface OrbMaterialConfig {
   readonly color: string
+  /** Warm accent used by the six-second chroma breath. */
+  readonly pulseColor: string
+  /** Maximum blend from the neutral pearl into pulseColor. */
+  readonly pulseColorAmount: number
   readonly roughness: number
   readonly metalness: number
   readonly clearcoat: number
@@ -199,6 +203,8 @@ export const DEFAULT_CALIBRATION: CalibrationConfig = {
     radius: 1,
     material: {
       color: '#f5faff',
+      pulseColor: '#f26f68',
+      pulseColorAmount: 0.38,
       roughness: 0.18,
       metalness: 0,
       clearcoat: 1,
@@ -211,7 +217,7 @@ export const DEFAULT_CALIBRATION: CalibrationConfig = {
       iridescenceIOR: 1.25,
       iridescenceThicknessRange: [180, 390],
     },
-    motion: { driftAmplitude: 0.08, driftFrequency: 0.36, pulseAmplitude: 0.15, pulseFrequency: 1.04719755 },
+    motion: { driftAmplitude: 0.08, driftFrequency: 0.36, pulseAmplitude: 0.06, pulseFrequency: 1.04719755 },
   },
   cube: {
     id: 'calibration-cube',

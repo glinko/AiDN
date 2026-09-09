@@ -1,13 +1,12 @@
 import { useMemo, useRef } from 'react'
 import { Line } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
-import { AdditiveBlending, CubicBezierCurve3, InstancedMesh, Object3D, Vector3 } from 'three'
+import { AdditiveBlending, CubicBezierCurve3, Mesh, Vector3 } from 'three'
 import type { Line2 } from 'three-stdlib'
 
 import type { ConnectionEntity, CubeEntity, OrbEntity, Vector3Tuple } from './model'
 
 const segmentCount = 48
-const beadCount = 4
 
 type ThreadConnectionProps = {
   entity: ConnectionEntity
@@ -17,10 +16,8 @@ type ThreadConnectionProps = {
 
 function ThreadConnection({ entity, sourcePosition, targetPosition }: ThreadConnectionProps) {
   const coreLine = useRef<Line2>(null)
-  const glowLine = useRef<Line2>(null)
-  const beads = useRef<InstancedMesh>(null)
-  const beadCores = useRef<InstancedMesh>(null)
-  const dummy = useMemo(() => new Object3D(), [])
+  const photon = useRef<Mesh>(null)
+  const photonCore = useRef<Mesh>(null)
   const point = useMemo(() => new Vector3(), [])
   const sampled = useMemo(() => Array.from({ length: segmentCount + 1 }, () => new Vector3()), [])
   const positions = useMemo(() => Array<number>((segmentCount + 1) * 3).fill(0), [])
@@ -54,42 +51,27 @@ function ThreadConnection({ entity, sourcePosition, targetPosition }: ThreadConn
       coreLine.current.geometry.setPositions(positions)
       coreLine.current.computeLineDistances()
     }
-    if (glowLine.current) {
-      glowLine.current.geometry.setPositions(positions)
-      glowLine.current.computeLineDistances()
-    }
-
-    if (beads.current && beadCores.current) {
-      for (let index = 0; index < beadCount; index += 1) {
-        const progress = entity.getFlowProgress(index)
-        curve.getPoint(progress, point)
-        dummy.position.copy(point)
-        const swell = 0.5 + 0.5 * Math.sin(entity.time * 2.2 + index * 1.7)
-        dummy.scale.setScalar(0.052 + swell * 0.018)
-        dummy.updateMatrix()
-        beads.current.setMatrixAt(index, dummy.matrix)
-        dummy.scale.setScalar(0.019 + swell * 0.008)
-        dummy.updateMatrix()
-        beadCores.current.setMatrixAt(index, dummy.matrix)
-      }
-      beads.current.instanceMatrix.needsUpdate = true
-      beadCores.current.instanceMatrix.needsUpdate = true
+    if (photon.current && photonCore.current) {
+      curve.getPoint(entity.getFlowProgress(0), point)
+      const swell = 0.5 + 0.5 * Math.sin(entity.time * 2.2)
+      photon.current.position.copy(point)
+      photon.current.scale.setScalar(0.048 + swell * 0.016)
+      photonCore.current.position.copy(point)
+      photonCore.current.scale.setScalar(0.016 + swell * 0.006)
     }
   })
 
   return <group name={entity.id}>
-    <Line ref={glowLine} points={initialPoints} color={entity.color} lineWidth={7} transparent opacity={0.11}
+    <Line ref={coreLine} points={initialPoints} color={entity.color} lineWidth={1} transparent opacity={0.74}
       blending={AdditiveBlending} depthWrite={false} toneMapped={false} renderOrder={1} />
-    <Line ref={coreLine} points={initialPoints} color={entity.color} lineWidth={1.55} transparent opacity={0.72}
-      blending={AdditiveBlending} depthWrite={false} toneMapped={false} renderOrder={2} />
-    <instancedMesh ref={beads} args={[undefined, undefined, beadCount]} frustumCulled={false} renderOrder={3}>
+    <mesh ref={photon} frustumCulled={false} renderOrder={2}>
+      <sphereGeometry args={[1, 14, 10]} />
+      <meshBasicMaterial color={entity.color} toneMapped={false} transparent opacity={0.92} blending={AdditiveBlending} />
+    </mesh>
+    <mesh ref={photonCore} frustumCulled={false} renderOrder={3}>
       <sphereGeometry args={[1, 10, 8]} />
-      <meshBasicMaterial color={entity.color} toneMapped={false} transparent opacity={0.98} blending={AdditiveBlending} />
-    </instancedMesh>
-    <instancedMesh ref={beadCores} args={[undefined, undefined, beadCount]} frustumCulled={false} renderOrder={4}>
-      <sphereGeometry args={[1, 8, 6]} />
       <meshBasicMaterial color="#ffffff" toneMapped={false} transparent opacity={0.98} blending={AdditiveBlending} />
-    </instancedMesh>
+    </mesh>
   </group>
 }
 

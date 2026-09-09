@@ -1,4 +1,4 @@
-import { BackSide, DoubleSide, ShaderMaterial } from 'three'
+import { BackSide, Color, DoubleSide, ShaderMaterial } from 'three'
 
 const vertex = /* glsl */ `
   varying vec3 vNormalWorld;
@@ -14,15 +14,22 @@ const vertex = /* glsl */ `
 
 // These are authored optical layers, not a physically accurate volume simulation.
 // World-space reflection lobes remain anchored as geometry/camera moves.
-export function createPearlMaterial(opacity = 0.76) {
+export function createPearlMaterial(opacity = 0.76, pulseColor = '#f26f68', pulseColorAmount = 0.38) {
   return new ShaderMaterial({
     transparent: true,
     depthWrite: false,
-    uniforms: { uTime: { value: 0 }, uOpacity: { value: opacity } },
+    uniforms: {
+      uTime: { value: 0 },
+      uOpacity: { value: opacity },
+      uPulseColor: { value: new Color(pulseColor) },
+      uPulseColorAmount: { value: pulseColorAmount },
+    },
     vertexShader: vertex,
     fragmentShader: /* glsl */ `
       uniform float uTime;
       uniform float uOpacity;
+      uniform vec3 uPulseColor;
+      uniform float uPulseColorAmount;
       varying vec3 vNormalWorld;
       varying vec3 vWorld;
       varying vec3 vLocal;
@@ -45,9 +52,9 @@ export function createPearlMaterial(opacity = 0.76) {
         float front = smoothstep(0.08, 0.94, facing);
         pearl = mix(vec3(0.86, 0.91, 0.97), pearl, front);
         pearl *= mix(1.04, 0.80, front);
-        // A restrained chroma breath keeps the optical color alive without moving the light source.
+        // A restrained warm chroma breath keeps the optical color alive without moving the light source.
         float colorBreath = 0.5 + 0.5 * sin(uTime * 1.04719755 + n.y * 1.6);
-        vec3 colorTint = mix(vec3(1.0), vec3(0.91, 0.88, 1.08), colorBreath * 0.16);
+        vec3 colorTint = mix(vec3(1.0), uPulseColor, colorBreath * uPulseColorAmount);
         pearl *= colorTint;
         float spectral = sin((1.0 - facing) * 10.0 + n.y * 2.2 + cloud * 0.2);
         pearl += vec3(0.025, -0.009, 0.018) * spectral;
