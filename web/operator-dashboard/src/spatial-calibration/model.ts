@@ -6,6 +6,13 @@ export interface DriftConfig {
   readonly driftFrequency: number
 }
 
+export interface OrbMotionConfig extends DriftConfig {
+  /** Relative scale change around the base radius. */
+  readonly pulseAmplitude: number
+  /** Angular frequency in radians per second. */
+  readonly pulseFrequency: number
+}
+
 export interface OrbMaterialConfig {
   readonly color: string
   readonly roughness: number
@@ -43,7 +50,7 @@ export interface OrbConfig {
   readonly position: Vector3Tuple
   readonly radius: number
   readonly material: OrbMaterialConfig
-  readonly motion: DriftConfig
+  readonly motion: OrbMotionConfig
 }
 
 export interface CubeConfig {
@@ -157,7 +164,7 @@ export const DEFAULT_CALIBRATION: CalibrationConfig = {
       iridescenceIOR: 1.25,
       iridescenceThicknessRange: [180, 390],
     },
-    motion: { driftAmplitude: 0.08, driftFrequency: 0.36 },
+    motion: { driftAmplitude: 0.08, driftFrequency: 0.36, pulseAmplitude: 0.045, pulseFrequency: 0.62 },
   },
   cube: {
     id: 'calibration-cube',
@@ -226,7 +233,7 @@ export abstract class SceneEntity {
 export class OrbEntity extends SceneEntity {
   readonly radius: number
   readonly material: OrbMaterialConfig
-  readonly motion: DriftConfig
+  readonly motion: OrbMotionConfig
 
   constructor(config: OrbConfig = DEFAULT_CALIBRATION.orb) {
     super(config.id, config.position)
@@ -236,7 +243,12 @@ export class OrbEntity extends SceneEntity {
   }
 
   update(timeSeconds: number, reducedMotion = false): void {
-    this.updateDrift(timeSeconds, reducedMotion, this.motion)
+    const time = this.updateDrift(timeSeconds, reducedMotion, this.motion)
+    const pulse = Math.sin(time * this.motion.pulseFrequency) * this.motion.pulseAmplitude
+    const scale = 1 + pulse
+    this.scale[0] = scale
+    this.scale[1] = scale
+    this.scale[2] = scale
   }
 }
 

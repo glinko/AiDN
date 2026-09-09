@@ -130,7 +130,10 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
     entities.orb.update(time.current, reducedMotion)
     entities.cube.update(time.current, reducedMotion)
     endpoint.update(time.current, reducedMotion)
-    if (orbGroup.current) orbGroup.current.position.fromArray(entities.orb.position)
+    if (orbGroup.current) {
+      orbGroup.current.position.fromArray(entities.orb.position)
+      orbGroup.current.scale.fromArray(entities.orb.scale)
+    }
     if (cubeGroup.current) {
       cubeGroup.current.position.fromArray(entities.cube.position)
       cubeGroup.current.rotation.fromArray([...entities.cube.rotation, 'XYZ'])
@@ -146,7 +149,7 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
     <Penumbra x={-1.1} z={0} scale={[1.1, 0.65, 1]} />
     <Penumbra x={1.35} z={0.4} scale={[0.6, 0.45, 1]} />
 
-    <group ref={orbGroup} position={entities.orb.position} name="primary-orb">
+    <group ref={orbGroup} position={entities.orb.position} scale={entities.orb.scale} name="primary-orb">
       <mesh scale={1.002} material={pearl} renderOrder={2}>
         <sphereGeometry args={[entities.orb.radius, 64, 48]} />
       </mesh>

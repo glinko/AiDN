@@ -36,15 +36,19 @@ export function createPearlMaterial(opacity = 0.76) {
         float rim = pow(1.0 - facing, 2.8);
         float cloud = sin(vLocal.x * 3.4 + vLocal.y * 2.7 + uTime * 0.10)
                     * sin(vLocal.z * 3.1 - vLocal.y * 2.2 + uTime * 0.065);
-        vec3 pearl = vec3(0.64, 0.76, 0.87);
-        pearl = mix(pearl, vec3(0.22, 0.58, 0.80), lobe(n, vec3(-0.55,0.3,0.85), 2.5) * 0.65);
-        pearl = mix(pearl, vec3(0.59, 0.36, 0.84), lobe(n, vec3(0.75,-0.10,0.75), 3.0) * 0.62);
-        pearl = mix(pearl, vec3(0.96, 0.65, 0.58), lobe(n, vec3(0.45,-0.80,0.6), 5.0) * 0.4);
-        pearl = mix(pearl, vec3(0.76, 0.91, 0.94), cloud * 0.09 + 0.09);
+        vec3 pearl = vec3(0.60, 0.73, 0.86);
+        pearl = mix(pearl, vec3(0.16, 0.55, 0.84), lobe(n, vec3(-0.55,0.3,0.85), 2.5) * 0.68);
+        pearl = mix(pearl, vec3(0.56, 0.30, 0.88), lobe(n, vec3(0.75,-0.10,0.75), 3.0) * 0.64);
+        pearl = mix(pearl, vec3(1.00, 0.60, 0.52), lobe(n, vec3(0.45,-0.80,0.6), 5.0) * 0.44);
+        pearl = mix(pearl, vec3(0.72, 0.89, 0.95), cloud * 0.10 + 0.10);
         // A front-facing volume gradient keeps the rim misty while the center carries pigment.
         float front = smoothstep(0.08, 0.94, facing);
         pearl = mix(vec3(0.86, 0.91, 0.97), pearl, front);
         pearl *= mix(1.04, 0.80, front);
+        // A restrained chroma breath keeps the optical color alive without moving the light source.
+        float colorBreath = 0.5 + 0.5 * sin(uTime * 0.55 + n.y * 1.6);
+        vec3 colorTint = mix(vec3(1.0), vec3(0.91, 0.88, 1.08), colorBreath * 0.16);
+        pearl *= colorTint;
         float spectral = sin((1.0 - facing) * 10.0 + n.y * 2.2 + cloud * 0.2);
         pearl += vec3(0.025, -0.009, 0.018) * spectral;
         pearl = mix(pearl, vec3(1.65), rim * 0.95);

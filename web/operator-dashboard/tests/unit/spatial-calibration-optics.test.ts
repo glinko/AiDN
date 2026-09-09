@@ -35,6 +35,7 @@ describe('calibration optics', () => {
     const pearl = createPearlMaterial(0.7)
     const glass = createGlassFinish(0.92)
     expect(pearl.fragmentShader).toContain('float front = smoothstep')
+    expect(pearl.fragmentShader).toContain('float colorBreath')
     expect(pearl.fragmentShader).toContain('volumeAlpha')
     expect(glass.fragmentShader).toContain('float front = smoothstep')
     expect(glass.fragmentShader).toContain('tint * mix(0.48, 0.84, front)')

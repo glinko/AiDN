@@ -25,6 +25,22 @@ describe('calibration scene entities', () => {
     expect(cube.position).not.toBe(DEFAULT_CALIBRATION.cube.position)
   })
 
+  it('pulses the orb scale from absolute time within its configured amplitude', () => {
+    const { orb } = createCalibrationEntities()
+    const pulsePeak = Math.PI / (2 * orb.motion.pulseFrequency)
+    const pulseTrough = (3 * Math.PI) / (2 * orb.motion.pulseFrequency)
+
+    orb.update(0)
+    expect(orb.scale).toEqual([1, 1, 1])
+    orb.update(pulsePeak)
+    expect(orb.scale[0]).toBeCloseTo(1 + orb.motion.pulseAmplitude)
+    expect(orb.scale[1]).toBeCloseTo(orb.scale[0])
+    expect(orb.scale[2]).toBeCloseTo(orb.scale[0])
+    orb.update(pulseTrough)
+    expect(orb.scale[0]).toBeCloseTo(1 - orb.motion.pulseAmplitude)
+    expect(Math.abs(orb.scale[0] - 1)).toBeLessThanOrEqual(orb.motion.pulseAmplitude + Number.EPSILON)
+  })
+
   it('evaluates from absolute time without accumulating drift or depending on frame history', () => {
     const stepped = createCalibrationEntities()
     const direct = createCalibrationEntities()
@@ -35,6 +51,7 @@ describe('calibration scene entities', () => {
     direct.orb.update(24)
     direct.cube.update(24)
     expect(stepped.orb.position).toEqual(direct.orb.position)
+    expect(stepped.orb.scale).toEqual(direct.orb.scale)
     expect(stepped.cube.position).toEqual(direct.cube.position)
     expect(stepped.cube.rotation).toEqual(direct.cube.rotation)
 
@@ -74,6 +91,7 @@ describe('calibration scene entities', () => {
       orb.update(time, true)
       cube.update(time, true)
       expect(orb.position).toEqual(DEFAULT_CALIBRATION.orb.position)
+      expect(orb.scale).toEqual([1, 1, 1])
       expect(cube.position).toEqual(DEFAULT_CALIBRATION.cube.position)
       expect(cube.rotation).toEqual([0, DEFAULT_CALIBRATION.cube.baseYaw, 0])
     }
@@ -120,6 +138,7 @@ describe('calibration scene entities', () => {
       orb.update(time)
       cube.update(time)
       expect(orb.position).toEqual(DEFAULT_CALIBRATION.orb.position)
+      expect(orb.scale).toEqual([1, 1, 1])
       expect(cube.position).toEqual(DEFAULT_CALIBRATION.cube.position)
       expect(cube.rotation).toEqual([0, DEFAULT_CALIBRATION.cube.baseYaw, 0])
     }
