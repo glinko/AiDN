@@ -108,8 +108,17 @@ export interface CubeConfig {
   readonly position: Vector3Tuple
   readonly size: number
   readonly baseYaw: number
+  /** Optional pitch and roll offsets preserve compatibility with the original yaw-only preset. */
+  readonly basePitch?: number
+  readonly baseRoll?: number
   readonly material: CubeMaterialConfig
-  readonly motion: DriftConfig & { readonly yawSpeed: number }
+  readonly motion: DriftConfig & {
+    readonly yawSpeed: number
+    /** Angular speed around the X axis in radians per second. */
+    readonly pitchSpeed?: number
+    /** Angular speed around the Z axis in radians per second. */
+    readonly rollSpeed?: number
+  }
 }
 
 export interface CalibrationLightConfig {
@@ -240,7 +249,7 @@ export const DEFAULT_CALIBRATION: CalibrationConfig = {
       iridescenceIOR: 1.25,
       iridescenceThicknessRange: [180, 350],
     },
-    motion: { driftAmplitude: 0.055, driftFrequency: 0.28, yawSpeed: 0.045 },
+    motion: { driftAmplitude: 0.055, driftFrequency: 0.28, pitchSpeed: 0.024, yawSpeed: 0.045, rollSpeed: 0.018 },
   },
   connections: DEFAULT_CONNECTIONS,
 }
@@ -367,10 +376,10 @@ export class OrbEntity extends SceneEntity {
 export class CubeEntity extends SceneEntity {
   readonly size: number
   readonly material: CubeMaterialConfig
-  readonly motion: DriftConfig & { readonly yawSpeed: number }
+  readonly motion: CubeConfig['motion']
 
   constructor(config: CubeConfig = DEFAULT_CALIBRATION.cube) {
-    super(config.id, config.position, [0, config.baseYaw, 0])
+    super(config.id, config.position, [config.basePitch ?? 0, config.baseYaw, config.baseRoll ?? 0])
     this.size = config.size
     this.material = snapshotMaterial(config.material)
     this.motion = Object.freeze({ ...config.motion })
@@ -378,7 +387,9 @@ export class CubeEntity extends SceneEntity {
 
   update(timeSeconds: number, reducedMotion = false): void {
     const time = this.updateDrift(timeSeconds, reducedMotion, this.motion)
+    this.rotation[0] = this.baseRotation[0] + time * (this.motion.pitchSpeed ?? 0)
     this.rotation[1] = this.baseRotation[1] + (time * this.motion.yawSpeed) % (2 * Math.PI)
+    this.rotation[2] = this.baseRotation[2] + time * (this.motion.rollSpeed ?? 0)
   }
 }
 

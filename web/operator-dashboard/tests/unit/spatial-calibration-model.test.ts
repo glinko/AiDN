@@ -64,7 +64,7 @@ describe('calibration scene entities', () => {
     expect(direct.cube.rotation).toEqual([0, DEFAULT_CALIBRATION.cube.baseYaw, 0])
   })
 
-  it('keeps drift within its amplitude and cube rotation on the Y axis over long runs', () => {
+  it('keeps drift within its amplitude and cube rotation on all three axes over long runs', () => {
     const { orb, cube } = createCalibrationEntities()
     for (let time = 0; time < 86_400; time += 73) {
       orb.update(time)
@@ -74,11 +74,14 @@ describe('calibration scene entities', () => {
       expect([orb.position[0], orb.position[2]]).toEqual([-1.1, 0])
       expect([cube.position[0], cube.position[2]]).toEqual([1.35, 0.4])
       expect(orb.rotation).toEqual([0, 0, 0])
-      expect([cube.rotation[0], cube.rotation[2]]).toEqual([0, 0])
+      expect(Number.isFinite(cube.rotation[0])).toBe(true)
+      expect(Number.isFinite(cube.rotation[2])).toBe(true)
       expect(Math.abs(cube.rotation[1] - DEFAULT_CALIBRATION.cube.baseYaw)).toBeLessThan(2 * Math.PI)
     }
     cube.update(10)
+    expect(cube.rotation[0]).toBeCloseTo(10 * (cube.motion.pitchSpeed ?? 0))
     expect(cube.rotation[1]).toBeCloseTo(DEFAULT_CALIBRATION.cube.baseYaw + 10 * 0.045)
+    expect(cube.rotation[2]).toBeCloseTo(10 * (cube.motion.rollSpeed ?? 0))
   })
 
   it('restores and holds the base pose when reduced motion is enabled', () => {
@@ -93,7 +96,11 @@ describe('calibration scene entities', () => {
       expect(orb.position).toEqual(DEFAULT_CALIBRATION.orb.position)
       expect(orb.scale).toEqual([1, 1, 1])
       expect(cube.position).toEqual(DEFAULT_CALIBRATION.cube.position)
-      expect(cube.rotation).toEqual([0, DEFAULT_CALIBRATION.cube.baseYaw, 0])
+      expect(cube.rotation).toEqual([
+        DEFAULT_CALIBRATION.cube.basePitch ?? 0,
+        DEFAULT_CALIBRATION.cube.baseYaw,
+        DEFAULT_CALIBRATION.cube.baseRoll ?? 0,
+      ])
     }
     cube.update(84)
     expect(cube.rotation[1]).not.toBe(DEFAULT_CALIBRATION.cube.baseYaw)
