@@ -25,7 +25,8 @@ function createCorona(color: string) {
         float rays=exp(-abs(r-edge)*21.0)*(0.24+tongues*.48+fine*.12);
         float glow=exp(-pow((r-.46)*6.0,2.0))*.18;
         float alpha=(rays+glow)*smoothstep(.37,.48,r)*(1.0-smoothstep(.83,1.0,r));
-        gl_FragColor=vec4(mix(uColor,vec3(1.8),tongues*.5),alpha);
+        vec3 corona=mix(uColor*.78,vec3(1.45),tongues*.26);
+        gl_FragColor=vec4(corona,alpha*1.10);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }`,

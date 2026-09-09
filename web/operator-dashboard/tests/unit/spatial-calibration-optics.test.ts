@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { DoubleSide } from 'three'
-import { createGlassFinish } from '@/spatial-calibration/materials'
+import { createGlassFinish, createPearlMaterial } from '@/spatial-calibration/materials'
 import { DEFAULT_CALIBRATION, createCalibrationEntities } from '@/spatial-calibration/model'
 
 describe('calibration optics', () => {
@@ -29,5 +29,16 @@ describe('calibration optics', () => {
     expect(cube.material.roughness).toBeLessThan(0.1)
     expect(DEFAULT_CALIBRATION.floor.reflection.strength).toBeGreaterThan(0)
     expect(DEFAULT_CALIBRATION.floor.reflection.strength).toBeLessThanOrEqual(1)
+  })
+
+  it('keeps the face-to-rim gradients authored in the optical materials', () => {
+    const pearl = createPearlMaterial(0.7)
+    const glass = createGlassFinish(0.92)
+    expect(pearl.fragmentShader).toContain('float front = smoothstep')
+    expect(pearl.fragmentShader).toContain('volumeAlpha')
+    expect(glass.fragmentShader).toContain('float front = smoothstep')
+    expect(glass.fragmentShader).toContain('tint * mix(0.48, 0.84, front)')
+    pearl.dispose()
+    glass.dispose()
   })
 })

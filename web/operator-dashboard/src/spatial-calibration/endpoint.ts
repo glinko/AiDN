@@ -14,7 +14,7 @@ export interface EndpointConfig {
 
 export const DEFAULT_ENDPOINT: EndpointConfig = {
   id: 'calibration-endpoint', position: [1.25, 2.75, -0.25], radius: 0.29,
-  coreColor: '#f9fcff', coronaColor: '#c5dfff',
+  coreColor: '#f9fcff', coronaColor: '#899fc8',
   meteorColors: ['#82cfff', '#c1abff', '#ffceaf'],
   orbitRadius: 0.62, orbitSpeed: 0.24, trailAngle: 0.65,
 }

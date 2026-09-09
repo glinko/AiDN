@@ -41,13 +41,17 @@ export function createPearlMaterial(opacity = 0.76) {
         pearl = mix(pearl, vec3(0.59, 0.36, 0.84), lobe(n, vec3(0.75,-0.10,0.75), 3.0) * 0.62);
         pearl = mix(pearl, vec3(0.96, 0.65, 0.58), lobe(n, vec3(0.45,-0.80,0.6), 5.0) * 0.4);
         pearl = mix(pearl, vec3(0.76, 0.91, 0.94), cloud * 0.09 + 0.09);
+        // A front-facing volume gradient keeps the rim misty while the center carries pigment.
+        float front = smoothstep(0.08, 0.94, facing);
+        pearl = mix(vec3(0.86, 0.91, 0.97), pearl, front);
+        pearl *= mix(1.04, 0.80, front);
         float spectral = sin((1.0 - facing) * 10.0 + n.y * 2.2 + cloud * 0.2);
         pearl += vec3(0.025, -0.009, 0.018) * spectral;
-        pearl *= 0.83;
         pearl = mix(pearl, vec3(1.65), rim * 0.95);
         float softbox = lobe(n, vec3(-0.6,0.8,0.8), 28.0);
         pearl += vec3(0.25) * softbox;
-        gl_FragColor = vec4(pearl, uOpacity + rim * (1.0-uOpacity));
+        float volumeAlpha = mix(uOpacity * 0.82, uOpacity * 1.08, front);
+        gl_FragColor = vec4(pearl, volumeAlpha + rim * 0.16);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }
@@ -101,11 +105,12 @@ export function createGlassFinish(size: number) {
         float softbox = pow(max(dot(r,normalize(vec3(-0.6,0.8,0.9))),0.0),12.0);
         float cyan = max(dot(n,normalize(vec3(-1.0,0.2,0.6))),0.0);
         float peach = max(dot(n,normalize(vec3(1.0,0.4,0.1))),0.0);
-        vec3 tint = mix(vec3(0.53,0.57,0.80),vec3(0.38,0.70,0.85),cyan);
-        tint = mix(tint,vec3(0.92,0.70,0.62),peach*0.6);
-        vec3 glass = mix(tint*0.78,vec3(1.25),edge*0.9);
+        vec3 tint = mix(vec3(0.46,0.52,0.74),vec3(0.30,0.63,0.80),cyan);
+        tint = mix(tint,vec3(0.84,0.60,0.55),peach*0.6);
+        float front = smoothstep(0.04, 0.92, max(dot(n,v), 0.0));
+        vec3 glass = mix(tint * mix(0.48, 0.84, front), vec3(1.25), edge*0.9);
         glass += softbox * 0.42;
-        float alpha = 0.095 + fresnel*0.09 + edge*0.58 + softbox*0.18;
+        float alpha = 0.13 + front*0.14 + fresnel*0.10 + edge*0.58 + softbox*0.18;
         if (!gl_FrontFacing) alpha *= 0.52;
         gl_FragColor = vec4(glass,alpha);
         #include <tonemapping_fragment>

@@ -57,7 +57,7 @@ The environment is captured once from fixed rectangular lightformers, with fixed
 
 ## Shapes
 
-The solar endpoint is an independent `EndpointEntity`. `DEFAULT_ENDPOINT` owns position, radius, core/corona colors, three meteor colors, orbit radius/speed, and trail angle. The orbit and trail positions are deterministic functions of the shared scene clock; pause and reduced motion stop both the corona and meteors. Its 120 trail instances share one geometry/material draw rather than spawning objects every frame. The corona is an authored billboard shader, not simulated solar plasma. The existing orb and cube motion is unchanged; their optical layers are modestly darker for improved separation from the milk background.
+The solar endpoint is an independent `EndpointEntity`. `DEFAULT_ENDPOINT` owns position, radius, core/corona colors, three meteor colors, orbit radius/speed, and trail angle. The orbit and trail positions are deterministic functions of the shared scene clock; pause and reduced motion stop both the corona and meteors. Its 120 trail instances share one geometry/material draw rather than spawning objects every frame. The corona is an authored billboard shader, not simulated solar plasma; its muted periwinkle edge keeps the white core from disappearing into the background. The existing orb and cube motion is unchanged; their optical layers now carry a stronger front-to-rim gradient and slightly deeper blue/lilac volume for separation from the milk background.
 
 One smooth sphere and one nearly sharp rounded cube carry the entire composition. The cube's rounded shell has a radius of 0.016 scene units; its explicit edge outline follows a box. Keep the fine luminous silhouette and generous empty space when tuning the materials.
 
