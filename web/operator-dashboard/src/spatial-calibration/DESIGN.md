@@ -33,7 +33,7 @@ components:
 
 This brief applies only to `/spatial-calibration.html`. The user-selected direction is a minimal material study: an elevated pearl orb, a smaller glass cube, and their soft reflections in milk-white space. It does not replace the dark operational dashboard direction in the root `PRODUCT.md` or establish a new global design system.
 
-The scene is a local visual prototype with no Node binding, operational status, sidebar, or live data. Its materials approximate the supplied visual direction; reference fidelity is not exact or established by the source code alone.
+The scene is a local visual prototype with no Node binding, operational status, sidebar, or live data. Its materials approximate the supplied visual direction; reference fidelity is not exact or established by the source code alone. The orb represents the Primary Agent; the glass cube represents a dialogue artifact. A smaller white solar endpoint sits above the cube: a soft animated corona surrounds its core and exactly three cyan, lilac, and peach electric meteors orbit with tapered trails. These are visual roles, not live runtime objects.
 
 ## Colors
 
@@ -56,6 +56,8 @@ The rounded glass cube uses full physical transmission and attenuation, plus a d
 The environment is captured once from fixed rectangular lightformers, with fixed ambient and directional lights. Lights do not travel around the objects. Changing highlights come from object/camera movement and the time-driven shader pattern. Current limitations include approximate internal scattering and caustics, synthetic halo/edge treatments, finite reflection and transmission buffers, and angle-dependent differences from the reference.
 
 ## Shapes
+
+The solar endpoint is an independent `EndpointEntity`. `DEFAULT_ENDPOINT` owns position, radius, core/corona colors, three meteor colors, orbit radius/speed, and trail angle. The orbit and trail positions are deterministic functions of the shared scene clock; pause and reduced motion stop both the corona and meteors. Its 120 trail instances share one geometry/material draw rather than spawning objects every frame. The corona is an authored billboard shader, not simulated solar plasma. The existing orb and cube motion is unchanged; their optical layers are modestly darker for improved separation from the milk background.
 
 One smooth sphere and one nearly sharp rounded cube carry the entire composition. The cube's rounded shell has a radius of 0.016 scene units; its explicit edge outline follows a box. Keep the fine luminous silhouette and generous empty space when tuning the materials.
 

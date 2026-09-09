@@ -43,6 +43,7 @@ export function createPearlMaterial(opacity = 0.76) {
         pearl = mix(pearl, vec3(0.76, 0.91, 0.94), cloud * 0.09 + 0.09);
         float spectral = sin((1.0 - facing) * 10.0 + n.y * 2.2 + cloud * 0.2);
         pearl += vec3(0.025, -0.009, 0.018) * spectral;
+        pearl *= 0.83;
         pearl = mix(pearl, vec3(1.65), rim * 0.95);
         float softbox = lobe(n, vec3(-0.6,0.8,0.8), 28.0);
         pearl += vec3(0.25) * softbox;
@@ -102,9 +103,9 @@ export function createGlassFinish(size: number) {
         float peach = max(dot(n,normalize(vec3(1.0,0.4,0.1))),0.0);
         vec3 tint = mix(vec3(0.53,0.57,0.80),vec3(0.38,0.70,0.85),cyan);
         tint = mix(tint,vec3(0.92,0.70,0.62),peach*0.6);
-        vec3 glass = mix(tint,vec3(1.25),edge*0.9);
+        vec3 glass = mix(tint*0.78,vec3(1.25),edge*0.9);
         glass += softbox * 0.42;
-        float alpha = 0.045 + fresnel*0.07 + edge*0.58 + softbox*0.18;
+        float alpha = 0.095 + fresnel*0.09 + edge*0.58 + softbox*0.18;
         if (!gl_FrontFacing) alpha *= 0.52;
         gl_FragColor = vec4(glass,alpha);
         #include <tonemapping_fragment>

@@ -11,6 +11,8 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { DEFAULT_CALIBRATION, createCalibrationEntities } from './model'
 import { createAtmosphereMaterial, createGlassFinish, createHaloMaterial, createPearlMaterial } from './materials'
 import { MilkGround } from './MilkGround'
+import { SolarEndpoint } from './SolarEndpoint'
+import { EndpointEntity } from './endpoint'
 
 export type SceneProps = {
   paused: boolean
@@ -90,12 +92,13 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
   const { size, camera, gl, invalidate } = useThree()
   const compact = size.width < 680
   const entities = useMemo(() => createCalibrationEntities(), [])
+  const endpoint = useMemo(() => new EndpointEntity(), [])
   const orbGroup = useRef<Group>(null)
   const cubeGroup = useRef<Group>(null)
   const controls = useRef<OrbitControlsImpl>(null)
   const time = useRef(0)
   const firstFrame = useRef(true)
-  const pearl = useMemo(() => createPearlMaterial(0.58), [])
+  const pearl = useMemo(() => createPearlMaterial(0.70), [])
   const cubeSurface = useMemo(() => createGlassFinish(entities.cube.size), [entities])
   const halo = useMemo(createHaloMaterial, [])
 
@@ -126,6 +129,7 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
     if (!paused && !reducedMotion) time.current += Math.min(delta, 0.05)
     entities.orb.update(time.current, reducedMotion)
     entities.cube.update(time.current, reducedMotion)
+    endpoint.update(time.current, reducedMotion)
     if (orbGroup.current) orbGroup.current.position.fromArray(entities.orb.position)
     if (cubeGroup.current) {
       cubeGroup.current.position.fromArray(entities.cube.position)
@@ -165,6 +169,7 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
         <meshPhysicalMaterial depthWrite={false} {...entities.cube.material} />
       </RoundedBox>
     </group>
+    <SolarEndpoint entity={endpoint} />
     <OrbitControls ref={controls} makeDefault enablePan={false} enableZoom={false}
       enableDamping={!reducedMotion} dampingFactor={0.06} rotateSpeed={0.32}
       minPolarAngle={1.12} maxPolarAngle={1.5} minAzimuthAngle={-0.45} maxAzimuthAngle={0.45}
