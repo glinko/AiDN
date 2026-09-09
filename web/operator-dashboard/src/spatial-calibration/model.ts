@@ -61,10 +61,6 @@ export const DEFAULT_CONNECTIONS: ReadonlyArray<ConnectionConfig> = [
 
 export interface OrbMaterialConfig {
   readonly color: string
-  /** Warm accent used by the six-second chroma breath. */
-  readonly pulseColor: string
-  /** Maximum blend from the neutral pearl into pulseColor. */
-  readonly pulseColorAmount: number
   readonly roughness: number
   readonly metalness: number
   readonly clearcoat: number
@@ -76,6 +72,13 @@ export interface OrbMaterialConfig {
   readonly iridescence: number
   readonly iridescenceIOR: number
   readonly iridescenceThicknessRange: [number, number]
+}
+
+export interface OrbColorPulseConfig {
+  /** Warm accent used by the six-second chroma breath. */
+  readonly color: string
+  /** Maximum blend from the neutral pearl into color. */
+  readonly amount: number
 }
 
 export interface CubeMaterialConfig {
@@ -99,6 +102,7 @@ export interface OrbConfig {
   readonly id: string
   readonly position: Vector3Tuple
   readonly radius: number
+  readonly colorPulse: OrbColorPulseConfig
   readonly material: OrbMaterialConfig
   readonly motion: OrbMotionConfig
 }
@@ -210,10 +214,9 @@ export const DEFAULT_CALIBRATION: CalibrationConfig = {
     id: 'calibration-orb',
     position: [-1.1, 2.1, 0],
     radius: 1,
+    colorPulse: { color: '#f26f68', amount: 0.38 },
     material: {
       color: '#f5faff',
-      pulseColor: '#f26f68',
-      pulseColorAmount: 0.38,
       roughness: 0.18,
       metalness: 0,
       clearcoat: 1,
@@ -353,12 +356,14 @@ export class ConnectionEntity {
 
 export class OrbEntity extends SceneEntity {
   readonly radius: number
+  readonly colorPulse: OrbColorPulseConfig
   readonly material: OrbMaterialConfig
   readonly motion: OrbMotionConfig
 
   constructor(config: OrbConfig = DEFAULT_CALIBRATION.orb) {
     super(config.id, config.position)
     this.radius = config.radius
+    this.colorPulse = Object.freeze({ ...config.colorPulse })
     this.material = snapshotMaterial(config.material)
     this.motion = Object.freeze({ ...config.motion })
   }

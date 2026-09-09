@@ -36,7 +36,7 @@ describe('calibration optics', () => {
     const glass = createGlassFinish(0.92)
     expect(DEFAULT_CALIBRATION.orb.motion.pulseAmplitude).toBe(0.06)
     expect(pearl.uniforms).toHaveProperty('uPulseColor')
-    expect(pearl.uniforms.uPulseColorAmount.value).toBe(DEFAULT_CALIBRATION.orb.material.pulseColorAmount)
+    expect(pearl.uniforms.uPulseColorAmount.value).toBe(DEFAULT_CALIBRATION.orb.colorPulse.amount)
     expect(pearl.fragmentShader).toContain('float front = smoothstep')
     expect(pearl.fragmentShader).toContain('float colorBreath')
     expect(pearl.fragmentShader).toContain('uPulseColor')
