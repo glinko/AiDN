@@ -55,9 +55,9 @@ function ThreadConnection({ entity, sourcePosition, targetPosition }: ThreadConn
       curve.getPoint(entity.getFlowProgress(0), point)
       const swell = 0.5 + 0.5 * Math.sin(entity.time * 2.2)
       photon.current.position.copy(point)
-      photon.current.scale.setScalar(0.048 + swell * 0.016)
+      photon.current.scale.setScalar(0.068 + swell * 0.022)
       photonCore.current.position.copy(point)
-      photonCore.current.scale.setScalar(0.016 + swell * 0.006)
+      photonCore.current.scale.setScalar(0.021 + swell * 0.007)
     }
   })
 
@@ -66,7 +66,7 @@ function ThreadConnection({ entity, sourcePosition, targetPosition }: ThreadConn
       blending={AdditiveBlending} depthWrite={false} toneMapped={false} renderOrder={1} />
     <mesh ref={photon} frustumCulled={false} renderOrder={2}>
       <sphereGeometry args={[1, 14, 10]} />
-      <meshBasicMaterial color={entity.color} toneMapped={false} transparent opacity={0.92} blending={AdditiveBlending} />
+      <meshBasicMaterial color={entity.color} toneMapped={false} transparent opacity={0.98} blending={AdditiveBlending} />
     </mesh>
     <mesh ref={photonCore} frustumCulled={false} renderOrder={3}>
       <sphereGeometry args={[1, 10, 8]} />
