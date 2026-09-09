@@ -1,12 +1,14 @@
 import { useMemo, useRef } from 'react'
 import { Line } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
-import { AdditiveBlending, CubicBezierCurve3, Mesh, Vector3 } from 'three'
+import { AdditiveBlending, Color, CubicBezierCurve3, InstancedMesh, Object3D, Vector3 } from 'three'
 import type { Line2 } from 'three-stdlib'
 
 import type { ConnectionEntity, CubeEntity, OrbEntity, Vector3Tuple } from './model'
 
 const segmentCount = 48
+const trailSamples = 40
+const trailLength = 0.16
 
 type ThreadConnectionProps = {
   entity: ConnectionEntity
@@ -16,9 +18,12 @@ type ThreadConnectionProps = {
 
 function ThreadConnection({ entity, sourcePosition, targetPosition }: ThreadConnectionProps) {
   const coreLine = useRef<Line2>(null)
-  const photon = useRef<Mesh>(null)
-  const photonCore = useRef<Mesh>(null)
+  const photonTrail = useRef<InstancedMesh>(null)
   const point = useMemo(() => new Vector3(), [])
+  const dummy = useMemo(() => new Object3D(), [])
+  const photonColor = useMemo(() => new Color(entity.color), [entity])
+  const tint = useMemo(() => new Color(), [])
+  const white = useMemo(() => new Color('#ffffff'), [])
   const sampled = useMemo(() => Array.from({ length: segmentCount + 1 }, () => new Vector3()), [])
   const positions = useMemo(() => Array<number>((segmentCount + 1) * 3).fill(0), [])
   const curve = useMemo(() => {
@@ -51,27 +56,31 @@ function ThreadConnection({ entity, sourcePosition, targetPosition }: ThreadConn
       coreLine.current.geometry.setPositions(positions)
       coreLine.current.computeLineDistances()
     }
-    if (photon.current && photonCore.current) {
-      curve.getPoint(entity.getFlowProgress(0), point)
-      const swell = 0.5 + 0.5 * Math.sin(entity.time * 2.2)
-      photon.current.position.copy(point)
-      photon.current.scale.setScalar(0.068 + swell * 0.022)
-      photonCore.current.position.copy(point)
-      photonCore.current.scale.setScalar(0.021 + swell * 0.007)
+    if (photonTrail.current) {
+      const headProgress = entity.getFlowProgress(0)
+      for (let sample = 0; sample < trailSamples; sample += 1) {
+        const tail = sample / (trailSamples - 1)
+        const progress = Math.max(0, headProgress - tail * trailLength)
+        curve.getPoint(progress, point)
+        dummy.position.copy(point)
+        dummy.scale.setScalar(sample === 0 ? 0.046 : 0.027 * Math.pow(1 - tail, 1.1) + 0.001)
+        dummy.updateMatrix()
+        photonTrail.current.setMatrixAt(sample, dummy.matrix)
+        tint.copy(photonColor).lerp(white, sample === 0 ? 0.75 : tail * 0.75)
+        photonTrail.current.setColorAt(sample, tint)
+      }
+      photonTrail.current.instanceMatrix.needsUpdate = true
+      if (photonTrail.current.instanceColor) photonTrail.current.instanceColor.needsUpdate = true
     }
   })
 
   return <group name={entity.id}>
     <Line ref={coreLine} points={initialPoints} color={entity.color} lineWidth={1} transparent opacity={0.74}
       blending={AdditiveBlending} depthWrite={false} toneMapped={false} renderOrder={1} />
-    <mesh ref={photon} frustumCulled={false} renderOrder={2}>
-      <sphereGeometry args={[1, 14, 10]} />
-      <meshBasicMaterial color={entity.color} toneMapped={false} transparent opacity={0.98} blending={AdditiveBlending} />
-    </mesh>
-    <mesh ref={photonCore} frustumCulled={false} renderOrder={3}>
+    <instancedMesh ref={photonTrail} args={[undefined, undefined, trailSamples]} frustumCulled={false} renderOrder={2}>
       <sphereGeometry args={[1, 10, 8]} />
-      <meshBasicMaterial color="#ffffff" toneMapped={false} transparent opacity={0.98} blending={AdditiveBlending} />
-    </mesh>
+      <meshBasicMaterial toneMapped={false} />
+    </instancedMesh>
   </group>
 }
 
