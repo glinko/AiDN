@@ -22,6 +22,7 @@ const LIVE_SPATIAL_SCOPE = {
   hypervisor_id: 'local-hypervisor',
   node_id: import.meta.env.VITE_AIDN_NODE_ID ?? 'gpu-3090',
 } as const
+const SECURE_VOICE_PORT = '8767'
 
 const dashboardSpatialLoaders = createDashboardSpatialLoaders()
 
@@ -103,6 +104,9 @@ function AppContent() {
                 ? 'Нажмите микрофон и обратитесь к основному агенту.'
                 : 'Голосовой ввод требует HTTPS; текущий адрес HTTP не даёт Chrome запросить микрофон.'
             : 'Нажмите на шар агента, чтобы услышать приветствие.')
+  const secureVoiceUrl = !voice.capabilities.secureContext && typeof window !== 'undefined'
+    ? `https://${window.location.hostname}:${SECURE_VOICE_PORT}${window.location.pathname}${window.location.search}`
+    : null
   useEffect(() => {
     const query = matchMedia('(prefers-reduced-motion: reduce)')
     const motion = () => setReducedMotion(query.matches)
@@ -136,7 +140,10 @@ function AppContent() {
         {voice.status === 'listening' ? <MicOff size={17} /> : voice.status === 'speaking' ? <Volume2 size={17} /> : <Mic size={17} />}
         <span>{voiceLabel}</span>
       </button>
-      <p className="voice-console__status" role="status" aria-live="polite">{voiceHint}</p>
+      <p className="voice-console__status" role="status" aria-live="polite">
+        <span>{voiceHint}</span>
+        {secureVoiceUrl ? <a className="voice-console__secure-link" href={secureVoiceUrl}>Открыть HTTPS</a> : null}
+      </p>
     </section>
     <footer className="scene-controls">
       <span>Перетащите · щипок/колесо · нажмите объект</span>

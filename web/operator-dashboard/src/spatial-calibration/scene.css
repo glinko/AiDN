@@ -18,6 +18,7 @@ html, body, #calibration-root, .pearl-study { margin: 0; width: 100%; height: 10
 .voice-console__button:hover { border-color: rgba(118,151,197,.4); color: #2f4d6c; background: rgba(255,255,255,.93); box-shadow: 0 12px 30px rgba(92,112,142,.17); }
 .voice-console__button svg { flex: 0 0 auto; color: #5d88b5; }
 .voice-console__status { max-width: min(300px, calc(100vw - 52px)); margin: 0; padding: 5px 10px; overflow: hidden; border-radius: 9px; color: #708198; background: rgba(248,251,255,.58); font-size: 10px; line-height: 1.35; text-align: right; text-overflow: ellipsis; white-space: nowrap; box-shadow: 0 5px 18px rgba(91,119,148,.05); backdrop-filter: blur(12px); }
+.voice-console__secure-link { margin-left: 8px; color: #4d79a8; text-decoration: underline; text-underline-offset: 2px; pointer-events: auto; }
 .voice-console[data-voice-state="listening"] .voice-console__button { border-color: rgba(80,163,183,.48); color: #25677a; background: rgba(229,249,251,.88); box-shadow: 0 0 0 4px rgba(80,163,183,.1), 0 12px 30px rgba(76,142,164,.18); }
 .voice-console[data-voice-state="listening"] .voice-console__button svg { color: #2f9bb0; }
 .voice-console[data-voice-state="speaking"] .voice-console__button { border-color: rgba(132,113,190,.35); color: #5a4b88; }
