@@ -1,12 +1,17 @@
 ---
 name: AiDN Pearl Study
-description: Route-local study of a pearl orb and glass cube above a milk-white reflective floor.
+description: Route-local spatial graph study of a pearl agent, colored subagents, endpoint suns, and glass artifacts above a milk-white reflective floor.
 colors:
   milk-space: "#f4f6fb"
   milk-floor: "#f0f3fa"
   cyan-light: "#b9e1ff"
   lilac-light: "#c6b5f8"
   peach-light: "#ffe1cf"
+  agent-yellow: "#efc75b"
+  agent-coral: "#eb9d91"
+  agent-mint: "#8ed5bd"
+  agent-lilac: "#b6a7ec"
+  agent-cyan: "#83c9e8"
   coral-pulse: "#f26f68"
   control-ink: "#4f6078"
   hint-ink: "#626f82"
@@ -32,9 +37,9 @@ components:
 
 **Creative North Star: "Pearl, light, and reflected glass"**
 
-This brief applies only to `/spatial-calibration.html`. The user-selected direction is a minimal material study: an elevated pearl orb, a smaller glass cube, and their soft reflections in milk-white space. It does not replace the dark operational dashboard direction in the root `PRODUCT.md` or establish a new global design system.
+This brief applies only to `/spatial-calibration.html`. The user-selected direction is a local spatial graph demonstration: an elevated pearl orb, six colored subagent orbs, four solar endpoint nodes, and twenty glass artifacts in three clusters above milk-white space. It does not replace the dark operational dashboard direction in the root `PRODUCT.md` or establish a new global design system.
 
-The scene is a local visual prototype with no Node binding, operational status, sidebar, or live data. Its materials approximate the supplied visual direction; reference fidelity is not exact or established by the source code alone. The orb represents the Primary Agent; the glass cube represents a dialogue artifact. A smaller white solar endpoint sits above the cube: a soft animated corona surrounds its core and exactly three cyan, lilac, and peach electric meteors orbit with tapered trails. These are visual roles, not live runtime objects.
+The scene is a local visual prototype with no Node binding, operational status, sidebar, or live data. Its materials approximate the supplied visual direction; reference fidelity is not exact or established by the source code alone. The large orb represents the Primary Agent; six smaller colored orbs represent subagents; sharp translucent cubes represent twenty artifacts grouped as legacy, active, and new; four solar endpoints provide colored energy anchors. Every connection is a visual role, not a live runtime object.
 
 ## Colors
 
@@ -46,7 +51,7 @@ System typography stays subordinate to the objects. A small Russian drag hint ac
 
 ## Layout
 
-The canvas fills the viewport without scrolling. The orb sits left of center and above the cube on the lower right. Both retain their relative scale on narrow screens: below 680px the camera moves farther away. Controls remain centered near the bottom safe area, with 44px circular targets and a smaller spacing gap on mobile. Tapping or clicking the orb, cube, or endpoint selects it, draws a restrained ring marker, and flies the camera toward its center; selecting the same object again returns to the shared home view.
+The canvas fills the viewport without scrolling. The primary orb sits left-center; six subagents form a loose upper-left constellation; four endpoints occupy the upper-right; twenty artifacts form three low clusters beneath the primary. Below 680px the camera moves farther away without independently scaling nodes. Controls remain centered near the bottom safe area, with 44px circular targets and a smaller spacing gap on mobile. Tapping or clicking any node selects it, draws a restrained ring marker, and flies the camera toward its center; selecting the same node again returns to the shared home view.
 
 ## Elevation & Depth
 
@@ -58,13 +63,13 @@ The environment is captured once from fixed rectangular lightformers, with fixed
 
 ## Shapes
 
-The solar endpoint is an independent `EndpointEntity`. `DEFAULT_ENDPOINT` owns position, radius, core/corona colors, three meteor colors, orbit radius/speed, and trail angle. The orbit and trail positions are deterministic functions of the shared scene clock; pause and reduced motion stop both the corona and meteors. Its 120 trail instances share one geometry/material draw rather than spawning objects every frame. The corona is an authored billboard shader, not simulated solar plasma; its muted periwinkle edge keeps the white core from disappearing into the background. Two `ConnectionEntity` objects link the agent to the artifact and endpoint with cubic control points; each connection is a nearly one-pixel core line carrying one endpoint-style satellite: a pastel head followed by a short, tapered 40-sample tail travelling along the curve. The orb drift and optical layers remain unchanged; the cube now rotates slowly and continuously around X, Y, and Z while keeping its fixed light direction and deeper blue volume.
+The solar endpoint is an independent `EndpointEntity`; the demo creates four immutable endpoint configs with distinct corona and meteor palettes. Each orbit and trail is a deterministic function of the shared scene clock; pause and reduced motion stop both the corona and meteors. Its 120 trail instances share one geometry/material draw rather than spawning objects every frame. The corona is an authored billboard shader, not simulated solar plasma. `OrbEntity` owns both the primary and six subagent nodes, while `CubeEntity` owns the featured cube and nineteen supporting artifacts. Each cube rotates slowly and independently around X, Y, and Z while keeping the fixed top-left-front light direction. `ConnectionEntity` resolves source and target IDs through a live position map: the graph carries fine curved links to the subagents, endpoint suns, and the newest artifact cluster, each with one endpoint-style pastel satellite and a short tapered tail.
 
-One smooth sphere and one nearly sharp rounded cube carry the entire composition. The sphere's pulse is bounded by `pulseAmplitude: 0.06` and `pulseFrequency: 1.04719755` in `DEFAULT_CALIBRATION`, a six-second cycle that reads as an intentional breathing material rather than a hard scale jump. Its `OrbEntity.colorPulse` owns a coral accent and blend amount so the chroma breath can move from the current cool pearl toward a warm red tint without changing the fixed light direction. The cube's rounded shell has a radius of 0.016 scene units; its explicit edge outline follows a box. Keep the fine luminous silhouette and generous empty space when tuning the materials.
+The primary sphere keeps its six-percent, six-second pulse and coral chroma breath. Subagents use the same pearl vocabulary with stronger per-node color pulses so hue encodes role without status semantics. Artifacts use sharp box geometry and per-node attenuation colors; their differing sizes, depths, and triaxial speeds make the three clusters legible without labels. Keep the fine luminous silhouettes, hairline connections, and generous empty space when tuning the materials.
 
 ## Components
 
-The scene uses demand rendering, DPR 1, and a timer that requests frames at approximately 30Hz while motion is active. This is an invalidation cadence, not a guaranteed measured frame rate or an absolute cap during interaction. Reflection buffers use 768px normally and 384px below the compact breakpoint. Native physical transmission replaces the per-object Drei capture buffers so mirrored views are rendered with the reflection camera.
+The scene uses demand rendering, DPR 1, and a timer that requests frames at approximately 30Hz while motion is active. This is an invalidation cadence, not a guaranteed measured frame rate or an absolute cap during interaction. Reflection buffers use 768px normally and 384px below the compact breakpoint. Native physical transmission replaces the per-object Drei capture buffers so mirrored views are rendered with the reflection camera. Twenty artifact shells, six subagent shells, four endpoint cores, and up to twenty graph links remain within one bounded local scene; each link keeps one instanced 40-sample photon tail.
 
 Pause freezes the animation clock while preserving camera inspection. Reduced-motion preference stops automatic motion, removes control transitions and camera damping, and disables the pause toggle; object focus then snaps to its destination without a camera flight. Hidden documents stop rendering and timer invalidation. Drag inspection is bounded, with pan and zoom disabled; reset restores the initial camera view and clears selection. Loading, WebGL fallback, and retry states communicate scene availability without exposing operational status.
 

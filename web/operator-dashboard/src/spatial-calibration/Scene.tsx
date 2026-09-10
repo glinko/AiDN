@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
-import { Billboard, Environment, Lightformer, OrbitControls, RoundedBox } from '@react-three/drei'
+import { Billboard, Environment, Lightformer, OrbitControls } from '@react-three/drei'
 import { AdditiveBlending, Color, Group, HalfFloatType, NeutralToneMapping, Vector2, Vector3, WebGLRenderTarget } from 'three'
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
@@ -8,11 +8,11 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 
-import { DEFAULT_CALIBRATION, createCalibrationEntities } from './model'
+import { ConnectionEntity, DEFAULT_CALIBRATION, createCalibrationEntities, type ConnectionConfig, type CubeEntity, type OrbEntity, type Vector3Tuple } from './model'
 import { createAtmosphereMaterial, createGlassFinish, createHaloMaterial, createPearlMaterial } from './materials'
 import { MilkGround } from './MilkGround'
 import { SolarEndpoint } from './SolarEndpoint'
-import { EndpointEntity } from './endpoint'
+import { DEMO_ENDPOINT_CONFIGS, EndpointEntity } from './endpoint'
 import { SpatialThreads } from './Threads'
 
 export type SceneProps = {
@@ -22,18 +22,18 @@ export type SceneProps = {
   onReady: () => void
 }
 
-type FocusableId = 'orb' | 'cube' | 'endpoint'
+type FocusableId = string
+
+type FocusTarget = {
+  readonly position: Vector3Tuple
+  readonly radius: number
+  readonly color: string
+  readonly distance: number
+}
 
 type CameraFocus =
   | { kind: 'object'; id: FocusableId; distance: number; direction: Vector3; targetOffset: Vector3 }
   | { kind: 'home'; position: Vector3; target: Vector3 }
-
-const FOCUS_DISTANCE: Record<FocusableId, number> = { orb: 4.4, cube: 3.7, endpoint: 2.8 }
-const FOCUS_TARGET_OFFSET: Record<FocusableId, [number, number, number]> = {
-  orb: [0, 0, 0],
-  cube: [0, 0, 0],
-  endpoint: [0, 0, 0],
-}
 
 function FocusMarker({
   position,
@@ -57,6 +57,93 @@ function FocusMarker({
       </mesh>
     </Billboard>
   </group>
+}
+
+function AgentNode({ entity, onSelect }: { entity: OrbEntity; onSelect: () => void }) {
+  const group = useRef<Group>(null)
+  const pearl = useMemo(() => createPearlMaterial(0.72, entity.colorPulse.color, entity.colorPulse.amount), [entity])
+  const halo = useMemo(createHaloMaterial, [])
+  useEffect(() => () => { pearl.dispose(); halo.dispose() }, [pearl, halo])
+  useFrame(() => {
+    group.current?.position.fromArray(entity.position)
+    group.current?.scale.fromArray(entity.scale)
+    pearl.uniforms.uTime.value = entity.time
+  })
+  return <group ref={group} position={entity.position} scale={entity.scale} name={entity.id}
+    onClick={(event) => { event.stopPropagation(); onSelect() }}>
+    <mesh material={pearl} renderOrder={2}>
+      <sphereGeometry args={[entity.radius, 40, 28]} />
+    </mesh>
+    <mesh renderOrder={1}>
+      <sphereGeometry args={[entity.radius * 0.98, 40, 28]} />
+      <meshPhysicalMaterial {...entity.material} color={entity.colorPulse.color} />
+    </mesh>
+    <Billboard>
+      <mesh material={halo} position={[0, 0, -entity.radius * 0.08]}>
+        <planeGeometry args={[entity.radius * 3.1, entity.radius * 3.1]} />
+      </mesh>
+    </Billboard>
+  </group>
+}
+
+function ArtifactNode({ entity, onSelect, featured = false }: { entity: CubeEntity; onSelect: () => void; featured?: boolean }) {
+  const group = useRef<Group>(null)
+  const renderSize = entity.size * (featured ? 0.82 : 1)
+  const surface = useMemo(() => createGlassFinish(renderSize, entity.material.color), [entity.material.color, renderSize])
+  useEffect(() => () => surface.dispose(), [surface])
+  useFrame(() => {
+    group.current?.position.fromArray(entity.position)
+    group.current?.rotation.fromArray([...entity.rotation, 'XYZ'])
+  })
+  return <group ref={group} position={entity.position} name={entity.id}
+    onClick={(event) => { event.stopPropagation(); onSelect() }}>
+    <mesh material={surface} scale={1.003} renderOrder={2}>
+      <boxGeometry args={[renderSize, renderSize, renderSize]} />
+    </mesh>
+    <mesh renderOrder={1}>
+      <boxGeometry args={[renderSize, renderSize, renderSize]} />
+      <meshPhysicalMaterial depthWrite={false} {...entity.material} />
+    </mesh>
+  </group>
+}
+
+function createDemoConnections(
+  entities: ReturnType<typeof createCalibrationEntities>,
+  endpoints: ReadonlyArray<EndpointEntity>,
+): ConnectionEntity[] {
+  const source = entities.orb.id
+  const configs: ConnectionConfig[] = []
+  entities.agents.forEach((agent, index) => {
+    configs.push({
+      id: `primary-${agent.id}-thread`, sourceId: source, targetId: agent.id,
+      color: agent.colorPulse.color, opacity: 0.28,
+      startOffset: [-0.50 + index * 0.09, 0.35 + (index % 2) * 0.08, 0.08],
+      endOffset: [0.08, -0.02, 0], bendA: [-0.34 + index * 0.04, 0.22, 0.28],
+      bendB: [0.14 - index * 0.03, 0.16, 0.24],
+      motion: { flowSpeed: 0.075 + index * 0.008, beadSpacing: 0.86, phase: index * 0.11 },
+    })
+  })
+  endpoints.forEach((endpoint, index) => {
+    configs.push({
+      id: `primary-${endpoint.id}-thread`, sourceId: source, targetId: endpoint.id,
+      color: endpoint.config.coronaColor, opacity: 0.38,
+      startOffset: [0.60 + index * 0.05, 0.22 + (index % 2) * 0.06, 0.06],
+      endOffset: [-0.12, -0.01, 0], bendA: [0.24 + index * 0.06, 0.30, 0.25],
+      bendB: [0.28 + index * 0.03, 0.22, 0.18],
+      motion: { flowSpeed: 0.09 + index * 0.009, beadSpacing: 0.92, phase: 0.24 + index * 0.13 },
+    })
+  })
+  entities.artifacts.filter((artifact) => Number(artifact.id.replace('artifact-', '')) >= 13).forEach((artifact, index) => {
+    configs.push({
+      id: `primary-${artifact.id}-thread`, sourceId: source, targetId: artifact.id,
+      color: artifact.material.color, opacity: 0.46,
+      startOffset: [0.42 + (index % 3) * 0.10, -0.30 + (index % 2) * 0.08, 0.10],
+      endOffset: [-0.12, 0.13, 0], bendA: [0.22 + index * 0.03, -0.20, 0.22],
+      bendB: [0.18 + index * 0.04, -0.08, 0.20],
+      motion: { flowSpeed: 0.10 + index * 0.007, beadSpacing: 0.96, phase: 0.46 + index * 0.09 },
+    })
+  })
+  return [...entities.connections, ...configs.map((config) => new ConnectionEntity(config))]
 }
 
 function StudioEnvironment() {
@@ -130,9 +217,35 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
   const { size, camera, gl, invalidate } = useThree()
   const compact = size.width < 680
   const entities = useMemo(() => createCalibrationEntities(), [])
-  const endpoint = useMemo(() => new EndpointEntity(), [])
+  const endpoints = useMemo(() => DEMO_ENDPOINT_CONFIGS.map((config) => new EndpointEntity(config)), [])
+  const connections = useMemo(() => createDemoConnections(entities, endpoints), [entities, endpoints])
+  const positions = useMemo(() => {
+    const entries: Array<[string, Vector3Tuple]> = [
+      [entities.orb.id, entities.orb.position],
+      [entities.cube.id, entities.cube.position],
+      ...entities.agents.map((agent) => [agent.id, agent.position] as [string, Vector3Tuple]),
+      ...entities.artifacts.map((artifact) => [artifact.id, artifact.position] as [string, Vector3Tuple]),
+      ...endpoints.map((endpoint) => [endpoint.id, endpoint.position] as [string, Vector3Tuple]),
+    ]
+    return new Map(entries)
+  }, [entities, endpoints])
+  const focusTargets = useMemo(() => {
+    const targets = new Map<string, FocusTarget>([
+      [entities.orb.id, { position: entities.orb.position, radius: 1.14, color: '#b8e3ff', distance: 4.4 }],
+      [entities.cube.id, { position: entities.cube.position, radius: 0.62, color: '#b9d8ff', distance: 3.7 }],
+    ])
+    entities.agents.forEach((agent) => targets.set(agent.id, {
+      position: agent.position, radius: agent.radius * 1.42, color: agent.colorPulse.color, distance: 2.55,
+    }))
+    entities.artifacts.forEach((artifact) => targets.set(artifact.id, {
+      position: artifact.position, radius: artifact.size * 0.70, color: artifact.material.color, distance: 2.35,
+    }))
+    endpoints.forEach((endpoint) => targets.set(endpoint.id, {
+      position: endpoint.position, radius: endpoint.config.radius * 1.72, color: endpoint.config.coronaColor, distance: 2.55,
+    }))
+    return targets
+  }, [entities, endpoints])
   const orbGroup = useRef<Group>(null)
-  const cubeGroup = useRef<Group>(null)
   const controls = useRef<OrbitControlsImpl>(null)
   const time = useRef(0)
   const firstFrame = useRef(true)
@@ -148,16 +261,15 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
     entities.orb.colorPulse.color,
     entities.orb.colorPulse.amount,
   ), [entities])
-  const cubeSurface = useMemo(() => createGlassFinish(entities.cube.size), [entities])
   const halo = useMemo(createHaloMaterial, [])
 
-  const getObjectPosition = useCallback((id: FocusableId) => {
-    if (id === 'orb') return entities.orb.position
-    if (id === 'cube') return entities.cube.position
-    return endpoint.position
-  }, [endpoint, entities])
+  const getObjectPosition = useCallback((id: FocusableId): Vector3Tuple => {
+    return focusTargets.get(id)?.position ?? homeTarget.toArray() as Vector3Tuple
+  }, [focusTargets, homeTarget])
 
   const focusObject = useCallback((id: FocusableId) => {
+    const target = focusTargets.get(id)
+    if (!target) return
     const activeFocus = cameraFocus.current
     if (activeFocus?.kind === 'object' && activeFocus.id === id) {
       cameraFocus.current = {
@@ -177,13 +289,13 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
     cameraFocus.current = {
       kind: 'object',
       id,
-      distance: FOCUS_DISTANCE[id] * (compact ? 1.18 : 1),
+      distance: target.distance * (compact ? 1.18 : 1),
       direction: focusDirection.clone(),
-      targetOffset: new Vector3().fromArray(FOCUS_TARGET_OFFSET[id]),
+      targetOffset: new Vector3(),
     }
     setSelectedId(id)
     invalidate()
-  }, [camera, compact, focusDirection, homeTarget, invalidate])
+  }, [camera, compact, focusDirection, focusTargets, homeTarget, invalidate])
 
   const cancelFocus = useCallback(() => {
     if (!cameraFocus.current) return
@@ -228,7 +340,7 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
     return () => window.clearInterval(timer)
   }, [paused, reducedMotion, invalidate])
 
-  useEffect(() => () => { pearl.dispose(); cubeSurface.dispose(); halo.dispose() }, [pearl, cubeSurface, halo])
+  useEffect(() => () => { pearl.dispose(); halo.dispose() }, [pearl, halo])
   useEffect(() => {
     gl.toneMapping = NeutralToneMapping
     gl.toneMappingExposure = 1.05
@@ -249,17 +361,14 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
     if (!paused && !reducedMotion) time.current += Math.min(delta, 0.05)
     entities.orb.update(time.current, reducedMotion)
     entities.cube.update(time.current, reducedMotion)
-    endpoint.update(time.current, reducedMotion)
-    entities.connections.forEach((connection) => connection.update(time.current, reducedMotion))
+    entities.agents.forEach((agent) => agent.update(time.current, reducedMotion))
+    entities.artifacts.forEach((artifact) => artifact.update(time.current, reducedMotion))
+    endpoints.forEach((endpoint) => endpoint.update(time.current, reducedMotion))
+    connections.forEach((connection) => connection.update(time.current, reducedMotion))
     if (orbGroup.current) {
       orbGroup.current.position.fromArray(entities.orb.position)
       orbGroup.current.scale.fromArray(entities.orb.scale)
     }
-    if (cubeGroup.current) {
-      cubeGroup.current.position.fromArray(entities.cube.position)
-      cubeGroup.current.rotation.fromArray([...entities.cube.rotation, 'XYZ'])
-    }
-
     const activeFocus = cameraFocus.current
     const orbitControl = controls.current
     const orbitTarget = orbitControl?.target
@@ -284,15 +393,18 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
     if (firstFrame.current) { firstFrame.current = false; onReady() }
   })
 
+  const selectedTarget = selectedId ? focusTargets.get(selectedId) : undefined
+
   return <>
     <fog attach="fog" args={['#f4f6fb', 12, 38]} />
     <StudioEnvironment />
     <MilkGround compact={compact} />
-    <Penumbra x={-1.1} z={0} scale={[1.1, 0.65, 1]} />
-    <Penumbra x={1.35} z={0.4} scale={[0.6, 0.45, 1]} />
+    <Penumbra x={-1.48} z={0.30} scale={[1.20, 0.60, 1]} />
+    <Penumbra x={-0.15} z={0.55} scale={[1.45, 0.62, 1]} />
+    <Penumbra x={1.34} z={0.72} scale={[1.20, 0.56, 1]} />
 
     <group ref={orbGroup} position={entities.orb.position} scale={entities.orb.scale} name="primary-orb"
-      onClick={(event) => { event.stopPropagation(); focusObject('orb') }}>
+      onClick={(event) => { event.stopPropagation(); focusObject(entities.orb.id) }}>
       <mesh scale={1.002} material={pearl} renderOrder={2}>
         <sphereGeometry args={[entities.orb.radius, 64, 48]} />
       </mesh>
@@ -306,27 +418,25 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
         </mesh>
       </Billboard>
     </group>
-    <FocusMarker position={entities.orb.position} radius={1.14} color="#b8e3ff" visible={selectedId === 'orb'} />
+    {entities.agents.map((agent) => <AgentNode key={agent.id} entity={agent} onSelect={() => focusObject(agent.id)} />)}
+    <ArtifactNode entity={entities.cube} featured onSelect={() => focusObject(entities.cube.id)} />
+    {entities.artifacts.map((artifact) => <ArtifactNode key={artifact.id} entity={artifact} onSelect={() => focusObject(artifact.id)} />)}
 
-    <group ref={cubeGroup} position={entities.cube.position} name="session-cube"
-      onClick={(event) => { event.stopPropagation(); focusObject('cube') }}>
-      <mesh material={cubeSurface} scale={1.003} renderOrder={2}>
-        <boxGeometry args={[entities.cube.size, entities.cube.size, entities.cube.size]} />
-      </mesh>
-      <RoundedBox args={[entities.cube.size, entities.cube.size, entities.cube.size]} radius={0.016} smoothness={3}>
-        <meshPhysicalMaterial depthWrite={false} {...entities.cube.material} />
-      </RoundedBox>
-    </group>
-    <FocusMarker position={entities.cube.position} radius={0.68} color="#b9d8ff" visible={selectedId === 'cube'} />
-    <SpatialThreads connections={entities.connections} orb={entities.orb} cube={entities.cube} endpoint={endpoint} />
-    <group onClick={(event) => { event.stopPropagation(); focusObject('endpoint') }}>
+    {endpoints.map((endpoint) => <group key={endpoint.id} name={endpoint.id}
+      onClick={(event) => { event.stopPropagation(); focusObject(endpoint.id) }}>
       <SolarEndpoint entity={endpoint} />
-    </group>
-    <FocusMarker position={endpoint.position} radius={0.38} color="#d8c9ff" visible={selectedId === 'endpoint'} />
+    </group>)}
+    <SpatialThreads connections={connections} positions={positions} />
+    <FocusMarker
+      position={selectedTarget?.position ?? entities.orb.position}
+      radius={selectedTarget?.radius ?? 1.14}
+      color={selectedTarget?.color ?? '#b8e3ff'}
+      visible={Boolean(selectedTarget)}
+    />
     <OrbitControls ref={controls} makeDefault enablePan={false} enableZoom={false}
       enableDamping={!reducedMotion} dampingFactor={0.06} rotateSpeed={0.32}
       minPolarAngle={1.12} maxPolarAngle={1.5} minAzimuthAngle={-0.45} maxAzimuthAngle={0.45}
-      target={[0.15, 1.45, 0]} />
+      target={DEFAULT_CALIBRATION.camera.target} />
     <OpticalFinish />
   </>
 }

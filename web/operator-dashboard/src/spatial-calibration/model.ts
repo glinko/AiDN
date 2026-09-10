@@ -27,6 +27,8 @@ export interface ConnectionConfig {
   readonly sourceId: string
   readonly targetId: string
   readonly color: string
+  /** Optional visual weight for dense demo graphs; the line remains hairline. */
+  readonly opacity?: number
   readonly startOffset: Vector3Tuple
   readonly endOffset: Vector3Tuple
   readonly bendA: Vector3Tuple
@@ -111,6 +113,7 @@ export interface CubeConfig {
   readonly id: string
   readonly position: Vector3Tuple
   readonly size: number
+  readonly cluster?: 'legacy' | 'active' | 'new'
   readonly baseYaw: number
   /** Optional pitch and roll offsets preserve compatibility with the original yaw-only preset. */
   readonly basePitch?: number
@@ -170,12 +173,15 @@ export interface CalibrationConfig {
   }
   readonly orb: OrbConfig
   readonly cube: CubeConfig
+  /** Optional scene additions; omitted configs use the local demo preset. */
+  readonly agents?: ReadonlyArray<OrbConfig>
+  readonly artifacts?: ReadonlyArray<CubeConfig>
   readonly connections: ReadonlyArray<ConnectionConfig>
 }
 
 /** A local visual preset: it carries no runtime or Node binding. */
 export const DEFAULT_CALIBRATION: CalibrationConfig = {
-  camera: { position: [0.2, 3.15, 9.8], compactPosition: [0.2, 4.1, 18.5], target: [0.15, 1.45, 0], fov: 33, near: 0.1, far: 180 },
+  camera: { position: [0.15, 3.5, 10.8], compactPosition: [0.15, 4.25, 20.5], target: [0.1, 1.7, 0], fov: 33, near: 0.1, far: 180 },
   environment: {
     background: '#f4f6fb',
     mapBackground: '#e3eaf7',
@@ -235,6 +241,7 @@ export const DEFAULT_CALIBRATION: CalibrationConfig = {
     id: 'calibration-cube',
     position: [1.35, 0.9, 0.4],
     size: 0.92,
+    cluster: 'active',
     baseYaw: -0.45,
     material: {
       color: '#e1ebfc',
@@ -256,6 +263,102 @@ export const DEFAULT_CALIBRATION: CalibrationConfig = {
   },
   connections: DEFAULT_CONNECTIONS,
 }
+
+function createAgentConfig(
+  id: string,
+  position: Vector3Tuple,
+  radius: number,
+  color: string,
+  phase: number,
+): OrbConfig {
+  return {
+    id,
+    position,
+    radius,
+    colorPulse: { color, amount: 0.72 },
+    material: { ...DEFAULT_CALIBRATION.orb.material, color: '#f7fbff' },
+    motion: {
+      driftAmplitude: 0.045 + phase * 0.008,
+      driftFrequency: 0.2 + phase * 0.035,
+      pulseAmplitude: 0.025,
+      pulseFrequency: 0.68 + phase * 0.08,
+    },
+  }
+}
+
+/** Six small, colored agent nodes used by the local graph demonstration. */
+export const DEMO_AGENT_CONFIGS: ReadonlyArray<OrbConfig> = Object.freeze([
+  createAgentConfig('subagent-yellow', [-2.25, 3.72, 0.52], 0.29, '#efc75b', 0.2),
+  createAgentConfig('subagent-coral', [-1.75, 4.18, 0.08], 0.34, '#eb9d91', 0.8),
+  createAgentConfig('subagent-mint', [-1.15, 3.88, -0.10], 0.27, '#8ed5bd', 1.4),
+  createAgentConfig('subagent-lilac', [-2.28, 3.25, 0.12], 0.32, '#b6a7ec', 1.9),
+  createAgentConfig('subagent-cyan', [-1.72, 3.35, 0.58], 0.25, '#83c9e8', 2.5),
+  createAgentConfig('subagent-peach', [-0.95, 3.66, 0.30], 0.30, '#efb58c', 3.1),
+])
+
+type ArtifactSeed = {
+  readonly id: string
+  readonly cluster: 'legacy' | 'active' | 'new'
+  readonly position: Vector3Tuple
+  readonly size: number
+  readonly color: string
+  readonly attenuationColor: string
+  readonly baseYaw: number
+  readonly basePitch: number
+  readonly baseRoll: number
+  readonly driftAmplitude: number
+  readonly driftFrequency: number
+  readonly pitchSpeed: number
+  readonly yawSpeed: number
+  readonly rollSpeed: number
+}
+
+function createArtifactConfig(seed: ArtifactSeed): CubeConfig {
+  return {
+    id: seed.id,
+    position: seed.position,
+    size: seed.size,
+    cluster: seed.cluster,
+    baseYaw: seed.baseYaw,
+    basePitch: seed.basePitch,
+    baseRoll: seed.baseRoll,
+    material: {
+      ...DEFAULT_CALIBRATION.cube.material,
+      color: seed.color,
+      attenuationColor: seed.attenuationColor,
+    },
+    motion: {
+      driftAmplitude: seed.driftAmplitude,
+      driftFrequency: seed.driftFrequency,
+      pitchSpeed: seed.pitchSpeed,
+      yawSpeed: seed.yawSpeed,
+      rollSpeed: seed.rollSpeed,
+    },
+  }
+}
+
+/** Nineteen supporting artifacts; the featured calibration cube makes twenty. */
+export const DEMO_ARTIFACT_CONFIGS: ReadonlyArray<CubeConfig> = Object.freeze([
+  createArtifactConfig({ id: 'artifact-02', cluster: 'legacy', position: [-2.00, 0.54, 0.52], size: 0.36, color: '#b9aceb', attenuationColor: '#7e72b4', baseYaw: -0.52, basePitch: 0.10, baseRoll: -0.04, driftAmplitude: 0.035, driftFrequency: 0.22, pitchSpeed: 0.024, yawSpeed: 0.036, rollSpeed: -0.018 }),
+  createArtifactConfig({ id: 'artifact-03', cluster: 'legacy', position: [-1.62, 0.72, 0.24], size: 0.42, color: '#efc2ad', attenuationColor: '#b27d70', baseYaw: 0.18, basePitch: -0.06, baseRoll: 0.08, driftAmplitude: 0.040, driftFrequency: 0.27, pitchSpeed: -0.021, yawSpeed: -0.048, rollSpeed: 0.016 }),
+  createArtifactConfig({ id: 'artifact-04', cluster: 'legacy', position: [-1.20, 0.48, 0.72], size: 0.33, color: '#a5d9df', attenuationColor: '#6c9da8', baseYaw: -0.30, basePitch: 0.05, baseRoll: 0.10, driftAmplitude: 0.030, driftFrequency: 0.24, pitchSpeed: 0.030, yawSpeed: 0.041, rollSpeed: 0.021 }),
+  createArtifactConfig({ id: 'artifact-05', cluster: 'legacy', position: [-1.88, 1.08, -0.05], size: 0.46, color: '#c4e7d4', attenuationColor: '#78a993', baseYaw: 0.42, basePitch: 0.02, baseRoll: -0.12, driftAmplitude: 0.046, driftFrequency: 0.19, pitchSpeed: -0.027, yawSpeed: 0.032, rollSpeed: -0.019 }),
+  createArtifactConfig({ id: 'artifact-06', cluster: 'legacy', position: [-1.46, 1.24, 0.48], size: 0.38, color: '#e5b8d2', attenuationColor: '#a9799b', baseYaw: -0.20, basePitch: 0.11, baseRoll: 0.06, driftAmplitude: 0.034, driftFrequency: 0.31, pitchSpeed: 0.019, yawSpeed: -0.040, rollSpeed: 0.025 }),
+  createArtifactConfig({ id: 'artifact-07', cluster: 'legacy', position: [-0.98, 0.92, 0.18], size: 0.30, color: '#e7d38f', attenuationColor: '#aa9258', baseYaw: 0.58, basePitch: -0.08, baseRoll: -0.10, driftAmplitude: 0.028, driftFrequency: 0.26, pitchSpeed: -0.024, yawSpeed: 0.052, rollSpeed: 0.018 }),
+  createArtifactConfig({ id: 'artifact-08', cluster: 'active', position: [-0.60, 0.44, 0.34], size: 0.44, color: '#aac6ee', attenuationColor: '#718cb8', baseYaw: -0.14, basePitch: 0.06, baseRoll: 0.12, driftAmplitude: 0.038, driftFrequency: 0.23, pitchSpeed: 0.028, yawSpeed: -0.038, rollSpeed: -0.022 }),
+  createArtifactConfig({ id: 'artifact-09', cluster: 'active', position: [-0.22, 0.68, 0.90], size: 0.35, color: '#d4b5ef', attenuationColor: '#9179b0', baseYaw: 0.35, basePitch: -0.10, baseRoll: 0.04, driftAmplitude: 0.032, driftFrequency: 0.29, pitchSpeed: -0.022, yawSpeed: 0.046, rollSpeed: 0.017 }),
+  createArtifactConfig({ id: 'artifact-10', cluster: 'active', position: [0.22, 0.40, 0.22], size: 0.50, color: '#a3dbcf', attenuationColor: '#659d98', baseYaw: -0.42, basePitch: 0.04, baseRoll: -0.08, driftAmplitude: 0.043, driftFrequency: 0.21, pitchSpeed: 0.024, yawSpeed: -0.032, rollSpeed: 0.020 }),
+  createArtifactConfig({ id: 'artifact-11', cluster: 'active', position: [0.52, 0.82, 0.68], size: 0.37, color: '#efc0ae', attenuationColor: '#b47f73', baseYaw: 0.22, basePitch: 0.09, baseRoll: 0.02, driftAmplitude: 0.031, driftFrequency: 0.34, pitchSpeed: -0.031, yawSpeed: 0.039, rollSpeed: -0.018 }),
+  createArtifactConfig({ id: 'artifact-12', cluster: 'active', position: [-0.38, 1.16, 0.36], size: 0.31, color: '#c4b3ef', attenuationColor: '#8275b6', baseYaw: -0.60, basePitch: -0.04, baseRoll: 0.13, driftAmplitude: 0.027, driftFrequency: 0.25, pitchSpeed: 0.020, yawSpeed: -0.050, rollSpeed: 0.022 }),
+  createArtifactConfig({ id: 'artifact-13', cluster: 'active', position: [0.12, 1.25, -0.02], size: 0.43, color: '#efd18e', attenuationColor: '#ae9153', baseYaw: 0.08, basePitch: 0.12, baseRoll: -0.06, driftAmplitude: 0.040, driftFrequency: 0.20, pitchSpeed: -0.026, yawSpeed: 0.034, rollSpeed: -0.021 }),
+  createArtifactConfig({ id: 'artifact-14', cluster: 'new', position: [0.58, 0.28, 0.66], size: 0.35, color: '#a6d9e8', attenuationColor: '#6598aa', baseYaw: -0.28, basePitch: -0.07, baseRoll: 0.08, driftAmplitude: 0.034, driftFrequency: 0.30, pitchSpeed: 0.029, yawSpeed: -0.042, rollSpeed: 0.018 }),
+  createArtifactConfig({ id: 'artifact-15', cluster: 'new', position: [0.92, 0.30, 1.02], size: 0.47, color: '#d2b5ef', attenuationColor: '#8975aa', baseYaw: 0.48, basePitch: 0.03, baseRoll: -0.11, driftAmplitude: 0.042, driftFrequency: 0.22, pitchSpeed: -0.020, yawSpeed: 0.045, rollSpeed: -0.023 }),
+  createArtifactConfig({ id: 'artifact-16', cluster: 'new', position: [1.88, 0.44, 0.80], size: 0.32, color: '#ecb7aa', attenuationColor: '#aa7169', baseYaw: -0.52, basePitch: 0.08, baseRoll: 0.05, driftAmplitude: 0.029, driftFrequency: 0.27, pitchSpeed: 0.026, yawSpeed: -0.036, rollSpeed: 0.021 }),
+  createArtifactConfig({ id: 'artifact-17', cluster: 'new', position: [1.92, 1.36, 0.08], size: 0.40, color: '#b5e3cd', attenuationColor: '#6f9e88', baseYaw: 0.30, basePitch: -0.12, baseRoll: -0.02, driftAmplitude: 0.036, driftFrequency: 0.24, pitchSpeed: -0.023, yawSpeed: 0.050, rollSpeed: -0.016 }),
+  createArtifactConfig({ id: 'artifact-18', cluster: 'new', position: [0.70, 1.54, 0.98], size: 0.44, color: '#b2c4ec', attenuationColor: '#7183b0', baseYaw: -0.04, basePitch: 0.06, baseRoll: 0.14, driftAmplitude: 0.039, driftFrequency: 0.18, pitchSpeed: 0.021, yawSpeed: -0.041, rollSpeed: 0.019 }),
+  createArtifactConfig({ id: 'artifact-19', cluster: 'new', position: [1.18, 1.52, 0.30], size: 0.30, color: '#efd28f', attenuationColor: '#a99052', baseYaw: 0.62, basePitch: -0.02, baseRoll: -0.07, driftAmplitude: 0.026, driftFrequency: 0.32, pitchSpeed: -0.028, yawSpeed: 0.038, rollSpeed: 0.024 }),
+  createArtifactConfig({ id: 'artifact-20', cluster: 'new', position: [1.88, 1.76, 0.62], size: 0.38, color: '#dfb5dc', attenuationColor: '#9c719b', baseYaw: -0.34, basePitch: 0.10, baseRoll: 0.09, driftAmplitude: 0.033, driftFrequency: 0.28, pitchSpeed: 0.025, yawSpeed: -0.047, rollSpeed: -0.020 }),
+])
 
 function snapshotMaterial<T extends { readonly iridescenceThicknessRange: [number, number] }>(material: T): T {
   // Preserve renderer-compatible tuple types while preventing runtime mutation.
@@ -306,6 +409,7 @@ export class ConnectionEntity {
   readonly sourceId: string
   readonly targetId: string
   readonly color: string
+  readonly opacity: number
   readonly startOffset: Vector3Tuple
   readonly endOffset: Vector3Tuple
   readonly bendA: Vector3Tuple
@@ -318,6 +422,7 @@ export class ConnectionEntity {
     this.sourceId = config.sourceId
     this.targetId = config.targetId
     this.color = config.color
+    this.opacity = Math.min(1, Math.max(0, config.opacity ?? 0.66))
     this.startOffset = freezeTuple(config.startOffset)
     this.endOffset = freezeTuple(config.endOffset)
     this.bendA = freezeTuple(config.bendA)
@@ -359,6 +464,7 @@ export class OrbEntity extends SceneEntity {
   readonly colorPulse: OrbColorPulseConfig
   readonly material: OrbMaterialConfig
   readonly motion: OrbMotionConfig
+  time = 0
 
   constructor(config: OrbConfig = DEFAULT_CALIBRATION.orb) {
     super(config.id, config.position)
@@ -370,6 +476,7 @@ export class OrbEntity extends SceneEntity {
 
   update(timeSeconds: number, reducedMotion = false): void {
     const time = this.updateDrift(timeSeconds, reducedMotion, this.motion)
+    this.time = time
     const pulse = Math.sin(time * this.motion.pulseFrequency) * this.motion.pulseAmplitude
     const scale = 1 + pulse
     this.scale[0] = scale
@@ -401,11 +508,17 @@ export class CubeEntity extends SceneEntity {
 export function createCalibrationEntities(config: CalibrationConfig = DEFAULT_CALIBRATION): {
   orb: OrbEntity
   cube: CubeEntity
+  agents: OrbEntity[]
+  artifacts: CubeEntity[]
   connections: ConnectionEntity[]
 } {
+  const agentConfigs = config.agents ?? DEMO_AGENT_CONFIGS
+  const artifactConfigs = config.artifacts ?? DEMO_ARTIFACT_CONFIGS
   return {
     orb: new OrbEntity(config.orb),
     cube: new CubeEntity(config.cube),
+    agents: agentConfigs.map((agent) => new OrbEntity(agent)),
+    artifacts: artifactConfigs.map((artifact) => new CubeEntity(artifact)),
     connections: config.connections.map((connection) => new ConnectionEntity(connection)),
   }
 }

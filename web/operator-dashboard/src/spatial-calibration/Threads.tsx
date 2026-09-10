@@ -4,7 +4,7 @@ import { useFrame } from '@react-three/fiber'
 import { AdditiveBlending, Color, CubicBezierCurve3, InstancedMesh, Object3D, Vector3 } from 'three'
 import type { Line2 } from 'three-stdlib'
 
-import type { ConnectionEntity, CubeEntity, OrbEntity, Vector3Tuple } from './model'
+import type { ConnectionEntity, Vector3Tuple } from './model'
 
 const segmentCount = 48
 const trailSamples = 40
@@ -75,7 +75,7 @@ function ThreadConnection({ entity, sourcePosition, targetPosition }: ThreadConn
   })
 
   return <group name={entity.id}>
-    <Line ref={coreLine} points={initialPoints} color={entity.color} lineWidth={1} transparent opacity={0.74}
+    <Line ref={coreLine} points={initialPoints} color={entity.color} lineWidth={1} transparent opacity={entity.opacity}
       blending={AdditiveBlending} depthWrite={false} toneMapped={false} renderOrder={1} />
     <instancedMesh ref={photonTrail} args={[undefined, undefined, trailSamples]} frustumCulled={false} renderOrder={2}>
       <sphereGeometry args={[1, 10, 8]} />
@@ -86,22 +86,16 @@ function ThreadConnection({ entity, sourcePosition, targetPosition }: ThreadConn
 
 export type SpatialThreadsProps = {
   connections: ReadonlyArray<ConnectionEntity>
-  orb: OrbEntity
-  cube: CubeEntity
-  endpoint: { id: string; position: Vector3Tuple }
+  positions: ReadonlyMap<string, Vector3Tuple>
 }
 
-export function SpatialThreads({ connections, orb, cube, endpoint }: SpatialThreadsProps) {
-  const targetPositions = useMemo(() => new Map<string, Vector3Tuple>([
-    [cube.id, cube.position],
-    [endpoint.id, endpoint.position],
-  ]), [cube, endpoint])
-
+export function SpatialThreads({ connections, positions }: SpatialThreadsProps) {
   return <group name="spatial-connections">
     {connections.map((connection) => {
-      const targetPosition = targetPositions.get(connection.targetId)
-      if (!targetPosition || connection.sourceId !== orb.id) return null
-      return <ThreadConnection key={connection.id} entity={connection} sourcePosition={orb.position} targetPosition={targetPosition} />
+      const sourcePosition = positions.get(connection.sourceId)
+      const targetPosition = positions.get(connection.targetId)
+      if (!sourcePosition || !targetPosition) return null
+      return <ThreadConnection key={connection.id} entity={connection} sourcePosition={sourcePosition} targetPosition={targetPosition} />
     })}
   </group>
 }

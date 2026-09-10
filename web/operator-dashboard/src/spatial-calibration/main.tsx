@@ -33,12 +33,12 @@ function App() {
     return () => { query.removeEventListener('change', motion); document.removeEventListener('visibilitychange', visibility) }
   }, [])
   return <main className="pearl-study" data-scene-ready={ready}>
-    <h1 className="sr-only">AiDN. Основной агент, артефакт диалога и солнечный эндпоинт</h1>
+    <h1 className="sr-only">AiDN. Пространственный граф основного агента, субагентов, артефактов и эндпоинтов</h1>
     <SceneBoundary>
-      <Canvas camera={{ position: [0.2, 3.15, 9.8], fov: 33, near: 0.1, far: 180 }}
+      <Canvas camera={{ position: [0.15, 3.5, 10.8], fov: 33, near: 0.1, far: 180 }}
         dpr={1} frameloop={hidden ? 'never' : 'demand'}
         gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
-        aria-label="Шар — основной агент, стеклянный куб — артефакт диалога. Маленькое солнце с короной и тремя спутниками — эндпоинт. Меняйте ракурс перетаскиванием, нажмите объект для приближения."
+        aria-label="Шар — основной агент; шесть цветных шаров — субагенты; стеклянные кубы — кластеры артефактов; маленькие солнца с коронами — эндпоинты. Меняйте ракурс перетаскиванием, нажмите объект для приближения."
         fallback={<div className="scene-message" role="alert">Для этой сцены нужен браузер с поддержкой WebGL 2.</div>}>
         <Suspense fallback={null}>
           <CalibrationScene paused={paused} reducedMotion={reducedMotion} resetKey={resetKey} onReady={onReady} />

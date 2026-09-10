@@ -95,13 +95,14 @@ export function createAtmosphereMaterial() {
 }
 
 /** Thin glass finish: clear face centers, softly luminous physical edge regions. */
-export function createGlassFinish(size: number) {
+export function createGlassFinish(size: number, accentColor = '#9eb9e0') {
   return new ShaderMaterial({
     transparent: true, depthWrite: false, side: DoubleSide,
-    uniforms: { uHalfSize: { value: size / 2 } },
+    uniforms: { uHalfSize: { value: size / 2 }, uAccent: { value: new Color(accentColor) } },
     vertexShader: vertex,
     fragmentShader: `
       uniform float uHalfSize;
+      uniform vec3 uAccent;
       varying vec3 vNormalWorld;
       varying vec3 vWorld;
       varying vec3 vLocal;
@@ -116,7 +117,8 @@ export function createGlassFinish(size: number) {
         float softbox = pow(max(dot(r,normalize(vec3(-0.6,0.8,0.9))),0.0),12.0);
         float cyan = max(dot(n,normalize(vec3(-1.0,0.2,0.6))),0.0);
         float peach = max(dot(n,normalize(vec3(1.0,0.4,0.1))),0.0);
-        vec3 tint = mix(vec3(0.46,0.52,0.74),vec3(0.30,0.63,0.80),cyan);
+        vec3 accent = mix(vec3(0.46,0.52,0.74), uAccent, 0.68);
+        vec3 tint = mix(accent,vec3(0.30,0.63,0.80),cyan);
         tint = mix(tint,vec3(0.84,0.60,0.55),peach*0.6);
         float front = smoothstep(0.04, 0.92, max(dot(n,v), 0.0));
         vec3 glass = mix(tint * mix(0.48, 0.84, front), vec3(1.25), edge*0.9);
