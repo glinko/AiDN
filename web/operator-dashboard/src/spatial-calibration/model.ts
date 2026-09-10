@@ -181,7 +181,7 @@ export interface CalibrationConfig {
 
 /** A local visual preset: it carries no runtime or Node binding. */
 export const DEFAULT_CALIBRATION: CalibrationConfig = {
-  camera: { position: [0.15, 3.5, 10.8], compactPosition: [0.15, 4.25, 20.5], target: [0.1, 1.7, 0], fov: 33, near: 0.1, far: 180 },
+  camera: { position: [0.15, 3.5, 11.8], compactPosition: [0.15, 3.5, 11.8], target: [0.1, 1.7, 0], fov: 33, near: 0.1, far: 180 },
   environment: {
     background: '#f4f6fb',
     mapBackground: '#e3eaf7',

@@ -35,6 +35,11 @@ type CameraFocus =
   | { kind: 'object'; id: FocusableId; distance: number; direction: Vector3; targetOffset: Vector3 }
   | { kind: 'home'; position: Vector3; target: Vector3 }
 
+// Keep the graph's authored world positions (and therefore its generous spacing)
+// while making every node a little lighter in the frame. The same factor is used
+// for hit/focus radii so the interaction affordance stays aligned with the visuals.
+const NODE_SCALE = 0.86
+
 function FocusMarker({
   position,
   radius,
@@ -72,15 +77,15 @@ function AgentNode({ entity, onSelect }: { entity: OrbEntity; onSelect: () => vo
   return <group ref={group} position={entity.position} scale={entity.scale} name={entity.id}
     onClick={(event) => { event.stopPropagation(); onSelect() }}>
     <mesh material={pearl} renderOrder={2}>
-      <sphereGeometry args={[entity.radius, 40, 28]} />
+      <sphereGeometry args={[entity.radius * NODE_SCALE, 40, 28]} />
     </mesh>
     <mesh renderOrder={1}>
-      <sphereGeometry args={[entity.radius * 0.98, 40, 28]} />
+      <sphereGeometry args={[entity.radius * 0.98 * NODE_SCALE, 40, 28]} />
       <meshPhysicalMaterial {...entity.material} color={entity.colorPulse.color} />
     </mesh>
     <Billboard>
-      <mesh material={halo} position={[0, 0, -entity.radius * 0.08]}>
-        <planeGeometry args={[entity.radius * 3.1, entity.radius * 3.1]} />
+      <mesh material={halo} position={[0, 0, -entity.radius * 0.08 * NODE_SCALE]}>
+        <planeGeometry args={[entity.radius * 3.1 * NODE_SCALE, entity.radius * 3.1 * NODE_SCALE]} />
       </mesh>
     </Billboard>
   </group>
@@ -88,7 +93,7 @@ function AgentNode({ entity, onSelect }: { entity: OrbEntity; onSelect: () => vo
 
 function ArtifactNode({ entity, onSelect, featured = false }: { entity: CubeEntity; onSelect: () => void; featured?: boolean }) {
   const group = useRef<Group>(null)
-  const renderSize = entity.size * (featured ? 0.82 : 1)
+  const renderSize = entity.size * (featured ? 0.82 : 1) * NODE_SCALE
   const surface = useMemo(() => createGlassFinish(renderSize, entity.material.color), [entity.material.color, renderSize])
   useEffect(() => () => surface.dispose(), [surface])
   useFrame(() => {
@@ -231,17 +236,17 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
   }, [entities, endpoints])
   const focusTargets = useMemo(() => {
     const targets = new Map<string, FocusTarget>([
-      [entities.orb.id, { position: entities.orb.position, radius: 1.14, color: '#b8e3ff', distance: 4.4 }],
-      [entities.cube.id, { position: entities.cube.position, radius: 0.62, color: '#b9d8ff', distance: 3.7 }],
+      [entities.orb.id, { position: entities.orb.position, radius: 1.14 * NODE_SCALE, color: '#b8e3ff', distance: 4.4 }],
+      [entities.cube.id, { position: entities.cube.position, radius: 0.62 * NODE_SCALE, color: '#b9d8ff', distance: 3.7 }],
     ])
     entities.agents.forEach((agent) => targets.set(agent.id, {
-      position: agent.position, radius: agent.radius * 1.42, color: agent.colorPulse.color, distance: 2.55,
+      position: agent.position, radius: agent.radius * 1.42 * NODE_SCALE, color: agent.colorPulse.color, distance: 2.55,
     }))
     entities.artifacts.forEach((artifact) => targets.set(artifact.id, {
-      position: artifact.position, radius: artifact.size * 0.70, color: artifact.material.color, distance: 2.35,
+      position: artifact.position, radius: artifact.size * 0.70 * NODE_SCALE, color: artifact.material.color, distance: 2.35,
     }))
     endpoints.forEach((endpoint) => targets.set(endpoint.id, {
-      position: endpoint.position, radius: endpoint.config.radius * 1.72, color: endpoint.config.coronaColor, distance: 2.55,
+      position: endpoint.position, radius: endpoint.config.radius * 1.72 * NODE_SCALE, color: endpoint.config.coronaColor, distance: 2.55,
     }))
     return targets
   }, [entities, endpoints])
@@ -406,15 +411,15 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
     <group ref={orbGroup} position={entities.orb.position} scale={entities.orb.scale} name="primary-orb"
       onClick={(event) => { event.stopPropagation(); focusObject(entities.orb.id) }}>
       <mesh scale={1.002} material={pearl} renderOrder={2}>
-        <sphereGeometry args={[entities.orb.radius, 64, 48]} />
+        <sphereGeometry args={[entities.orb.radius * NODE_SCALE, 64, 48]} />
       </mesh>
       <mesh>
-        <sphereGeometry args={[entities.orb.radius, 64, 48]} />
+        <sphereGeometry args={[entities.orb.radius * NODE_SCALE, 64, 48]} />
         <meshPhysicalMaterial {...entities.orb.material} />
       </mesh>
       <Billboard>
-        <mesh position={[0, 0, -0.04]} material={halo}>
-          <planeGeometry args={[2.94, 2.94]} />
+        <mesh position={[0, 0, -0.04 * NODE_SCALE]} material={halo}>
+          <planeGeometry args={[2.94 * NODE_SCALE, 2.94 * NODE_SCALE]} />
         </mesh>
       </Billboard>
     </group>
@@ -424,18 +429,19 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
 
     {endpoints.map((endpoint) => <group key={endpoint.id} name={endpoint.id}
       onClick={(event) => { event.stopPropagation(); focusObject(endpoint.id) }}>
-      <SolarEndpoint entity={endpoint} />
+      <SolarEndpoint entity={endpoint} visualScale={NODE_SCALE} />
     </group>)}
     <SpatialThreads connections={connections} positions={positions} />
     <FocusMarker
       position={selectedTarget?.position ?? entities.orb.position}
-      radius={selectedTarget?.radius ?? 1.14}
+      radius={selectedTarget?.radius ?? 1.14 * NODE_SCALE}
       color={selectedTarget?.color ?? '#b8e3ff'}
       visible={Boolean(selectedTarget)}
     />
-    <OrbitControls ref={controls} makeDefault enablePan={false} enableZoom={false}
+    <OrbitControls ref={controls} makeDefault enablePan={false} enableZoom
+      minDistance={6.0} maxDistance={18.0} zoomSpeed={0.8}
       enableDamping={!reducedMotion} dampingFactor={0.06} rotateSpeed={0.32}
-      minPolarAngle={1.12} maxPolarAngle={1.5} minAzimuthAngle={-0.45} maxAzimuthAngle={0.45}
+      minPolarAngle={0.80} maxPolarAngle={1.68} minAzimuthAngle={-1.05} maxAzimuthAngle={1.05}
       target={DEFAULT_CALIBRATION.camera.target} />
     <OpticalFinish />
   </>

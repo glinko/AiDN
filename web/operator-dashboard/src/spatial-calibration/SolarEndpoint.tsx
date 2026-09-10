@@ -33,7 +33,7 @@ function createCorona(color: string) {
   })
 }
 
-export function SolarEndpoint({ entity }: { entity: EndpointEntity }) {
+export function SolarEndpoint({ entity, visualScale = 1 }: { entity: EndpointEntity; visualScale?: number }) {
   const group = useRef<Group>(null)
   const meteors = useRef<InstancedMesh>(null)
   const corona = useMemo(() => createCorona(entity.config.coronaColor), [entity])
@@ -61,7 +61,7 @@ export function SolarEndpoint({ entity }: { entity: EndpointEntity }) {
     meteors.current.instanceMatrix.needsUpdate = true
     if (meteors.current.instanceColor) meteors.current.instanceColor.needsUpdate = true
   })
-  return <group ref={group} position={entity.position} name="solar-endpoint">
+  return <group ref={group} position={entity.position} scale={visualScale} name="solar-endpoint">
     <mesh>
       <sphereGeometry args={[entity.config.radius, 48, 32]} />
       <meshPhysicalMaterial color={entity.config.coreColor} emissive={entity.config.coreColor} emissiveIntensity={0.32}
