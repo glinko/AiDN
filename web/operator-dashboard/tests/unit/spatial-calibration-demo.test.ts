@@ -24,6 +24,15 @@ describe('spatial graph demonstration preset', () => {
     expect(new Set(artifacts.map((artifact) => artifact.motion.yawSpeed)).size).toBeGreaterThan(1)
   })
 
+  it('keeps the artifact field broad in X/Z with a shared hover height', () => {
+    const { cube, artifacts } = createCalibrationEntities()
+    const field = [cube, ...artifacts]
+    const heights = field.map((artifact) => artifact.position[1])
+    const depths = field.map((artifact) => artifact.position[2])
+    expect(Math.max(...heights) - Math.min(...heights)).toBeLessThan(0.2)
+    expect(Math.max(...depths) - Math.min(...depths)).toBeGreaterThan(1.8)
+  })
+
   it('keeps endpoint colors and motion isolated per node', () => {
     expect(DEMO_ENDPOINT_CONFIGS).toHaveLength(4)
     const endpoints = DEMO_ENDPOINT_CONFIGS.map((config) => new EndpointEntity(config))
