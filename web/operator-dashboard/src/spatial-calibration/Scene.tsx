@@ -14,12 +14,14 @@ import { MilkGround } from './MilkGround'
 import { SolarEndpoint } from './SolarEndpoint'
 import { DEMO_ENDPOINT_CONFIGS, EndpointEntity } from './endpoint'
 import { SpatialThreads } from './Threads'
+import type { DashboardSpatialSceneData } from '@/spatial/data'
 
 export type SceneProps = {
   paused: boolean
   reducedMotion: boolean
   resetKey: number
   onReady: () => void
+  sceneData?: DashboardSpatialSceneData | null
 }
 
 type FocusableId = string
@@ -218,12 +220,14 @@ function OpticalFinish() {
   return null
 }
 
-export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: SceneProps) {
+export function CalibrationScene({ paused, reducedMotion, resetKey, onReady, sceneData }: SceneProps) {
   const { size, camera, gl, invalidate } = useThree()
   const compact = size.width < 680
-  const entities = useMemo(() => createCalibrationEntities(), [])
-  const endpoints = useMemo(() => DEMO_ENDPOINT_CONFIGS.map((config) => new EndpointEntity(config)), [])
-  const connections = useMemo(() => createDemoConnections(entities, endpoints), [entities, endpoints])
+  const visualConfig = sceneData?.config ?? DEFAULT_CALIBRATION
+  const endpointConfigs = sceneData?.endpoints ?? DEMO_ENDPOINT_CONFIGS
+  const entities = useMemo(() => createCalibrationEntities(visualConfig), [visualConfig])
+  const endpoints = useMemo(() => endpointConfigs.map((config) => new EndpointEntity(config)), [endpointConfigs])
+  const connections = useMemo(() => sceneData ? entities.connections : createDemoConnections(entities, endpoints), [entities, endpoints, sceneData])
   const positions = useMemo(() => {
     const entries: Array<[string, Vector3Tuple]> = [
       [entities.orb.id, entities.orb.position],
@@ -260,7 +264,7 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
   const focusDirection = useMemo(() => new Vector3(), [])
   const desiredPosition = useMemo(() => new Vector3(), [])
   const desiredTarget = useMemo(() => new Vector3(), [])
-  const homeTarget = useMemo(() => new Vector3().fromArray(DEFAULT_CALIBRATION.camera.target), [])
+  const homeTarget = useMemo(() => new Vector3().fromArray(visualConfig.camera.target), [visualConfig])
   const pearl = useMemo(() => createPearlMaterial(
     0.70,
     entities.orb.colorPulse.color,
@@ -279,7 +283,7 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
     if (activeFocus?.kind === 'object' && activeFocus.id === id) {
       cameraFocus.current = {
         kind: 'home',
-        position: new Vector3().fromArray(compact ? DEFAULT_CALIBRATION.camera.compactPosition : DEFAULT_CALIBRATION.camera.position),
+        position: new Vector3().fromArray(compact ? visualConfig.camera.compactPosition : visualConfig.camera.position),
         target: homeTarget.clone(),
       }
       setSelectedId(null)
@@ -300,7 +304,7 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
     }
     setSelectedId(id)
     invalidate()
-  }, [camera, compact, focusDirection, focusTargets, homeTarget, invalidate])
+  }, [camera, compact, focusDirection, focusTargets, homeTarget, invalidate, visualConfig])
 
   const cancelFocus = useCallback(() => {
     if (!cameraFocus.current) return
@@ -355,12 +359,12 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
     // Keep both silhouettes in view on portrait screens without scaling objects independently.
     cameraFocus.current = null
     setSelectedId(null)
-    camera.position.fromArray(compact ? DEFAULT_CALIBRATION.camera.compactPosition : DEFAULT_CALIBRATION.camera.position)
-    camera.lookAt(...DEFAULT_CALIBRATION.camera.target)
-    controls.current?.target.fromArray(DEFAULT_CALIBRATION.camera.target)
+    camera.position.fromArray(compact ? visualConfig.camera.compactPosition : visualConfig.camera.position)
+    camera.lookAt(...visualConfig.camera.target)
+    controls.current?.target.fromArray(visualConfig.camera.target)
     controls.current?.update()
     invalidate()
-  }, [camera, compact, resetKey, invalidate])
+  }, [camera, compact, invalidate, resetKey, visualConfig])
 
   useFrame((_, delta) => {
     if (!paused && !reducedMotion) time.current += Math.min(delta, 0.05)
@@ -442,7 +446,7 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady }: S
       minDistance={6.0} maxDistance={18.0} zoomSpeed={0.8}
       enableDamping={!reducedMotion} dampingFactor={0.06} rotateSpeed={0.32}
       minPolarAngle={0.80} maxPolarAngle={1.68} minAzimuthAngle={-1.05} maxAzimuthAngle={1.05}
-      target={DEFAULT_CALIBRATION.camera.target} />
+      target={visualConfig.camera.target} />
     <OpticalFinish />
   </>
 }

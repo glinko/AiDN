@@ -31,12 +31,20 @@ import type { SpatialWorkspaceRepository } from '../workspace/repository'
 
 export type SpatialWorkspaceDataMode = 'mock-real' | 'remote' | 'offline' | 'empty' | 'malformed'
 
+export type SpatialWorkspaceLoader = (scope: SpatialNodeScope, signal?: AbortSignal) => Promise<SpatialWorkspaceSnapshot>
+export type SpatialNodeStatusLoader = (scope: SpatialNodeScope, signal?: AbortSignal) => Promise<SpatialNodeStatus>
+
 export type UseSpatialWorkspaceDataOptions = {
   scope?: SpatialNodeScope
   mode?: SpatialWorkspaceDataMode
   profile?: SpatialQualityProfile
   repository?: SpatialWorkspaceRepository
   clients?: SpatialDomainClients
+  /** Production adapters may source canonical contracts from a legacy read-model. */
+  workspaceLoader?: SpatialWorkspaceLoader
+  statusLoader?: SpatialNodeStatusLoader
+  /** Optional polling interval for a live Node-backed surface. */
+  pollIntervalMs?: number
   eventStream?: readonly unknown[]
 }
 
@@ -195,25 +203,29 @@ export function useSpatialWorkspaceData(options: UseSpatialWorkspaceDataOptions 
       if (mode === 'malformed') throw new SpatialApiError('malformed', 'Spatial Workspace payload is malformed.', '/operators/spatial/workspace')
       if (mode === 'remote' && options.repository) return options.repository.getSnapshot(scope)
       if (mode === 'remote' && options.clients) return options.clients.workspace.get(scope, signal)
+      if (mode === 'remote' && options.workspaceLoader) return options.workspaceLoader(scope, signal)
       if (mode === 'offline' || mode === 'empty' || mode === 'mock-real') return initialSnapshot
       throw new SpatialApiError('network', 'No Spatial Workspace transport is configured.', '/operators/spatial/workspace')
     },
-    enabled: mode === 'remote' || mode === 'malformed',
+    enabled: mode === 'remote' && Boolean(options.repository || options.clients || options.workspaceLoader) || mode === 'malformed',
     initialData: mode === 'remote' || mode === 'malformed' ? undefined : initialSnapshot,
     retry: false,
     staleTime: 8_000,
+    refetchInterval: mode === 'remote' ? options.pollIntervalMs ?? false : false,
   })
 
   const statusQuery = useQuery({
     queryKey: spatialQueryKeys.nodeStatus(scope),
     queryFn: async ({ signal }) => {
       if (mode === 'remote' && options.clients) return options.clients.nodeStatus.get(scope, signal)
+      if (mode === 'remote' && options.statusLoader) return options.statusLoader(scope, signal)
       return initialStatus
     },
-    enabled: mode === 'remote' && Boolean(options.clients),
+    enabled: mode === 'remote' && Boolean(options.clients || options.statusLoader),
     initialData: mode === 'remote' ? undefined : initialStatus,
     retry: false,
     staleTime: 8_000,
+    refetchInterval: mode === 'remote' ? options.pollIntervalMs ?? false : false,
   })
 
   const [liveSnapshot, setLiveSnapshot] = useState<SpatialWorkspaceSnapshot | null>(query.data ?? null)

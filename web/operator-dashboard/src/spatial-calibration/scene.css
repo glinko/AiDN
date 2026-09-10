@@ -4,6 +4,12 @@ html, body, #calibration-root, .pearl-study { margin: 0; width: 100%; height: 10
 .pearl-study { position: relative; }
 .pearl-study canvas { display: block; touch-action: none; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+.scene-source { position: absolute; z-index: 2; top: max(24px, env(safe-area-inset-top)); left: max(28px, env(safe-area-inset-left)); display: flex; align-items: flex-start; gap: 9px; padding: 10px 14px; border-radius: 999px; color: #48637a; background: rgba(248,251,255,.58); box-shadow: 0 8px 24px rgba(91,119,148,.05); backdrop-filter: blur(14px); pointer-events: none; }
+.scene-source__dot { width: 8px; height: 8px; margin-top: 4px; flex: 0 0 auto; border-radius: 50%; background: #55ae8d; box-shadow: 0 0 0 4px rgba(85,174,141,.12); }
+.pearl-study[data-scene-source="demo"] .scene-source__dot { background: #d0a761; box-shadow: 0 0 0 4px rgba(208,167,97,.12); }
+.scene-source strong, .scene-source small { display: block; }
+.scene-source strong { font: 600 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .1em; }
+.scene-source small { margin-top: 3px; font-size: 10px; color: #75869a; }
 .scene-controls { position: absolute; bottom: max(26px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 22px; white-space: nowrap; }
 .scene-controls span { font-size: 12px; color: #626f82; }
 .scene-controls > div { display: flex; gap: 6px; }
@@ -15,5 +21,5 @@ button:disabled { opacity: .45; cursor: default; }
 .loading, .scene-message { position: absolute; top: 45%; left: 50%; transform: translate(-50%,-50%); text-align: center; font-size: 14px; }
 .scene-message { width: min(90vw,420px); }
 .scene-message button { padding: 12px 20px; border-radius: 12px; }
-@media (max-width: 600px) { .scene-controls { gap: 14px; bottom: max(20px, env(safe-area-inset-bottom)); } .scene-controls span { font-size: 11px; } }
+@media (max-width: 600px) { .scene-source { top: max(16px, env(safe-area-inset-top)); left: max(16px, env(safe-area-inset-left)); padding: 8px 11px; } .scene-source strong { font-size: 10px; } .scene-source small { font-size: 9px; } .scene-controls { gap: 14px; bottom: max(20px, env(safe-area-inset-bottom)); } .scene-controls span { font-size: 11px; } }
 @media (prefers-reduced-motion: reduce) { button { transition: none; } }

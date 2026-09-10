@@ -16,10 +16,21 @@ export {
 } from './transport'
 export { createSpatialDomainClients, type SpatialDomainClients, type SpatialHookSummary, type SpatialResourceSummary } from './clients'
 export {
+  createDashboardSpatialLoaders,
+  createDashboardSpatialScene,
+  createDashboardSpatialSnapshotForPayload,
+  type DashboardSpatialAdapterOptions,
+  type DashboardSpatialLoaders,
+  type DashboardSpatialSceneData,
+  type DashboardSpatialSceneSource,
+} from './dashboard-adapter'
+export {
   createMockSpatialWorkspaceData,
   useSpatialWorkspaceData,
   type SpatialWorkspaceData,
   type SpatialWorkspaceDataMode,
+  type SpatialWorkspaceLoader,
+  type SpatialNodeStatusLoader,
   type UseSpatialWorkspaceDataOptions,
 } from './use-spatial-workspace'
 export {

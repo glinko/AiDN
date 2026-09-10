@@ -1,9 +1,28 @@
-import { Component, Suspense, useCallback, useEffect, useState, type ReactNode } from 'react'
+import { Component, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Canvas } from '@react-three/fiber'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Pause, Play, RotateCcw } from 'lucide-react'
+import {
+  createDashboardSpatialLoaders,
+  createDashboardSpatialScene,
+  useSpatialWorkspaceData,
+} from '@/spatial/data'
 import { CalibrationScene } from './Scene'
 import './scene.css'
+
+const spatialCalibrationQueryClient = new QueryClient({
+  defaultOptions: {
+    queries: { retry: false, refetchOnWindowFocus: false },
+  },
+})
+
+const LIVE_SPATIAL_SCOPE = {
+  hypervisor_id: 'local-hypervisor',
+  node_id: import.meta.env.VITE_AIDN_NODE_ID ?? 'gpu-3090',
+} as const
+
+const dashboardSpatialLoaders = createDashboardSpatialLoaders()
 
 class SceneBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false }
@@ -17,13 +36,36 @@ class SceneBoundary extends Component<{ children: ReactNode }, { failed: boolean
   }
 }
 
-function App() {
+function AppContent() {
   const [paused, setPaused] = useState(false)
   const [reducedMotion, setReducedMotion] = useState(() => matchMedia('(prefers-reduced-motion: reduce)').matches)
   const [hidden, setHidden] = useState(document.hidden)
   const [resetKey, setResetKey] = useState(0)
   const [ready, setReady] = useState(false)
   const onReady = useCallback(() => setReady(true), [])
+  const workspaceData = useSpatialWorkspaceData({
+    scope: LIVE_SPATIAL_SCOPE,
+    mode: 'remote',
+    profile: 'desktop',
+    workspaceLoader: dashboardSpatialLoaders.workspace,
+    statusLoader: dashboardSpatialLoaders.status,
+    pollIntervalMs: 15_000,
+  })
+  const sceneData = useMemo(() => workspaceData.snapshot
+    ? createDashboardSpatialScene(workspaceData.snapshot, workspaceData.status, {
+      state: workspaceData.state === 'partial' || workspaceData.status?.partial ? 'partial' : 'live',
+    })
+    : null, [workspaceData.snapshot, workspaceData.state, workspaceData.status])
+  const sourceLabel = sceneData
+    ? `NODE ${sceneData.source.nodeId} · ${sceneData.source.state === 'partial' ? 'PARTIAL' : 'LIVE'}`
+    : workspaceData.isLoading
+      ? 'NODE · LOADING'
+      : 'DEMO FALLBACK'
+  const sourceDetail = sceneData
+    ? `${sceneData.source.endpointCount} endpoints · ${sceneData.source.sessionCount} sessions · ${sceneData.source.bundleCount} bundles`
+    : workspaceData.error
+      ? 'Live read-model unavailable'
+      : 'Preparing live read-model'
   useEffect(() => {
     const query = matchMedia('(prefers-reduced-motion: reduce)')
     const motion = () => setReducedMotion(query.matches)
@@ -32,19 +74,23 @@ function App() {
     document.addEventListener('visibilitychange', visibility)
     return () => { query.removeEventListener('change', motion); document.removeEventListener('visibilitychange', visibility) }
   }, [])
-  return <main className="pearl-study" data-scene-ready={ready}>
+  return <main className="pearl-study" data-scene-ready={ready} data-scene-source={sceneData ? 'live' : 'demo'}>
     <h1 className="sr-only">AiDN. Пространственный граф основного агента, субагентов, артефактов и эндпоинтов</h1>
+    <div className="scene-source" aria-live="polite">
+      <span className="scene-source__dot" aria-hidden="true" />
+      <span><strong>{sourceLabel}</strong><small>{sourceDetail}</small></span>
+    </div>
     <SceneBoundary>
       <Canvas camera={{ position: [-1.05, 3.72, 11.8], fov: 33, near: 0.1, far: 180 }}
         dpr={1} frameloop={hidden ? 'never' : 'demand'}
         gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
-        aria-label="Шар — основной агент; шесть цветных шаров — субагенты; стеклянные кубы — кластеры артефактов; маленькие солнца с коронами — эндпоинты. Меняйте ракурс перетаскиванием, нажмите объект для приближения."
+        aria-label="Шар — основной агент; доступные субагенты отображаются цветными шарами; сессии и bundles — стеклянными кубами; endpoints — маленькими солнцами с коронами. Меняйте ракурс перетаскиванием, нажмите объект для приближения."
         fallback={<div className="scene-message" role="alert">Для этой сцены нужен браузер с поддержкой WebGL 2.</div>}>
         <Suspense fallback={null}>
-          <CalibrationScene paused={paused} reducedMotion={reducedMotion} resetKey={resetKey} onReady={onReady} />
+          <CalibrationScene paused={paused} reducedMotion={reducedMotion} resetKey={resetKey} onReady={onReady} sceneData={sceneData} />
         </Suspense>
       </Canvas>
-      {!ready && <p className="loading" role="status">Подготавливаем свет…</p>}
+      {(!ready || workspaceData.isLoading) && <p className="loading" role="status">{workspaceData.isLoading ? 'Подключаем конфигурацию ноды…' : 'Подготавливаем свет…'}</p>}
     </SceneBoundary>
     <footer className="scene-controls">
       <span>Перетащите · щипок/колесо · нажмите объект</span>
@@ -57,6 +103,10 @@ function App() {
       </div>
     </footer>
   </main>
+}
+
+function App() {
+  return <QueryClientProvider client={spatialCalibrationQueryClient}><AppContent /></QueryClientProvider>
 }
 
 createRoot(document.getElementById('calibration-root')!).render(<App />)
