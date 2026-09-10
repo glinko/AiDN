@@ -78,6 +78,8 @@ function AppContent() {
       : 'Preparing live read-model'
   const voiceLabel = voice.status === 'listening'
     ? 'Слушаю…'
+    : voice.status === 'requesting'
+      ? 'Запрашиваю доступ…'
     : voice.status === 'sending'
       ? 'Отправляю…'
       : voice.status === 'speaking'
@@ -88,12 +90,18 @@ function AppContent() {
   const voiceHint = voice.error
     ?? (voice.status === 'listening'
       ? 'Говорите, я передам сообщение основному агенту.'
+      : voice.status === 'requesting'
+        ? 'Подтвердите доступ к микрофону в окне Chrome.'
       : voice.status === 'sending'
         ? voice.transcript
         : voice.status === 'speaking'
           ? voice.response
           : voice.capabilities.recognition
-            ? 'Нажмите микрофон и обратитесь к основному агенту.'
+            ? voice.response
+              ? `Последний ответ: ${voice.response}`
+              : voice.capabilities.microphone
+                ? 'Нажмите микрофон и обратитесь к основному агенту.'
+                : 'Голосовой ввод требует HTTPS; текущий адрес HTTP не даёт Chrome запросить микрофон.'
             : 'Нажмите на шар агента, чтобы услышать приветствие.')
   useEffect(() => {
     const query = matchMedia('(prefers-reduced-motion: reduce)')
@@ -123,7 +131,7 @@ function AppContent() {
     </SceneBoundary>
     <section className="voice-console" data-voice-state={voice.status} aria-label="Голосовой диалог с основным агентом">
       <button className="voice-console__button" type="button" aria-label={voice.status === 'listening' ? 'Остановить запись' : 'Начать голосовой диалог'}
-        aria-pressed={voice.status === 'listening'} disabled={!voice.capabilities.recognition || voice.status === 'sending' || voice.status === 'speaking'}
+        aria-pressed={voice.status === 'listening' || voice.status === 'requesting'} disabled={!voice.capabilities.recognition || voice.status === 'requesting' || voice.status === 'sending' || voice.status === 'speaking'}
         onClick={() => voice.status === 'listening' ? voice.stopListening() : voice.startListening()}>
         {voice.status === 'listening' ? <MicOff size={17} /> : voice.status === 'speaking' ? <Volume2 size={17} /> : <Mic size={17} />}
         <span>{voiceLabel}</span>

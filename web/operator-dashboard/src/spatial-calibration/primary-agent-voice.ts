@@ -46,9 +46,11 @@ declare global {
 export type VoiceCapabilities = {
   recognition: boolean
   synthesis: boolean
+  secureContext: boolean
+  microphone: boolean
 }
 
-export type PrimaryAgentVoiceStatus = 'idle' | 'listening' | 'sending' | 'speaking' | 'unsupported' | 'error'
+export type PrimaryAgentVoiceStatus = 'idle' | 'requesting' | 'listening' | 'sending' | 'speaking' | 'unsupported' | 'error'
 
 export type PrimaryAgentVoice = {
   capabilities: VoiceCapabilities
@@ -63,10 +65,13 @@ export type PrimaryAgentVoice = {
 }
 
 export function detectVoiceCapabilities(): VoiceCapabilities {
-  if (typeof window === 'undefined') return { recognition: false, synthesis: false }
+  if (typeof window === 'undefined') return { recognition: false, synthesis: false, secureContext: false, microphone: false }
+  const secureContext = window.isSecureContext === true
   return {
     recognition: typeof window.SpeechRecognition === 'function' || typeof window.webkitSpeechRecognition === 'function',
     synthesis: typeof window.speechSynthesis !== 'undefined' && typeof window.SpeechSynthesisUtterance === 'function',
+    secureContext,
+    microphone: secureContext && typeof navigator.mediaDevices?.getUserMedia === 'function',
   }
 }
 
@@ -184,10 +189,12 @@ export function usePrimaryAgentVoice(): PrimaryAgentVoice {
     }
 
     window.speechSynthesis.cancel()
+    window.speechSynthesis.resume()
     const utterance = new SpeechSynthesisUtterance(normalized)
     utterance.lang = 'ru-RU'
     utterance.rate = 0.95
     utterance.pitch = 1
+    utterance.volume = 1
     utterance.onstart = () => { if (mountedRef.current) setStatus('speaking') }
     utterance.onend = () => { if (mountedRef.current) setStatus('idle') }
     utterance.onerror = () => {
@@ -196,6 +203,7 @@ export function usePrimaryAgentVoice(): PrimaryAgentVoice {
       setError('Не удалось озвучить ответ агента.')
     }
     setError(null)
+    setResponse(normalized)
     setStatus('speaking')
     window.speechSynthesis.speak(utterance)
   }, [capabilities.synthesis])
@@ -276,10 +284,26 @@ export function usePrimaryAgentVoice(): PrimaryAgentVoice {
       setError('Голосовой ввод недоступен в этом браузере.')
       return
     }
-    if (status === 'listening' || status === 'sending' || status === 'speaking') return
+    if (status === 'requesting' || status === 'listening' || status === 'sending' || status === 'speaking') return
     setError(null)
     setTranscript('')
     submittedTranscriptRef.current = null
+
+    if (!capabilities.secureContext || !capabilities.microphone) {
+      setStatus('error')
+      setError('Chrome блокирует микрофон на HTTP. Откройте эту страницу по HTTPS и разрешите доступ к микрофону.')
+      return
+    }
+
+    setStatus('requesting')
+    const permission = navigator.mediaDevices.getUserMedia({ audio: true })
+    permission.then((stream) => stream.getTracks().forEach((track) => track.stop())).catch(() => {
+      if (mountedRef.current) {
+        try { recognition.abort() } catch { /* recognition may already have ended */ }
+        setStatus('error')
+        setError('Разрешите доступ к микрофону для голосового диалога.')
+      }
+    })
     try {
       recognition.start()
       setStatus('listening')
@@ -287,7 +311,7 @@ export function usePrimaryAgentVoice(): PrimaryAgentVoice {
       setStatus('error')
       setError('Не удалось включить микрофон. Нажмите кнопку ещё раз.')
     }
-  }, [capabilities.recognition, status])
+  }, [capabilities.microphone, capabilities.recognition, capabilities.secureContext, status])
 
   const stopListening = useCallback(() => {
     const recognition = recognitionRef.current
