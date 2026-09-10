@@ -21,6 +21,7 @@ export type SceneProps = {
   reducedMotion: boolean
   resetKey: number
   onReady: () => void
+  onPrimarySelect?: () => void
   sceneData?: DashboardSpatialSceneData | null
 }
 
@@ -220,7 +221,7 @@ function OpticalFinish() {
   return null
 }
 
-export function CalibrationScene({ paused, reducedMotion, resetKey, onReady, sceneData }: SceneProps) {
+export function CalibrationScene({ paused, reducedMotion, resetKey, onReady, onPrimarySelect, sceneData }: SceneProps) {
   const { size, camera, gl, invalidate } = useThree()
   const compact = size.width < 680
   const visualConfig = sceneData?.config ?? DEFAULT_CALIBRATION
@@ -413,7 +414,7 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady, sce
     <Penumbra x={1.34} z={0.72} scale={[1.20, 0.56, 1]} />
 
     <group ref={orbGroup} position={entities.orb.position} scale={entities.orb.scale} name="primary-orb"
-      onClick={(event) => { event.stopPropagation(); focusObject(entities.orb.id) }}>
+      onClick={(event) => { event.stopPropagation(); focusObject(entities.orb.id); onPrimarySelect?.() }}>
       <mesh scale={1.002} material={pearl} renderOrder={2}>
         <sphereGeometry args={[entities.orb.radius * NODE_SCALE, 64, 48]} />
       </mesh>
