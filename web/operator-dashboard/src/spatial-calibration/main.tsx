@@ -35,7 +35,7 @@ function App() {
   return <main className="pearl-study" data-scene-ready={ready}>
     <h1 className="sr-only">AiDN. Пространственный граф основного агента, субагентов, артефактов и эндпоинтов</h1>
     <SceneBoundary>
-      <Canvas camera={{ position: [0.15, 3.5, 11.8], fov: 33, near: 0.1, far: 180 }}
+      <Canvas camera={{ position: [-1.05, 3.72, 11.8], fov: 33, near: 0.1, far: 180 }}
         dpr={1} frameloop={hidden ? 'never' : 'demand'}
         gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
         aria-label="Шар — основной агент; шесть цветных шаров — субагенты; стеклянные кубы — кластеры артефактов; маленькие солнца с коронами — эндпоинты. Меняйте ракурс перетаскиванием, нажмите объект для приближения."
