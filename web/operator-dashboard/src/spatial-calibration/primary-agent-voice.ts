@@ -7,7 +7,7 @@ export const PRIMARY_AGENT_WELCOME = 'Привет! Чем займёмся се
 
 const DELIVERY_ACK = 'Сообщение отправлено основному агенту. Ответ пока не пришёл.'
 const DEFAULT_POLL_INTERVAL_MS = 500
-const DEFAULT_REPLY_TIMEOUT_MS = 6_000
+const DEFAULT_REPLY_TIMEOUT_MS = 45_000
 
 type SpeechRecognitionAlternativeLike = { transcript?: string; confidence?: number }
 type SpeechRecognitionResultLike = {
@@ -178,16 +178,38 @@ export function usePrimaryAgentVoice(): PrimaryAgentVoice {
   const submittedTranscriptRef = useRef<string | null>(null)
   const mountedRef = useRef(true)
   const submitRef = useRef<(text: string) => Promise<void>>(() => Promise.resolve())
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const audioUrlRef = useRef<string | null>(null)
+  const playbackGenerationRef = useRef(0)
 
-  const speak = useCallback((text: string) => {
-    const normalized = text.trim()
-    if (!normalized || typeof window === 'undefined') return
-    if (!capabilities.synthesis) {
-      setStatus('idle')
-      setError('Озвучивание недоступно в этом браузере.')
+  const releaseAudio = useCallback((expectedGeneration?: number) => {
+    if (expectedGeneration !== undefined && playbackGenerationRef.current !== expectedGeneration) return
+    const audio = audioRef.current
+    if (audio) {
+      audio.onended = null
+      audio.onerror = null
+      audio.pause()
+      audio.removeAttribute('src')
+      try { audio.load() } catch { /* the browser may already have disposed the element */ }
+      audioRef.current = null
+    }
+    const url = audioUrlRef.current
+    if (url && typeof URL !== 'undefined') URL.revokeObjectURL(url)
+    audioUrlRef.current = null
+  }, [])
+
+  const cancelAudio = useCallback(() => {
+    playbackGenerationRef.current += 1
+    releaseAudio()
+  }, [releaseAudio])
+
+  const speakBrowser = useCallback((normalized: string) => {
+    if (typeof window === 'undefined' || !capabilities.synthesis) {
+      setStatus('error')
+      setError('Не удалось озвучить ответ через S2 Pro и браузерный TTS.')
       return
     }
-
+    cancelAudio()
     window.speechSynthesis.cancel()
     window.speechSynthesis.resume()
     const utterance = new SpeechSynthesisUtterance(normalized)
@@ -206,7 +228,56 @@ export function usePrimaryAgentVoice(): PrimaryAgentVoice {
     setResponse(normalized)
     setStatus('speaking')
     window.speechSynthesis.speak(utterance)
-  }, [capabilities.synthesis])
+  }, [cancelAudio, capabilities.synthesis])
+
+  const speak = useCallback((text: string) => {
+    const normalized = text.trim()
+    if (!normalized || typeof window === 'undefined') return
+
+    cancelAudio()
+    window.speechSynthesis?.cancel()
+    const generation = playbackGenerationRef.current
+    setError(null)
+    setResponse(normalized)
+    setStatus('speaking')
+
+    const fallback = () => {
+      if (!mountedRef.current || playbackGenerationRef.current !== generation) return
+      releaseAudio(generation)
+      if (capabilities.synthesis) {
+        speakBrowser(normalized)
+      } else {
+        setStatus('error')
+        setError('Не удалось озвучить ответ через S2 Pro. Проверьте, что TTS runtime запущен на ноде.')
+      }
+    }
+
+    void dashboardApi.synthesizeSpeech(normalized).then(async (blob) => {
+      if (!mountedRef.current || playbackGenerationRef.current !== generation) return
+      if (typeof Audio !== 'function' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+        fallback()
+        return
+      }
+      const url = URL.createObjectURL(blob)
+      audioUrlRef.current = url
+      const audio = new Audio(url)
+      audio.preload = 'auto'
+      audioRef.current = audio
+      audio.onended = () => {
+        if (!mountedRef.current || playbackGenerationRef.current !== generation) return
+        releaseAudio(generation)
+        setStatus('idle')
+      }
+      audio.onerror = fallback
+      try {
+        await audio.play()
+      } catch {
+        fallback()
+      }
+    }).catch(() => {
+      fallback()
+    })
+  }, [cancelAudio, capabilities.synthesis, releaseAudio, speakBrowser])
 
   const submit = useCallback(async (text: string) => {
     const normalized = text.trim()
@@ -231,7 +302,7 @@ export function usePrimaryAgentVoice(): PrimaryAgentVoice {
   useEffect(() => {
     mountedRef.current = true
     const Constructor = capabilities.recognition ? getSpeechRecognitionConstructor() : undefined
-    if (!Constructor) return () => { mountedRef.current = false }
+    if (!Constructor) return () => { mountedRef.current = false; cancelAudio() }
 
     const recognition = new Constructor()
     recognition.lang = 'ru-RU'
@@ -273,9 +344,10 @@ export function usePrimaryAgentVoice(): PrimaryAgentVoice {
       mountedRef.current = false
       recognition.abort()
       recognitionRef.current = null
+      cancelAudio()
       if (typeof window !== 'undefined') window.speechSynthesis?.cancel()
     }
-  }, [capabilities.recognition])
+  }, [cancelAudio, capabilities.recognition])
 
   const startListening = useCallback(() => {
     const recognition = recognitionRef.current
@@ -329,8 +401,9 @@ export function usePrimaryAgentVoice(): PrimaryAgentVoice {
 
   useEffect(() => () => {
     mountedRef.current = false
+    cancelAudio()
     if (typeof window !== 'undefined') window.speechSynthesis?.cancel()
-  }, [])
+  }, [cancelAudio])
 
   return useMemo(() => ({
     capabilities,

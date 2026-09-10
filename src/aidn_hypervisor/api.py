@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import json
@@ -6,7 +7,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -73,6 +74,7 @@ from aidn_hypervisor.runtime_operations_read_models import (
     build_runtime_operations_payload,
 )
 from aidn_hypervisor.service import AllocationUnavailableError, HypervisorService
+from aidn_hypervisor.s2_tts import S2TtsError, synthesize as synthesize_s2_tts
 from aidn_hypervisor.session_application_service import SessionApplicationService
 from aidn_hypervisor.session_read_models import (
     build_operator_sessions_payload,
@@ -196,6 +198,14 @@ class AgentConversationConnectRequest(BaseModel):
 
 class AgentConversationMessageRequest(BaseModel):
     """Bounded text message from the Dashboard to the bound MCP agent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=16_384)
+
+
+class SpeechSynthesisRequest(BaseModel):
+    """Bounded text submitted to the node-local S2 Pro TTS provider."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -2186,6 +2196,25 @@ def build_api_router(
             return service.send_agent_conversation_message(payload.text)
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @router.post("/operators/dashboard/speech/tts")
+    async def operator_dashboard_speech_tts(
+        payload: SpeechSynthesisRequest,
+    ) -> Response:
+        """Synthesize one dashboard reply through the loopback S2 Pro runtime."""
+
+        try:
+            audio = await asyncio.to_thread(synthesize_s2_tts, payload.text)
+        except S2TtsError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
+        return Response(
+            content=audio,
+            media_type="audio/wav",
+            headers={
+                "Cache-Control": "no-store",
+                "X-AiDN-TTS": "s2-pro-q8_0",
+            },
+        )
 
     @router.get("/operators/dashboard/steward/action-policy")
     async def operator_dashboard_steward_action_policy() -> dict:

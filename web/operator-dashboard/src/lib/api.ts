@@ -4,6 +4,7 @@ import { dashboardSchemas, type AgentConversation, type AssistedInstallationActi
 
 const apiRoot = (import.meta.env.VITE_AIDN_API_ROOT ?? '').replace(/\/$/, '')
 const requestTimeoutMs = 15_000
+const speechRequestTimeoutMs = 130_000
 const browserKeyStorageKey = 'aidn.dashboard.browser-key.v1'
 
 function browserKey(): string {
@@ -497,6 +498,51 @@ async function writeDashboard<T>(path: string, init: RequestInit): Promise<T | u
   return payload as T | undefined
 }
 
+async function readDashboardAudio(path: string, init: RequestInit, timeoutMs: number): Promise<Blob> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  const signal = init.signal
+  const abortRequest = () => controller.abort()
+  signal?.addEventListener('abort', abortRequest, { once: true })
+
+  try {
+    const response = await fetch(`${apiRoot}${path}`, {
+      ...init,
+      credentials: 'same-origin',
+      headers: {
+        Accept: 'audio/wav',
+        'X-AiDN-Browser-Key': browserKey(),
+        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(init.headers ?? {}),
+      },
+      signal: controller.signal,
+    })
+    if (!response.ok) {
+      const text = await response.text()
+      let detail = response.statusText
+      try {
+        const payload = text ? JSON.parse(text) as unknown : null
+        if (typeof payload === 'object' && payload !== null && 'detail' in payload) {
+          detail = typeof payload.detail === 'string' ? payload.detail : JSON.stringify(payload.detail)
+        }
+      } catch {
+        if (text.trim()) detail = text.trim().slice(0, 240)
+      }
+      throw new DashboardApiError(`${path} failed: ${detail || 'request rejected'}`, response.status)
+    }
+    return await response.blob()
+  } catch (error) {
+    if (error instanceof DashboardApiError) throw error
+    if (controller.signal.aborted && !signal?.aborted) {
+      throw new DashboardApiError(`${path} did not respond within ${timeoutMs / 1000} seconds.`)
+    }
+    throw new DashboardApiError(error instanceof Error ? error.message : `Unable to load ${path}.`)
+  } finally {
+    clearTimeout(timeout)
+    signal?.removeEventListener('abort', abortRequest)
+  }
+}
+
 export const dashboardApi = {
   home: (signal?: AbortSignal): Promise<DashboardHome> => readDashboard('/operators/dashboard/home', dashboardSchemas.home, signal),
   journey: (signal?: AbortSignal): Promise<JourneyGraph> => readDashboard('/operators/dashboard/journey', dashboardSchemas.journey, signal),
@@ -515,6 +561,7 @@ export const dashboardApi = {
   stewardActionPolicy: (signal?: AbortSignal): Promise<StewardActionPolicy> => readDashboard('/operators/dashboard/steward/action-policy', dashboardSchemas.stewardActionPolicy, signal),
   residentInference: (signal?: AbortSignal): Promise<ResidentInference> => readDashboard('/operators/dashboard/steward/inference', dashboardSchemas.residentInference, signal),
   agentConversation: (signal?: AbortSignal): Promise<AgentConversation> => readDashboard('/operators/dashboard/agent-channel', dashboardSchemas.agentConversation, signal),
+  synthesizeSpeech: (text: string, signal?: AbortSignal): Promise<Blob> => readDashboardAudio('/operators/dashboard/speech/tts', { method: 'POST', body: JSON.stringify({ text }), signal }, speechRequestTimeoutMs),
   installationPlan: (signal?: AbortSignal): Promise<InstallationPlan> => readDashboard('/operators/dashboard/installation-plan', dashboardSchemas.installationPlan, signal),
   testnetParticipation: (signal?: AbortSignal): Promise<TestnetParticipationDashboard> => readDashboard('/operators/dashboard/testnet-participation', testnetParticipationDashboardSchema, signal),
   installs: (signal?: AbortSignal): Promise<ModelInstallWorkspace> => readDashboard('/operators/dashboard/installs', modelInstallWorkspaceSchema, signal),

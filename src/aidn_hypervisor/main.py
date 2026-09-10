@@ -747,6 +747,13 @@ def _is_validator_consensus_write_path(path: str, method: str | None = None) -> 
         and (method is None or method == "POST")
     ):
         return True
+    if (
+        parts == ["operators", "dashboard", "speech", "tts"]
+        and (method is None or method == "POST")
+    ):
+        # Local speech synthesis only calls the node's loopback provider and
+        # returns ephemeral audio; it does not create or settle Ledger state.
+        return True
     if parts == ["operators", "dashboard", "access", "operations", "resources", "probe"]:
         return True
     if (
