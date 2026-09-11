@@ -147,6 +147,24 @@ def _notification_turn_id(params: Mapping[str, Any]) -> str | None:
     return nested_turn_id if isinstance(nested_turn_id, str) and nested_turn_id else None
 
 
+def _agent_message_delta(notification: Mapping[str, Any]) -> tuple[str, str] | None:
+    """Extract one streamed app-server agent-message delta.
+
+    Codex app-server keeps transcript deltas separate from the final
+    ``item/completed`` notification. The item id is required because a turn
+    can contain more than one assistant message around tool calls.
+    """
+
+    if notification.get("method") != "item/agentMessage/delta":
+        return None
+    params = _as_dict(notification.get("params"))
+    item_id = params.get("itemId")
+    delta = params.get("delta")
+    if not isinstance(item_id, str) or not item_id or not isinstance(delta, str) or not delta:
+        return None
+    return item_id, delta
+
+
 def extract_operator_messages(payload: object) -> list[dict[str, Any]]:
     """Select only operator-chat events from an AiDN event inbox response."""
 
@@ -441,6 +459,7 @@ class CodexAgentBridge:
         self._mcp_url = mcp_url
         self._mcp = McpRemoteClient(url=mcp_url, bearer_token=mcp_token)
         self._workspace = workspace
+        self._app_server_process: JsonLineRpcProcess | None = None
 
     def _app_server(self, *, configure_mcp: bool = True) -> JsonLineRpcProcess:
         self._codex_home.mkdir(parents=True, exist_ok=True)
@@ -455,6 +474,42 @@ class CodexAgentBridge:
         )
         process.notification("initialized")
         return process
+
+    def _relay_app_server(self) -> JsonLineRpcProcess:
+        """Keep one app-server process for the lifetime of the relay.
+
+        Starting a fresh Codex process for every operator message repeats MCP
+        discovery and model setup. A persistent process keeps durable thread
+        mappings intact and removes that fixed latency from every turn.
+        """
+
+        if self._app_server_process is None:
+            self._app_server_process = self._app_server()
+        return self._app_server_process
+
+    def close(self) -> None:
+        process = self._app_server_process
+        self._app_server_process = None
+        if process is not None:
+            process.close()
+        self._mcp.close()
+
+    def _publish_progress(self, ui: dict | None, text: str) -> None:
+        if not ui or not isinstance(ui.get("request_id"), str) or not text:
+            return
+        try:
+            self._mcp.call_tool(
+                "aidn.operator.chat.progress",
+                {
+                    "request_id": ui["request_id"],
+                    "text": text,
+                    "phase": "streaming",
+                },
+            )
+        except BridgeError:
+            # Progress is an optional presentation channel. A transient MCP
+            # failure must never discard the completed durable reply.
+            return
 
     def login(self, *, timeout: float = 900.0) -> dict[str, str]:
         process = self._app_server()
@@ -487,38 +542,32 @@ class CodexAgentBridge:
         messages = extract_operator_messages(inbox)
         if not messages:
             return 0
-        process = None
         state = CodexThreadState.load(self._state_file)
-        try:
-            delivered: list[str] = []
-            for message in messages:
-                ui = message.get("ui")
-                conversation_id = None
-                if ui and ui.get("chat"):
-                    accepted = self._mcp.call_tool("aidn.ui.conversation", {"request_id": ui["request_id"]})
-                    conversation_id = accepted["conversation_id"]
-                    if accepted["action"] == "open" or accepted["answered"]:
-                        # Opening an artifact is an agent-mediated read, not a new
-                        # model turn. A lost inbox ACK must not rerun a completed turn.
-                        if accepted["action"] == "open":
-                            self._mcp.call_tool("aidn.operator.chat.reply", {"text": "Диалог открыт.", "request_id": ui["request_id"]})
-                        delivered.append(message["event_id"])
-                        continue
-                    history = accepted["conversation"]["turns"]
-                    ui = {**ui, "workspace_history": [
-                        {"role": turn["role"], "text": turn["text"][:4000]} for turn in history[-12:-1]
-                    ], "history_excerpt": True}
-                if process is None:
-                    process = self._app_server()
-                thread_id = self._load_or_start_thread(process, state, conversation_id=conversation_id)
-                reply = self._run_turn(process, thread_id, message["text"], ui=ui)
-                self._mcp.call_tool("aidn.operator.chat.reply", {"text": reply, **({"request_id": ui["request_id"]} if ui else {})})
-                delivered.append(message["event_id"])
-            self._mcp.call_tool("aidn.event.ack", {"event_ids": delivered})
-            return len(delivered)
-        finally:
-            if process is not None:
-                process.close()
+        delivered: list[str] = []
+        for message in messages:
+            ui = message.get("ui")
+            conversation_id = None
+            if ui and ui.get("chat"):
+                accepted = self._mcp.call_tool("aidn.ui.conversation", {"request_id": ui["request_id"]})
+                conversation_id = accepted["conversation_id"]
+                if accepted["action"] == "open" or accepted["answered"]:
+                    # Opening an artifact is an agent-mediated read, not a new
+                    # model turn. A lost inbox ACK must not rerun a completed turn.
+                    if accepted["action"] == "open":
+                        self._mcp.call_tool("aidn.operator.chat.reply", {"text": "Диалог открыт.", "request_id": ui["request_id"]})
+                    delivered.append(message["event_id"])
+                    continue
+                history = accepted["conversation"]["turns"]
+                ui = {**ui, "workspace_history": [
+                    {"role": turn["role"], "text": turn["text"][:4000]} for turn in history[-12:-1]
+                ], "history_excerpt": True}
+            process = self._relay_app_server()
+            thread_id = self._load_or_start_thread(process, state, conversation_id=conversation_id)
+            reply = self._run_turn(process, thread_id, message["text"], ui=ui)
+            self._mcp.call_tool("aidn.operator.chat.reply", {"text": reply, **({"request_id": ui["request_id"]} if ui else {})})
+            delivered.append(message["event_id"])
+        self._mcp.call_tool("aidn.event.ack", {"event_ids": delivered})
+        return len(delivered)
 
     def _load_or_start_thread(self, process: JsonLineRpcProcess, state: CodexThreadState, *, conversation_id: str | None = None) -> str:
         existing = state.conversation_threads.get(conversation_id) if conversation_id else state.thread_id
@@ -617,6 +666,8 @@ class CodexAgentBridge:
             raise BridgeError("Codex did not start an agent turn")
         deadline = time.monotonic() + DEFAULT_TURN_TIMEOUT_SECONDS
         final_text = ""
+        partial_by_item: dict[str, str] = {}
+        last_progress_at = 0.0
         while time.monotonic() < deadline:
             notification = process.next_notification(timeout=min(1.0, deadline - time.monotonic()))
             if notification is None:
@@ -624,6 +675,17 @@ class CodexAgentBridge:
             params = _as_dict(notification.get("params"))
             if _notification_turn_id(params) != turn_id:
                 continue
+            delta = _agent_message_delta(notification)
+            if delta is not None:
+                item_id, fragment = delta
+                partial_by_item[item_id] = partial_by_item.get(item_id, "") + fragment
+                now = time.monotonic()
+                # Coalesce tiny deltas so one slow MCP round-trip does not
+                # become the new bottleneck. 120 ms is fast enough to feel
+                # live while keeping the progress journal lightweight.
+                if now - last_progress_at >= 0.12:
+                    self._publish_progress(ui, partial_by_item[item_id])
+                    last_progress_at = now
             if notification.get("method") == "item/completed":
                 text = _result_text(_as_dict(params.get("item")))
                 if text:
@@ -733,7 +795,7 @@ def main(argv: Iterable[str] | None = None) -> int:
         return 1
     finally:
         if bridge is not None:
-            bridge._mcp.close()
+            bridge.close()
 
 
 if __name__ == "__main__":  # pragma: no cover - console entry point

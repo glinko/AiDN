@@ -10,6 +10,7 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
 
 from aidn_hypervisor.accounting.models import UsageAcknowledgement, UsageReport
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
@@ -2182,7 +2183,10 @@ def build_api_router(
     async def operator_dashboard_agent_channel(surface_id: str | None = None) -> dict:
         """Return the external MCP Agent channel and its durable history."""
 
-        return service.agent_conversation_status(surface_id)
+        # Serializing the bounded Workspace archive and checking Hook state are
+        # synchronous operations. Keep them off the ASGI event loop so status
+        # polls remain responsive while the agent is using MCP.
+        return await run_in_threadpool(service.agent_conversation_status, surface_id)
 
     @router.post("/operators/dashboard/agent-channel/connect")
     async def connect_operator_dashboard_agent_channel(

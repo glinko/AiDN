@@ -48,6 +48,25 @@ def test_cube_is_created_only_by_bound_agent_mcp_and_reply_stays_in_same_session
     assert len(channel.workspace.document("seed-a")["turns"]) == 4
 
 
+def test_agent_progress_is_surface_bound_ephemeral_and_clears_on_reply():
+    server, _, _ = setup_frame()
+    channel = server.control.service.agent_channel
+    send(channel, request="progress-request")
+    streamed = channel.progress(
+        agent_id="agent:test", request_id="progress-request", text="Проверяю", phase="streaming"
+    )
+    assert streamed["phase"] == "streaming"
+    assert channel.status("surface-a")["progress"][0]["text"] == "Проверяю"
+    assert channel.status("surface-b")["progress"] == []
+    channel.reply(agent_id="agent:test", text="Готово", request_id="progress-request")
+    assert channel.status("surface-a")["progress"] == []
+    late = channel.progress(
+        agent_id="agent:test", request_id="progress-request", text="запоздалый фрагмент"
+    )
+    assert late["phase"] == "completed"
+    assert channel.status("surface-a")["progress"] == []
+
+
 def test_archive_survives_transport_rollover_restart_and_agent_mediated_reopen():
     server, _, _ = setup_frame()
     channel = server.control.service.agent_channel

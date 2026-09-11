@@ -578,6 +578,13 @@ class HypervisorService:
     def receive_agent_conversation_reply(self, *, agent_id: str, text: str, request_id: str | None = None) -> dict:
         return self._agent_conversation.reply(agent_id=agent_id, text=text, request_id=request_id)
 
+    def publish_agent_conversation_progress(
+        self, *, agent_id: str, request_id: str, text: str = "", phase: str = "streaming"
+    ) -> dict:
+        return self._agent_conversation.progress(
+            agent_id=agent_id, request_id=request_id, text=text, phase=phase
+        )
+
     def agent_conversation_snapshot(self) -> dict:
         return self._agent_conversation.snapshot_state()
 

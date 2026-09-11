@@ -6,6 +6,7 @@ from aidn_hypervisor.codex_agent_bridge import (
     CodexAgentBridge,
     CodexThreadState,
     McpRemoteClient,
+    _agent_message_delta,
     _ensure_codex_mcp_config,
     _notification_turn_id,
     _result_text,
@@ -50,6 +51,14 @@ def test_result_text_accepts_current_app_server_message_item() -> None:
 def test_notification_turn_id_accepts_nested_turn_shape() -> None:
     assert _notification_turn_id({"turn": {"id": "turn-nested"}}) == "turn-nested"
     assert _notification_turn_id({"turnId": "turn-flat", "turn": {"id": "other"}}) == "turn-flat"
+
+
+def test_agent_message_delta_accepts_app_server_stream_event() -> None:
+    assert _agent_message_delta({
+        "method": "item/agentMessage/delta",
+        "params": {"turnId": "turn-1", "itemId": "item-1", "delta": "текст"},
+    }) == ("item-1", "текст")
+    assert _agent_message_delta({"method": "item/completed", "params": {}}) is None
 
 
 def test_mcp_remote_client_accepts_lowercase_session_header(monkeypatch) -> None:

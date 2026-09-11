@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import { ArrowUp, Mic, MicOff, X } from 'lucide-react'
+import type { AgentConversationProgress } from '@/lib/types'
 import type { WorkspaceChatIntent, WorkspacePublication } from '@/spatial/contracts/workspace-chat'
 import { seedLayout, type SeedPoint, type SeedViewport } from './interaction-seed'
 import { usePrimaryAgentVoice } from './primary-agent-voice'
@@ -13,11 +14,12 @@ function currentViewport(): SeedViewport {
     offsetTop: viewport?.offsetTop ?? 0, offsetLeft: viewport?.offsetLeft ?? 0 }
 }
 
-export function SeedChat({ seed, publication, online, channelError, onSend, onClose }: {
+export function SeedChat({ seed, publication, online, channelError, streaming = null, onSend, onClose }: {
   seed: OpenSeed
   publication: WorkspacePublication | null
   online: boolean
   channelError: string | null
+  streaming?: AgentConversationProgress | null
   onSend: (text: string, chat: WorkspaceChatIntent) => Promise<string>
   onClose: () => void
 }) {
@@ -35,7 +37,7 @@ export function SeedChat({ seed, publication, online, channelError, onSend, onCl
   const followsBottom = useRef(true)
   const hasHistory = Boolean(active || seed.existing || sent)
   const waiting = Boolean(sent && !active?.turns.some(turn => turn.role === 'agent' && turn.intent_id === sent.requestId))
-    || active?.session.state === 'SUBMITTING'
+    || active?.session.state === 'SUBMITTING' || Boolean(streaming)
   const unconfirmed = sent && !active?.turns.some(turn => turn.intent_id === sent.requestId)
   const opening = seed.existing && !active
   const voice = usePrimaryAgentVoice({ deliver: async value => {
@@ -84,7 +86,7 @@ export function SeedChat({ seed, publication, online, channelError, onSend, onCl
 
   useEffect(() => {
     if (followsBottom.current && log.current) log.current.scrollTop = log.current.scrollHeight
-  }, [active?.turns.length, unconfirmed])
+  }, [active?.turns.length, streaming?.updated_at, unconfirmed])
 
   async function submit() {
     if (!text.trim() || sending || waiting || opening || !online || listening || voiceBusy) return
@@ -102,13 +104,14 @@ export function SeedChat({ seed, publication, online, channelError, onSend, onCl
     } finally { setSending(false); input.current?.focus({ preventScroll: true }) }
   }
 
-  const status = error ?? voice.error ?? channelError ?? (listening ? 'Слушаю… ' + voice.transcript
-    : opening ? 'Агент открывает сохранённый диалог…'
-      : waiting ? 'Передано агенту · ожидаем ответ…'
+  const status = error ?? voice.error ?? channelError ?? (streaming ? 'Ответ поступает…'
+    : listening ? 'Слушаю… ' + voice.transcript
+      : opening ? 'Агент открывает сохранённый диалог…'
+    : waiting ? 'Передано агенту · ожидаем ответ…'
         : hasHistory ? 'Сохранено в кубе · можно продолжить здесь'
           : 'Enter — новая строка · Ctrl/⌘ + Enter — отправить')
 
-  return <section className="seed-chat" style={layout as CSSProperties} data-expanded={expanded} data-phase={listening ? 'listening' : waiting ? 'thinking' : hasHistory ? 'conversation' : 'input'}
+  return <section className="seed-chat" style={layout as CSSProperties} data-expanded={expanded} data-phase={listening ? 'listening' : streaming ? 'streaming' : waiting ? 'thinking' : hasHistory ? 'conversation' : 'input'}
     aria-label="Диалог в пространстве" onKeyDown={event => {
       if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.stopPropagation(); onClose() }
     }}>
@@ -129,6 +132,9 @@ export function SeedChat({ seed, publication, online, channelError, onSend, onCl
       {active?.turns.map(turn => <article className="seed-chat__turn" key={turn.turn_id} data-role={turn.role}>
         <strong>{turn.role === 'operator' ? 'Вы' : turn.role === 'agent' ? 'Агент' : 'Система'}</strong><p>{turn.text}</p>
       </article>)}
+      {streaming && <article className="seed-chat__turn" data-role="agent" data-streaming="true">
+        <strong>Агент · отвечает…</strong><p>{streaming.text || 'Обрабатывает запрос…'}</p>
+      </article>}
       {unconfirmed && <article className="seed-chat__turn" data-role="operator" data-unconfirmed="true"><strong>Вы · передано агенту</strong><p>{sent.text}</p></article>}
       {opening && error && <button type="button" onClick={() => {
         setError(null)

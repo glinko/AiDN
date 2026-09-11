@@ -45,11 +45,14 @@
 .seed-chat__turn strong { font-size: 12px; line-height: 18px; font-weight: 600; color: var(--frame-muted); }
 .seed-chat__turn p { margin: 3px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .seed-chat__turn[data-role="agent"] p { color: var(--frame-ink); }
+.seed-chat__turn[data-streaming="true"] p { color: var(--frame-action); }
+.seed-chat__turn[data-streaming="true"] strong::after { content: ''; display: inline-block; width: 5px; height: 5px; margin-left: 6px; vertical-align: middle; border-radius: 50%; background: currentColor; animation: seed-streaming 900ms ease-in-out infinite alternate; }
 .seed-chat__status { flex: 0 0 auto; margin: 10px 0 0; color: var(--frame-muted); font-size: 11px; line-height: 16px; overflow-wrap: anywhere; max-height: 48px; overflow-y: auto; }
 .seed-chat__measure { position: fixed; top: 0; left: 0; visibility: hidden; pointer-events: none; white-space: pre; width: max-content; font: inherit; }
 .seed-chat[data-phase="listening"] .seed-chat__trace { animation: seed-listening 1600ms ease-in-out infinite alternate; }
 @keyframes seed-listening { to { opacity: .5; } }
-@media (prefers-reduced-motion: reduce) { .seed-chat, .seed-chat__trace, .seed-chat__toolbar button { transition: none; animation: none; } }
+@keyframes seed-streaming { to { opacity: .32; transform: translateX(3px); } }
+@media (prefers-reduced-motion: reduce) { .seed-chat, .seed-chat__trace, .seed-chat__toolbar button, .seed-chat__turn[data-streaming="true"] strong::after { transition: none; animation: none; } }
 .agent-composer[hidden] { display: none; }
 .workspace-archive { position: absolute; z-index: 6; top: max(24px, env(safe-area-inset-top)); right: 24px; max-width: min(320px, calc(100vw - 32px)); }
 .workspace-archive > button { min-height: 44px; padding: 0 16px; color: var(--frame-ink); background: var(--frame-surface); border-radius: 16px; }

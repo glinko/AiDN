@@ -4,6 +4,10 @@ import { dashboardSchemas, type AgentConversation, type AssistedInstallationActi
 
 const apiRoot = (import.meta.env.VITE_AIDN_API_ROOT ?? '').replace(/\/$/, '')
 const requestTimeoutMs = 15_000
+// The channel is polled while the agent may be using MCP tools. Keep this
+// read independent from ordinary dashboard requests so a slow model/tool
+// call is not rendered as a disconnected node.
+const agentChannelTimeoutMs = 8_000
 const speechRequestTimeoutMs = 130_000
 const browserKeyStorageKey = 'aidn.dashboard.browser-key.v1'
 
@@ -433,9 +437,9 @@ const hookMetricsSchema = z.object({
   dead_letter_count: numberValue,
 }).passthrough()
 
-async function readDashboard<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
+async function readDashboard<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal, timeoutMs = requestTimeoutMs): Promise<T> {
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs)
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
   const abortRequest = () => controller.abort()
   signal?.addEventListener('abort', abortRequest, { once: true })
 
@@ -463,7 +467,7 @@ async function readDashboard<T>(path: string, schema: z.ZodType<T>, signal?: Abo
   } catch (error) {
     if (error instanceof DashboardApiError) throw error
     if (controller.signal.aborted && !signal?.aborted) {
-      throw new DashboardApiError(`${path} did not respond within ${requestTimeoutMs / 1000} seconds.`)
+      throw new DashboardApiError(`${path} did not respond within ${timeoutMs / 1000} seconds.`)
     }
     throw new DashboardApiError(error instanceof Error ? error.message : `Unable to load ${path}.`)
   } finally {
@@ -560,7 +564,7 @@ export const dashboardApi = {
   escalations: (signal?: AbortSignal): Promise<EscalationTasks> => readDashboard('/operators/dashboard/steward/escalations?limit=64', dashboardSchemas.escalations, signal),
   stewardActionPolicy: (signal?: AbortSignal): Promise<StewardActionPolicy> => readDashboard('/operators/dashboard/steward/action-policy', dashboardSchemas.stewardActionPolicy, signal),
   residentInference: (signal?: AbortSignal): Promise<ResidentInference> => readDashboard('/operators/dashboard/steward/inference', dashboardSchemas.residentInference, signal),
-  agentConversation: (signal?: AbortSignal, surfaceId?: string): Promise<AgentConversation> => readDashboard(`/operators/dashboard/agent-channel${surfaceId ? `?surface_id=${encodeURIComponent(surfaceId)}` : ''}`, dashboardSchemas.agentConversation, signal),
+  agentConversation: (signal?: AbortSignal, surfaceId?: string): Promise<AgentConversation> => readDashboard(`/operators/dashboard/agent-channel${surfaceId ? `?surface_id=${encodeURIComponent(surfaceId)}` : ''}`, dashboardSchemas.agentConversation, signal, agentChannelTimeoutMs),
   synthesizeSpeech: (text: string, signal?: AbortSignal): Promise<Blob> => readDashboardAudio('/operators/dashboard/speech/tts', { method: 'POST', body: JSON.stringify({ text }), signal }, speechRequestTimeoutMs),
   installationPlan: (signal?: AbortSignal): Promise<InstallationPlan> => readDashboard('/operators/dashboard/installation-plan', dashboardSchemas.installationPlan, signal),
   testnetParticipation: (signal?: AbortSignal): Promise<TestnetParticipationDashboard> => readDashboard('/operators/dashboard/testnet-participation', testnetParticipationDashboardSchema, signal),

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { dashboardApi } from '@/lib/api'
-import { dashboardSchemas, type AgentConversation } from '@/lib/types'
+import { DashboardApiError, dashboardApi } from '@/lib/api'
+import { dashboardSchemas, type AgentConversation, type AgentConversationProgress } from '@/lib/types'
 import type { AgentFormChange } from '@/spatial/contracts/agent-document'
 import type { WorkspaceChatIntent, WorkspacePublication } from '@/spatial/contracts/workspace-chat'
 import { createDashboardSpatialSnapshotForPayload, type DashboardSpatialSceneData } from '@/spatial/data/dashboard-adapter'
@@ -45,6 +45,7 @@ export function useAgentInterface() {
   const [conversation, setConversation] = useState<AgentConversation | null>(null)
   const [scene, setScene] = useState<DashboardSpatialSceneData | null>(null)
   const [workspace, setWorkspace] = useState<WorkspacePublication | null>(null)
+  const [streaming, setStreaming] = useState<AgentConversationProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [online, setOnline] = useState(false)
   const [pending, setPending] = useState<string | null>(null)
@@ -80,6 +81,7 @@ export function useAgentInterface() {
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout>
     const poll = async () => {
+      let fastPoll = false
       try {
         const next = await dashboardApi.agentConversation(controller.signal, surfaceId)
         if (controller.signal.aborted) return
@@ -96,6 +98,9 @@ export function useAgentInterface() {
           sceneRevision.current = publication?.revision
         }
         setConversation(next)
+        const nextProgress = next.progress.find(item => item.surface_id === surfaceId) ?? null
+        setStreaming(nextProgress)
+        fastPoll = nextProgress !== null
         // Keep 3D artifact identities stable through ordinary channel polls.
         setWorkspace(current => JSON.stringify(current) === JSON.stringify(next.workspace ?? null) ? current : next.workspace ?? null)
         setOnline(next.connected)
@@ -111,16 +116,27 @@ export function useAgentInterface() {
         }
       } catch (cause) {
         if (controller.signal.aborted) return
-        bootstrapSent.current = false
-        setOnline(false)
-        setError(cause instanceof Error ? cause.message : 'Канал агента недоступен. Показан последний полученный снимок.')
+        const slowPoll = cause instanceof DashboardApiError
+          && cause.status === undefined
+          && cause.message.includes('did not respond within')
+        if (slowPoll) {
+          // A channel read timeout is not an authority or agent disconnect.
+          // Keep the last snapshot and let the next poll pick up progress or
+          // the completed reply without flashing a false outage warning.
+          setOnline(current => current || boundAgent.current != null)
+          setError(null)
+        } else {
+          bootstrapSent.current = false
+          setOnline(false)
+          setError(cause instanceof Error ? cause.message : 'Канал агента недоступен. Показан последний полученный снимок.')
+        }
       } finally {
-        if (!controller.signal.aborted) timer = setTimeout(poll, document.hidden ? 8000 : 1500)
+        if (!controller.signal.aborted) timer = setTimeout(poll, document.hidden ? 8000 : fastPoll ? 250 : 1500)
       }
     }
     void poll()
     return () => { mounted.current = false; controller.abort(); clearTimeout(timer) }
   }, [surfaceId, refreshKey])
 
-  return { surfaceId, conversation, scene, workspace, online, error, pending, send }
+  return { surfaceId, conversation, scene, workspace, streaming, online, error, pending, send }
 }

@@ -1674,6 +1674,28 @@ class McpControlPlane:
                     request_id=args.get("request_id"),
                 ),
             ),
+            "aidn.operator.chat.progress": McpTool(
+                "aidn.operator.chat.progress",
+                "Publish ephemeral streamed text for the exact bound operator request. The completed reply is saved separately; progress is not transcript history.",
+                {
+                    "type": "object",
+                    "properties": {
+                        "request_id": {"type": "string", "minLength": 1, "maxLength": 256},
+                        "text": {"type": "string", "maxLength": 16384},
+                        "phase": {"enum": ["thinking", "streaming"]},
+                    },
+                    "required": ["request_id", "text"],
+                    "additionalProperties": False,
+                },
+                ("CHAT:WRITE",),
+                "OPERATOR_CHAT_REPLY",
+                lambda args: self.service.publish_agent_conversation_progress(
+                    agent_id=self.session.agent_identity,
+                    request_id=str(args["request_id"]),
+                    text=str(args.get("text", "")),
+                    phase=str(args.get("phase", "streaming")),
+                ),
+            ),
             "aidn.hook.list": McpTool(
                 "aidn.hook.list",
                 "List operator-owned RFC-0072 Hook subscriptions.",

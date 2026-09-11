@@ -183,7 +183,8 @@ function App() {
     </SceneBoundary>
 
     {seed && <div hidden={frameOpen}><SeedChat key={seed.id} seed={seed} publication={agent.workspace} online={agent.online}
-      channelError={agent.error} onSend={sendSeed} onClose={closeSeed} /></div>}
+      channelError={agent.error} streaming={agent.streaming?.conversation_id === seed.id ? agent.streaming : null}
+      onSend={sendSeed} onClose={closeSeed} /></div>}
     {(agent.workspace?.artifacts.length ?? 0) > 0 && <aside className="workspace-archive" hidden={Boolean(seed)} aria-label="Сохранённые диалоги">
       <button type="button" aria-expanded={archiveOpen} onClick={() => setArchiveOpen(value => !value)}>Диалоги · {agent.workspace!.artifacts.length}</button>
       {archiveOpen && <nav aria-label="Открыть сохранённый диалог">
@@ -210,13 +211,16 @@ function App() {
           {messages.slice(-30).map(message => <div key={message.message_id} className="agent-conversation__message" data-direction={message.direction}>
             <strong>{message.direction === 'AGENT' ? 'Агент' : 'Вы'}</strong><p>{message.text}</p>
           </div>)}
+          {agent.streaming && <div className="agent-conversation__message" data-direction="AGENT" data-streaming="true">
+            <strong>Агент · отвечает…</strong><p>{agent.streaming.text || 'Обрабатывает запрос…'}</p>
+          </div>}
         </div>
         {documents.map(item => <div key={item.document_id} hidden={selectedDocument !== item.document_id}>
           <AgentDocumentFrame document={item} disabled={!agent.online}
             intents={agent.conversation?.interface?.intents ?? []} messages={messages} onSubmit={agent.send} />
         </div>)}
       </div>
-      <p className="agent-frame__status" role="status">{agent.error ? 'Канал недоступен. Показан последний ответ; изменения заблокированы.' : agent.pending ? 'Запрос передан агенту. Ждём ответ…' : 'Чтение и изменения ноды выполняет агент через MCP.'}</p>
+      <p className="agent-frame__status" role="status">{agent.error ? 'Канал недоступен. Показан последний ответ; изменения заблокированы.' : agent.streaming ? 'Ответ поступает…' : agent.pending ? 'Запрос передан агенту. Ждём ответ…' : 'Чтение и изменения ноды выполняет агент через MCP.'}</p>
     </section>
 
     <div className="agent-composer" hidden={Boolean(seed)}>
@@ -233,7 +237,7 @@ function App() {
         <button className="agent-composer__send" type="submit" aria-label="Отправить агенту" disabled={!agent.online || !text.trim() || sending || recording || voiceBusy}><Send size={18} /></button>
       </form>
       <p className="agent-composer__hint" role="status">
-        {sendError ?? voice.error ?? agent.error ?? (recording ? 'Слушаю… ' + voice.transcript : voiceBusy ? 'Обрабатываем голосовой ввод…' : voice.capabilities.microphone && voice.capabilities.recognition ? 'Можно говорить или писать · ответы текстом' : 'Введите сообщение · ответы текстом')}
+        {sendError ?? voice.error ?? agent.error ?? (agent.streaming ? 'Ответ поступает…' : recording ? 'Слушаю… ' + voice.transcript : voiceBusy ? 'Обрабатываем голосовой ввод…' : voice.capabilities.microphone && voice.capabilities.recognition ? 'Можно говорить или писать · ответы текстом' : 'Введите сообщение · ответы текстом')}
         {secureVoiceUrl ? <a href={secureVoiceUrl}>HTTPS для микрофона</a> : null}
       </p>
     </div>

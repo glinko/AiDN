@@ -380,6 +380,16 @@ const agentConversationMessageSchema = z.object({
   chat: workspaceChatIntentSchema.nullable().optional(),
 }).passthrough()
 
+const agentConversationProgressSchema = z.object({
+  request_id: stringValue,
+  surface_id: stringValue,
+  conversation_id: z.string().nullable().optional(),
+  agent_id: stringValue,
+  phase: z.enum(['thinking', 'streaming']).catch('streaming'),
+  text: z.string().catch(''),
+  updated_at: stringValue,
+}).passthrough()
+
 const agentConversationSchema = z.object({
   interface: agentInterfaceSchema.optional(),
   workspace: workspacePublicationSchema.nullable().optional(),
@@ -387,6 +397,7 @@ const agentConversationSchema = z.object({
   connected: z.boolean().catch(false),
   delivery: unknownRecord.nullable().optional(),
   messages: z.array(agentConversationMessageSchema).catch([]),
+  progress: z.array(agentConversationProgressSchema).catch([]),
   message_limit: numberValue,
   message_event_type: stringValue,
   media: z.object({
@@ -565,6 +576,7 @@ export type StewardActionPolicy = z.infer<typeof stewardActionPolicySchema>
 export type ResidentInference = z.infer<typeof residentInferenceSchema>
 export type AgentConversation = z.infer<typeof agentConversationSchema>
 export type AgentConversationMessage = z.infer<typeof agentConversationMessageSchema>
+export type AgentConversationProgress = z.infer<typeof agentConversationProgressSchema>
 export type EscalationTask = z.infer<typeof escalationTaskSchema>
 export type EscalationTasks = z.infer<typeof escalationTasksSchema>
 export type InstallationPlan = z.infer<typeof installationPlanSchema>

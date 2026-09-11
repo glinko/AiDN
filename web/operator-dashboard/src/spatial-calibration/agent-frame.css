@@ -63,6 +63,9 @@
 .agent-conversation__message:first-child { margin-top: 0; }
 .agent-conversation__message > strong { display: block; margin-bottom: 6px; font-size: 12px; color: var(--frame-muted); }
 .agent-conversation__message[data-direction="OPERATOR"] { padding-left: 20px; }
+.agent-conversation__message[data-streaming="true"] { color: var(--frame-action); }
+.agent-conversation__message[data-streaming="true"] > strong::after { content: ''; display: inline-block; width: 5px; height: 5px; margin-left: 6px; vertical-align: middle; border-radius: 50%; background: currentColor; animation: agent-streaming 900ms ease-in-out infinite alternate; }
+@keyframes agent-streaming { to { opacity: .3; transform: translateX(3px); } }
 .agent-composer { position: absolute; z-index: 5; bottom: max(82px, calc(env(safe-area-inset-bottom) + 72px)); left: 50%; transform: translateX(-50%); width: min(660px, calc(100% - 48px)); color: var(--frame-ink); }
 .agent-composer form { display: flex; align-items: flex-end; gap: 4px; padding: 8px; border-radius: var(--frame-radius); background: var(--frame-surface); box-shadow: 0 8px 28px rgba(62, 84, 116, .14); backdrop-filter: blur(16px); }
 .agent-composer textarea { min-width: 0; min-height: 44px; max-height: 120px; flex: 1; padding: 10px 8px; border: 0; border-radius: 6px; resize: vertical; background: transparent; color: var(--frame-ink); font: 15px/1.5 'Segoe UI', system-ui, sans-serif; }
@@ -89,6 +92,9 @@
   .agent-composer { width: calc(100% - 24px); bottom: max(78px, calc(env(safe-area-inset-bottom) + 68px)); }
   .agent-composer textarea { font-size: 16px; }
   .agent-composer__hint { font-size: 11px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-conversation__message[data-streaming="true"] > strong::after { animation: none; }
 }
 @media (max-height: 550px) {
   .agent-frame { top: 12px; bottom: 148px; }

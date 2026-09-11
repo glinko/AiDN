@@ -25,6 +25,7 @@ from aidn_hypervisor.workspace_conversations import (
 
 MAX_MESSAGES = 200
 OPERATOR_MESSAGE_EVENT = "aidn.operator.agent_message"
+MAX_PROGRESS_CHARS = MAX_MESSAGE_CHARS
 
 
 def _now() -> str:
@@ -69,6 +70,10 @@ class AgentConversationService:
         self._send_lock = RLock()
         self._agent_id: str | None = None
         self._messages: list[AgentConversationMessage] = []
+        # Streaming text is deliberately ephemeral.  The completed reply is
+        # the only transcript record; keeping deltas out of the durable event
+        # journal prevents one model response from becoming hundreds of turns.
+        self._progress: dict[str, dict[str, Any]] = {}
         self._sequence = 0
         self.interface = AgentInterfaceStore(self._changed)
         self.workspace = WorkspaceConversationStore(node_id)
@@ -292,10 +297,56 @@ class AgentConversationService:
                 # HTTP-side write. Dedicated ui.conversation enables early birth.
                 self.workspace.accept(context)
                 self.workspace.reply(record)
+            if request_id:
+                self._progress.pop(request_id, None)
             self._messages.append(record)
             self._trim_messages()
         self._changed()
         return record.model_dump(mode="json")
+
+    def progress(
+        self,
+        *,
+        agent_id: object,
+        request_id: str,
+        text: object = "",
+        phase: str = "streaming",
+    ) -> dict[str, Any]:
+        """Publish ephemeral progress for one exact operator request.
+
+        Progress is an observation for the Spatial surface, not a second
+        transcript.  It is bound to the same request context and agent identity
+        as the eventual ``reply`` so a stale or foreign agent cannot paint
+        arbitrary text into an operator frame.
+        """
+
+        sender = _identifier(agent_id, name="agent identity")
+        request = _identifier(request_id, name="request ID")
+        body = str(text or "")
+        if len(body) > MAX_PROGRESS_CHARS:
+            raise ValueError(f"progress text must contain at most {MAX_PROGRESS_CHARS} characters")
+        if phase not in {"thinking", "streaming"}:
+            raise ValueError("progress phase must be thinking or streaming")
+        with self._lock:
+            context = self.request_context(agent_id=sender, request_id=request)
+            # A late delta after the durable reply is harmless and must not
+            # resurrect a spinner over the completed message.
+            if self.workspace.lookup(request, "AGENT") is not None:
+                return {"request_id": request, "surface_id": context.surface_id, "phase": "completed", "text": body}
+            record = {
+                "request_id": request,
+                "surface_id": context.surface_id,
+                "conversation_id": context.chat.conversation_id if context.chat else None,
+                "agent_id": sender,
+                "phase": phase,
+                "text": body,
+                "updated_at": _now(),
+            }
+            self._progress[request] = record
+        # Do not invoke the persistence callback here.  Progress can arrive
+        # many times per second, while the canonical snapshot is intentionally
+        # updated only when the final reply is committed.
+        return dict(record)
 
     def status(self, surface_id: str | None = None) -> dict[str, Any]:
         with self._lock:
@@ -306,6 +357,11 @@ class AgentConversationService:
                 if surface_id is None or (item.surface_id == surface_id and item.agent_id == agent_id)
             ]
             workspace = self.workspace.public(surface_id)
+            progress = [
+                dict(item)
+                for item in self._progress.values()
+                if surface_id is None or (item["surface_id"] == surface_id and item["agent_id"] == agent_id)
+            ]
         hook_id = self._hook_id(agent_id) if agent_id else None
         hook_status: dict[str, Any] | None = None
         if hook_id:
@@ -320,6 +376,7 @@ class AgentConversationService:
             "messages": messages,
             "interface": self.interface.public(surface_id),
             "workspace": workspace,
+            "progress": progress,
             "message_limit": MAX_MESSAGES,
             "message_event_type": OPERATOR_MESSAGE_EVENT,
             "media": {
@@ -355,6 +412,9 @@ class AgentConversationService:
         with self._lock:
             self._agent_id = _identifier(agent_id, name="agent identity") if agent_id else None
             self._messages = restored
+            # Progress is intentionally not restored: a process restart must
+            # never make an old partial answer look live.
+            self._progress = {}
             self.interface.restore(snapshot.get("interface", {}))
             self.workspace.restore(snapshot.get("workspace", {}))
             self._sequence = max(

@@ -28,6 +28,7 @@ from typing import Any, Protocol
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 from aidn_hypervisor.mcp.permissions import approval_policy_for_agent
 from aidn_hypervisor.mcp.server import (
@@ -664,7 +665,10 @@ class McpRemoteGateway:
                     content=_json_error("MCP_REMOTE_SESSION_LIMIT", "MCP transport session capacity is exhausted"),
                 )
             new_session_id, server = created
-            response = server.handle_message(payload)
+            # Tool handlers include provider/runtime reads and may be
+            # synchronous. Keep those calls off the ASGI event loop so a
+            # long-running MCP turn cannot stall the Spatial status endpoint.
+            response = await run_in_threadpool(server.handle_message, payload)
             if response is None or "error" in response:
                 del self._sessions[new_session_id]
                 return self._response(response, status_code=200)
@@ -699,7 +703,9 @@ class McpRemoteGateway:
         refresh_credential = getattr(server.control, "refresh_credential", None)
         if callable(refresh_credential):
             refresh_credential(credential)
-        response = server.handle_message(payload)
+        # The MCP control plane remains synchronous by design; execute it in a
+        # worker so concurrent dashboard polls can still observe progress.
+        response = await run_in_threadpool(server.handle_message, payload)
         if response is None:
             return self._response(None, session_id=session_id, status_code=202)
         return self._response(response, session_id=session_id)

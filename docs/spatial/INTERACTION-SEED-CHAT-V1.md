@@ -23,6 +23,8 @@ The browser posts intents and polls publications on the existing agent channel; 
 4. The node saves the archive inside `snapshot.resident_agent.agent_conversation.workspace`, using existing persistence. No second database or browser-local transcript authority is introduced.
 5. `aidn.ui.read(kind=scene)` publishes the Workspace catalog after authorized scene reads. Views are ephemeral per surface and re-authorized after node restart. The archive survives agent rebinding, but the new identity cannot use the old agent's request IDs.
 
+The app-server's `item/agentMessage/delta` notifications are coalesced and sent through `aidn.operator.chat.progress`. Progress is request- and surface-bound, ephemeral, and never written to the transcript or event journal. The browser polls it at a faster cadence while a delta is present; a slow poll is not treated as an agent disconnect. The final `aidn.operator.chat.reply` clears the progress record atomically from the Spatial projection.
+
 Frontend validators reuse `spatial.workspace-session.v1`, `spatial.conversation-turn.v1` and `spatial.artifact.v1`. Provenance retains intent, binding and event references. These are **not economic/protocol AiDN Sessions**: chatting does not create execution contracts, reservations, payments or escrow.
 
 The transport display journal remains approximately 200 messages. Accepted Workspace turns and deduplication live independently of it; pending unaccepted chat intents are retained. Limits: 128 conversations, 2,000 turns per conversation, 8 Mi characters of transcript, with reserved capacity for pending replies. A full archive rejects new writes rather than deleting history. Export and paginated storage are later work.
