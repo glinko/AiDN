@@ -2202,7 +2202,13 @@ def build_api_router(
         payload: AgentConversationMessageRequest,
     ) -> dict:
         try:
-            return service.send_agent_conversation_message(
+            # Sending records a canonical event and updates the bounded
+            # Hypervisor snapshot.  Both are synchronous and can be
+            # noticeably slower on a busy node; keep that write off the ASGI
+            # event loop so progress/status polls remain responsive while it
+            # is being committed.
+            return await run_in_threadpool(
+                service.send_agent_conversation_message,
                 payload.text,
                 request_id=payload.request_id,
                 surface_id=payload.surface_id,
