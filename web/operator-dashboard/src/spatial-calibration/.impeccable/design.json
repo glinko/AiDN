@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-11T00:00:00Z",
+  "title": "Design System: AiDN Pearl Study",
+  "extensions": {
+    "typographyMeta": {
+      "title": { "displayName": "Document title", "purpose": "Readable operational overlay title; 18px on mobile." },
+      "body": { "displayName": "Document body", "purpose": "Native document content above the optical scene." },
+      "conversation": { "displayName": "Workspace conversation", "purpose": "Readable seed input and saved conversation text on desktop and mobile." }
+    },
+    "shadows": [
+      { "name": "document-frame", "value": "0 22px 64px rgba(62, 84, 116, .2), 0 3px 12px rgba(62, 84, 116, .06)", "purpose": "Diffuse separation of the focused document from the Pearl scene." },
+      { "name": "composer", "value": "0 8px 28px rgba(62, 84, 116, .14)", "purpose": "Lighter lift for the text and voice composer." }
+    ],
+    "motion": [
+      { "name": "scene-control", "value": "background 180ms ease", "purpose": "Scene-control feedback; removed for reduced motion." },
+      { "name": "seed-morph", "value": "320ms cubic-bezier(.16,1,.3,1)", "purpose": "Same DOM surface expands from seed to conversation while controls and trace move together; disabled for reduced motion." },
+      { "name": "artifact-birth", "value": "1.8s", "purpose": "Continuous discharge with an additive duplicate halo strand; reduced motion settles immediately without discharge." }
+    ],
+    "breakpoints": [
+      { "name": "native-controls-mobile", "value": "600px" },
+      { "name": "camera-compact", "value": "680px" },
+      { "name": "short-viewport-height", "value": "550px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Interaction Seed conversation",
+      "kind": "custom",
+      "description": "The seed becomes this same native input surface; title ellipsis preserves toolbar room, and history scrolls internally.",
+      "html": "<section class=\"ds-seed\" aria-label=\"Диалог в пространстве\"><header><svg aria-hidden=\"true\" viewBox=\"0 0 72 72\"><path d=\"M 26 4 A 33 33 0 1 1 16 10\"/></svg><button aria-label=\"Отправить в этот диалог\" disabled><svg aria-hidden=\"true\" viewBox=\"0 0 24 24\"><path d=\"M12 19V5m-7 7 7-7 7 7\"/></svg></button><h2>Сохранённый диалог</h2></header><p>Продолжим этот же разговор.</p><label>Сообщение<textarea rows=\"2\" placeholder=\"Продолжить диалог…\"></textarea></label></section>",
+      "css": ".ds-seed{max-width:360px;padding:14px 20px;border-radius:16px;background:rgba(250,252,255,.97);color:var(--frame-ink,#34475f);box-shadow:0 20px 58px rgba(48,66,98,.17);font:16px/24px 'Segoe UI',system-ui,sans-serif}.ds-seed header{display:flex;align-items:center;gap:12px;min-width:0}.ds-seed svg{width:28px;height:28px;flex-shrink:0}.ds-seed path{fill:none;stroke:var(--frame-action,#42658d);stroke-width:1.5;stroke-linecap:round}.ds-seed button{display:grid;place-items:center;width:44px;height:44px;flex-shrink:0;border:0;border-radius:50%;background:var(--frame-surface,rgba(249,251,255,.96));color:var(--frame-ink,#34475f)}.ds-seed button:disabled{opacity:.82;color:#6f829c;background:rgba(226,234,245,.82);box-shadow:inset 0 0 0 1px rgba(111,130,156,.18)}.ds-seed h2{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:500;color:var(--frame-muted,#536780)}.ds-seed label{display:block;font-size:12px}.ds-seed textarea{display:block;width:100%;resize:none;border:0;background:transparent;color:inherit;font:16px/24px 'Segoe UI',system-ui,sans-serif}.ds-seed textarea:focus-visible,.ds-seed button:focus-visible{outline:2px solid var(--frame-action,#42658d);outline-offset:2px}"
+    },
+    {
+      "name": "Agent apply",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Submits exact proposed field changes to the agent.",
+      "html": "<button class=\"ds-apply\">Применить через агента</button>",
+      "css": ".ds-apply{min-height:44px;padding:10px 14px;border:0;border-radius:10px;background:var(--frame-action,#42658d);color:#fff;font:14px/1.55 'Segoe UI',system-ui,sans-serif;cursor:pointer}.ds-apply:hover:not(:disabled){background:#304f75}.ds-apply:focus-visible{outline:2px solid #7697c5;outline-offset:3px}.ds-apply:disabled{opacity:.45;cursor:default}"
+    },
+    {
+      "name": "Secondary action",
+      "kind": "button",
+      "description": "Resets a field-group draft.",
+      "html": "<button class=\"ds-secondary\">Сбросить</button>",
+      "css": ".ds-secondary{min-height:44px;padding:10px 14px;border:0;border-radius:10px;background:#e7edf5;color:var(--frame-ink,#34475f);font:14px/1.55 'Segoe UI',system-ui,sans-serif;cursor:pointer}.ds-secondary:focus-visible{outline:2px solid #7697c5;outline-offset:3px}.ds-secondary:disabled{opacity:.45;cursor:default}"
+    },
+    {
+      "name": "Native document field",
+      "kind": "input",
+      "description": "Labeled native field; text/select fields become full-width stacked controls on mobile.",
+      "html": "<label class=\"ds-field\">Название<input type=\"text\" value=\"Endpoint\" /></label>",
+      "css": ".ds-field{display:grid;grid-template-columns:minmax(0,1fr) minmax(100px,42%);align-items:center;gap:20px;color:var(--frame-ink,#34475f);font:14px/1.55 'Segoe UI',system-ui,sans-serif}.ds-field input{box-sizing:border-box;width:100%;min-height:44px;padding:10px 12px;border:1px solid #afbed1;border-radius:9px;background:#fff;color:inherit;font:inherit}.ds-field input:focus-visible{outline:2px solid var(--frame-action,#42658d);outline-offset:3px}.ds-field input:disabled{background:#edf1f6;color:#5e6b7c}@media(max-width:600px){.ds-field{grid-template-columns:minmax(0,1fr);gap:8px}.ds-field input{font-size:16px}}"
+    },
+    {
+      "name": "Document navigation",
+      "kind": "nav",
+      "description": "Scrollable native buttons select dialogue or a published document.",
+      "html": "<nav class=\"ds-doc-nav\" aria-label=\"Документы агента\"><button aria-pressed=\"false\">Диалог</button><button aria-pressed=\"true\">Настройки</button></nav>",
+      "css": ".ds-doc-nav{display:flex;gap:8px;overflow-x:auto}.ds-doc-nav button{flex-shrink:0;min-height:44px;padding:8px 12px;border:0;border-radius:10px;background:transparent;color:var(--frame-muted,#536780);font:13px 'Segoe UI',system-ui,sans-serif;cursor:pointer}.ds-doc-nav button[aria-pressed=true]{background:#e3ebf5;color:#2e4b70}.ds-doc-nav button:focus-visible{outline:2px solid #7697c5;outline-offset:3px}"
+    },
+    {
+      "name": "Milky document surface",
+      "kind": "card",
+      "refersTo": "document-frame",
+      "description": "Readable foreground material preserves the Pearl background identity.",
+      "html": "<article class=\"ds-frame\"><h2>Основной агент</h2><p>Чтение и изменения ноды выполняет агент через MCP.</p></article>",
+      "css": ".ds-frame{padding:24px;border-radius:var(--frame-radius,16px);background:var(--frame-surface,rgba(249,251,255,.96));color:var(--frame-ink,#34475f);box-shadow:var(--frame-shadow,0 22px 64px rgba(62,84,116,.2),0 3px 12px rgba(62,84,116,.06));backdrop-filter:blur(20px);font:14px/1.55 'Segoe UI',system-ui,sans-serif}.ds-frame h2{margin:0;font-size:19px;font-weight:600;line-height:1.3}.ds-frame p{overflow-wrap:anywhere}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Pearl, light, and reflected glass",
+    "overview": "This brief applies only to `/spatial-calibration.html`. The user-selected Pearl world retains its elevated orb, colored subagent orbs, solar endpoint nodes, and glass artifacts above milk-white space. The agent-mediated document extension inherits seed `aidn-pearl-calibration-v2`; it does not replace the dark operational dashboard direction in the root `PRODUCT.md` or establish a new global design system.\n\nThe scene presents a snapshot published by the Primary Agent after MCP reads. Before publication, only the Primary Agent is shown; published data determines the visible graph instead of the original fixed demo counts. Text or voice requests open a focused document in a milky foreground frame. The graph is an agent-published view, not direct live dashboard polling. Its materials approximate the supplied visual direction; reference fidelity is not exact or established by the source code alone.",
+    "keyCharacteristics": [],
+    "rules": [],
+    "dos": [
+      "Do preserve the seed's DOM identity through its morph and keep conversation history accessible through the archive despite visual crop or depth.",
+      "Do preserve the sparse orb/cube/floor composition and restrained cyan, lilac, and peach accents.",
+      "Do distinguish authored optical effects from physical material behavior in future descriptions.",
+      "Do keep this route's visual brief separate from the operational product's global direction.",
+      "Do retain native labels, inputs, selects, checkboxes, keyboard focus, and explicit pending/error/verified feedback in agent documents."
+    ],
+    "donts": [
+      "Don't equate a Workspace conversation with an economic AiDN Session or treat visual aging as deletion.",
+      "Don't add a sidebar, automatic speech output, arbitrary HTML documents, or direct browser configuration writes to this route.",
+      "Don't describe the result as an exact reference match or the lights as animated."
+    ]
+  }
+}

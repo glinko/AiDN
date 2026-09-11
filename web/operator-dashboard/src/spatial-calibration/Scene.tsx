@@ -15,6 +15,10 @@ import { SolarEndpoint } from './SolarEndpoint'
 import { DEMO_ENDPOINT_CONFIGS, EndpointEntity } from './endpoint'
 import { SpatialThreads } from './Threads'
 import type { DashboardSpatialSceneData } from '@/spatial/data'
+import type { WorkspaceArtifact } from '@/spatial/contracts/workspace-chat'
+import type { SeedPoint } from './interaction-seed'
+import { WorkspaceArtifactField, type WorkspaceArtifactEntity } from './workspace-artifacts'
+import { ArtifactBirth } from './ArtifactBirth'
 
 export type SceneProps = {
   paused: boolean
@@ -23,6 +27,12 @@ export type SceneProps = {
   onReady: () => void
   onPrimarySelect?: () => void
   sceneData?: DashboardSpatialSceneData | null
+  agentOnly?: boolean
+  workspaceArtifacts?: readonly WorkspaceArtifact[]
+  workspaceReady?: boolean
+  activeWorkspaceId?: string | null
+  canSelect?: () => boolean
+  onWorkspaceSelect?: (id: string, point: SeedPoint) => void
 }
 
 type FocusableId = string
@@ -87,24 +97,25 @@ function AgentNode({ entity, onSelect }: { entity: OrbEntity; onSelect: () => vo
       <meshPhysicalMaterial {...entity.material} color={entity.colorPulse.color} />
     </mesh>
     <Billboard>
-      <mesh material={halo} position={[0, 0, -entity.radius * 0.08 * NODE_SCALE]}>
+      <mesh material={halo} position={[0, 0, -entity.radius * 0.08 * NODE_SCALE]} raycast={() => null}>
         <planeGeometry args={[entity.radius * 3.1 * NODE_SCALE, entity.radius * 3.1 * NODE_SCALE]} />
       </mesh>
     </Billboard>
   </group>
 }
 
-function ArtifactNode({ entity, onSelect, featured = false }: { entity: CubeEntity; onSelect: () => void; featured?: boolean }) {
+function ArtifactNode({ entity, onSelect, featured = false }: { entity: CubeEntity; onSelect: (point: SeedPoint) => void; featured?: boolean }) {
   const group = useRef<Group>(null)
   const renderSize = entity.size * (featured ? 0.82 : 1) * NODE_SCALE
-  const surface = useMemo(() => createGlassFinish(renderSize, entity.material.color), [entity.material.color, renderSize])
+  const surface = useMemo(() => createGlassFinish(renderSize, entity.material.attenuationColor), [entity.material.attenuationColor, renderSize])
   useEffect(() => () => surface.dispose(), [surface])
   useFrame(() => {
     group.current?.position.fromArray(entity.position)
     group.current?.rotation.fromArray([...entity.rotation, 'XYZ'])
+    group.current?.scale.fromArray(entity.scale)
   })
   return <group ref={group} position={entity.position} name={entity.id}
-    onClick={(event) => { event.stopPropagation(); onSelect() }}>
+    onClick={(event) => { event.stopPropagation(); onSelect({ x: event.clientX, y: event.clientY }) }}>
     <mesh material={surface} scale={1.003} renderOrder={2}>
       <boxGeometry args={[renderSize, renderSize, renderSize]} />
     </mesh>
@@ -221,14 +232,28 @@ function OpticalFinish() {
   return null
 }
 
-export function CalibrationScene({ paused, reducedMotion, resetKey, onReady, onPrimarySelect, sceneData }: SceneProps) {
+const WAITING_AGENT_CONFIG = { ...DEFAULT_CALIBRATION, agents: [], artifacts: [], connections: [] }
+const NO_ENDPOINTS = [] as const
+const NO_WORKSPACE_ARTIFACTS = [] as const
+
+export function CalibrationScene({ paused, reducedMotion, resetKey, onReady, onPrimarySelect, sceneData, agentOnly = false,
+  workspaceArtifacts = NO_WORKSPACE_ARTIFACTS, workspaceReady = false, activeWorkspaceId = null, canSelect, onWorkspaceSelect }: SceneProps) {
   const { size, camera, gl, invalidate } = useThree()
   const compact = size.width < 680
-  const visualConfig = sceneData?.config ?? DEFAULT_CALIBRATION
-  const endpointConfigs = sceneData?.endpoints ?? DEMO_ENDPOINT_CONFIGS
+  const visualConfig = sceneData?.config ?? (agentOnly ? WAITING_AGENT_CONFIG : DEFAULT_CALIBRATION)
+  const endpointConfigs = sceneData?.endpoints ?? (agentOnly ? NO_ENDPOINTS : DEMO_ENDPOINT_CONFIGS)
   const entities = useMemo(() => createCalibrationEntities(visualConfig), [visualConfig])
   const endpoints = useMemo(() => endpointConfigs.map((config) => new EndpointEntity(config)), [endpointConfigs])
-  const connections = useMemo(() => sceneData ? entities.connections : createDemoConnections(entities, endpoints), [entities, endpoints, sceneData])
+  const workspaceField = useMemo(() => new WorkspaceArtifactField(), [])
+  const [workspaceEntities, setWorkspaceEntities] = useState<WorkspaceArtifactEntity[]>([])
+  const oldArtifactDepth = useRef<number | null>(null)
+  useEffect(() => {
+    if (!workspaceReady) { setWorkspaceEntities([]); oldArtifactDepth.current = null; return }
+    setWorkspaceEntities(workspaceField.sync(workspaceArtifacts, activeWorkspaceId, !paused && !reducedMotion))
+    if (oldArtifactDepth.current === null) oldArtifactDepth.current = Math.min(12, workspaceArtifacts.length * 0.62)
+    invalidate()
+  }, [workspaceField, workspaceArtifacts, workspaceReady, activeWorkspaceId, paused, reducedMotion, invalidate])
+  const connections = useMemo(() => sceneData || agentOnly ? entities.connections : createDemoConnections(entities, endpoints), [agentOnly, entities, endpoints, sceneData])
   const positions = useMemo(() => {
     const entries: Array<[string, Vector3Tuple]> = [
       [entities.orb.id, entities.orb.position],
@@ -253,8 +278,11 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady, onP
     endpoints.forEach((endpoint) => targets.set(endpoint.id, {
       position: endpoint.position, radius: endpoint.config.radius * 1.72 * NODE_SCALE, color: endpoint.config.coronaColor, distance: 2.55,
     }))
+    workspaceEntities.forEach(artifact => targets.set(artifact.id, {
+      position: artifact.position, radius: artifact.size * 0.70 * NODE_SCALE, color: artifact.material.color, distance: 2.8,
+    }))
     return targets
-  }, [entities, endpoints])
+  }, [entities, endpoints, workspaceEntities])
   const orbGroup = useRef<Group>(null)
   const controls = useRef<OrbitControlsImpl>(null)
   const time = useRef(0)
@@ -278,6 +306,7 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady, onP
   }, [focusTargets, homeTarget])
 
   const focusObject = useCallback((id: FocusableId) => {
+    if (canSelect && !canSelect()) return
     const target = focusTargets.get(id)
     if (!target) return
     const activeFocus = cameraFocus.current
@@ -305,7 +334,7 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady, onP
     }
     setSelectedId(id)
     invalidate()
-  }, [camera, compact, focusDirection, focusTargets, homeTarget, invalidate, visualConfig])
+  }, [camera, compact, focusDirection, focusTargets, homeTarget, invalidate, visualConfig, canSelect])
 
   const cancelFocus = useCallback(() => {
     if (!cameraFocus.current) return
@@ -373,6 +402,14 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady, onP
     entities.cube.update(time.current, reducedMotion)
     entities.agents.forEach((agent) => agent.update(time.current, reducedMotion))
     entities.artifacts.forEach((artifact) => artifact.update(time.current, reducedMotion))
+    const depthTarget = Math.min(12, workspaceArtifacts.length * 0.62)
+    if (oldArtifactDepth.current !== null) {
+      if (reducedMotion) oldArtifactDepth.current = depthTarget
+      else if (!paused) oldArtifactDepth.current += (depthTarget - oldArtifactDepth.current) * (1 - Math.exp(-Math.min(delta, 0.05) * 0.45))
+      entities.cube.position[2] -= oldArtifactDepth.current
+      entities.artifacts.forEach(artifact => { artifact.position[2] -= oldArtifactDepth.current! })
+    }
+    workspaceEntities.forEach(artifact => artifact.advance(time.current, delta, paused, reducedMotion))
     endpoints.forEach((endpoint) => endpoint.update(time.current, reducedMotion))
     connections.forEach((connection) => connection.update(time.current, reducedMotion))
     if (orbGroup.current) {
@@ -414,7 +451,7 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady, onP
     <Penumbra x={1.34} z={0.72} scale={[1.20, 0.56, 1]} />
 
     <group ref={orbGroup} position={entities.orb.position} scale={entities.orb.scale} name="primary-orb"
-      onClick={(event) => { event.stopPropagation(); focusObject(entities.orb.id); onPrimarySelect?.() }}>
+      onClick={(event) => { event.stopPropagation(); if (canSelect && !canSelect()) return; focusObject(entities.orb.id); onPrimarySelect?.() }}>
       <mesh scale={1.002} material={pearl} renderOrder={2}>
         <sphereGeometry args={[entities.orb.radius * NODE_SCALE, 64, 48]} />
       </mesh>
@@ -423,14 +460,22 @@ export function CalibrationScene({ paused, reducedMotion, resetKey, onReady, onP
         <meshPhysicalMaterial {...entities.orb.material} />
       </mesh>
       <Billboard>
-        <mesh position={[0, 0, -0.04 * NODE_SCALE]} material={halo}>
+        <mesh position={[0, 0, -0.04 * NODE_SCALE]} material={halo} raycast={() => null}>
           <planeGeometry args={[2.94 * NODE_SCALE, 2.94 * NODE_SCALE]} />
         </mesh>
       </Billboard>
     </group>
     {entities.agents.map((agent) => <AgentNode key={agent.id} entity={agent} onSelect={() => focusObject(agent.id)} />)}
-    <ArtifactNode entity={entities.cube} featured onSelect={() => focusObject(entities.cube.id)} />
+    {!agentOnly && (!sceneData || sceneData.source.bundleCount + sceneData.source.sessionCount > 0) && <ArtifactNode entity={entities.cube} featured onSelect={() => focusObject(entities.cube.id)} />}
     {entities.artifacts.map((artifact) => <ArtifactNode key={artifact.id} entity={artifact} onSelect={() => focusObject(artifact.id)} />)}
+    {workspaceEntities.map(artifact => <group key={artifact.id}>
+      <ArtifactNode entity={artifact} onSelect={point => {
+        if (canSelect && !canSelect()) return
+        focusObject(artifact.id)
+        onWorkspaceSelect?.(artifact.sessionId, point)
+      }} />
+      <ArtifactBirth entity={artifact} source={entities.orb.position} />
+    </group>)}
 
     {endpoints.map((endpoint) => <group key={endpoint.id} name={endpoint.id}
       onClick={(event) => { event.stopPropagation(); focusObject(endpoint.id) }}>

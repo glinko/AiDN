@@ -50,7 +50,7 @@ export type VoiceCapabilities = {
   microphone: boolean
 }
 
-export type PrimaryAgentVoiceStatus = 'idle' | 'requesting' | 'listening' | 'sending' | 'speaking' | 'unsupported' | 'error'
+export type PrimaryAgentVoiceStatus = 'idle' | 'requesting' | 'listening' | 'sending' | 'unsupported' | 'error'
 
 export type PrimaryAgentVoice = {
   capabilities: VoiceCapabilities
@@ -60,7 +60,6 @@ export type PrimaryAgentVoice = {
   error: string | null
   startListening: () => void
   stopListening: () => void
-  speak: (text: string) => void
   submit: (text: string) => Promise<void>
 }
 
@@ -168,7 +167,7 @@ export async function deliverVoiceMessage(text: string, options: VoiceDeliveryOp
   return null
 }
 
-export function usePrimaryAgentVoice(): PrimaryAgentVoice {
+export function usePrimaryAgentVoice(options: { deliver?: (text: string) => Promise<string | null> } = {}): PrimaryAgentVoice {
   const [capabilities] = useState<VoiceCapabilities>(detectVoiceCapabilities)
   const [status, setStatus] = useState<PrimaryAgentVoiceStatus>(capabilities.recognition ? 'idle' : 'unsupported')
   const [transcript, setTranscript] = useState('')
@@ -178,107 +177,8 @@ export function usePrimaryAgentVoice(): PrimaryAgentVoice {
   const submittedTranscriptRef = useRef<string | null>(null)
   const mountedRef = useRef(true)
   const submitRef = useRef<(text: string) => Promise<void>>(() => Promise.resolve())
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const audioUrlRef = useRef<string | null>(null)
-  const playbackGenerationRef = useRef(0)
-
-  const releaseAudio = useCallback((expectedGeneration?: number) => {
-    if (expectedGeneration !== undefined && playbackGenerationRef.current !== expectedGeneration) return
-    const audio = audioRef.current
-    if (audio) {
-      audio.onended = null
-      audio.onerror = null
-      audio.pause()
-      audio.removeAttribute('src')
-      try { audio.load() } catch { /* the browser may already have disposed the element */ }
-      audioRef.current = null
-    }
-    const url = audioUrlRef.current
-    if (url && typeof URL !== 'undefined') URL.revokeObjectURL(url)
-    audioUrlRef.current = null
-  }, [])
-
-  const cancelAudio = useCallback(() => {
-    playbackGenerationRef.current += 1
-    releaseAudio()
-  }, [releaseAudio])
-
-  const speakBrowser = useCallback((normalized: string) => {
-    if (typeof window === 'undefined' || !capabilities.synthesis) {
-      setStatus('error')
-      setError('Не удалось озвучить ответ через S2 Pro и браузерный TTS.')
-      return
-    }
-    cancelAudio()
-    window.speechSynthesis.cancel()
-    window.speechSynthesis.resume()
-    const utterance = new SpeechSynthesisUtterance(normalized)
-    utterance.lang = 'ru-RU'
-    utterance.rate = 0.95
-    utterance.pitch = 1
-    utterance.volume = 1
-    utterance.onstart = () => { if (mountedRef.current) setStatus('speaking') }
-    utterance.onend = () => { if (mountedRef.current) setStatus('idle') }
-    utterance.onerror = () => {
-      if (!mountedRef.current) return
-      setStatus('error')
-      setError('Не удалось озвучить ответ агента.')
-    }
-    setError(null)
-    setResponse(normalized)
-    setStatus('speaking')
-    window.speechSynthesis.speak(utterance)
-  }, [cancelAudio, capabilities.synthesis])
-
-  const speak = useCallback((text: string) => {
-    const normalized = text.trim()
-    if (!normalized || typeof window === 'undefined') return
-
-    cancelAudio()
-    window.speechSynthesis?.cancel()
-    const generation = playbackGenerationRef.current
-    setError(null)
-    setResponse(normalized)
-    setStatus('speaking')
-
-    const fallback = () => {
-      if (!mountedRef.current || playbackGenerationRef.current !== generation) return
-      releaseAudio(generation)
-      if (capabilities.synthesis) {
-        speakBrowser(normalized)
-      } else {
-        setStatus('error')
-        setError('Не удалось озвучить ответ через S2 Pro. Проверьте, что TTS runtime запущен на ноде.')
-      }
-    }
-
-    void dashboardApi.synthesizeSpeech(normalized).then(async (blob) => {
-      if (!mountedRef.current || playbackGenerationRef.current !== generation) return
-      if (typeof Audio !== 'function' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
-        fallback()
-        return
-      }
-      const url = URL.createObjectURL(blob)
-      audioUrlRef.current = url
-      const audio = new Audio(url)
-      audio.preload = 'auto'
-      audioRef.current = audio
-      audio.onended = () => {
-        if (!mountedRef.current || playbackGenerationRef.current !== generation) return
-        releaseAudio(generation)
-        setStatus('idle')
-      }
-      audio.onerror = fallback
-      try {
-        await audio.play()
-      } catch {
-        fallback()
-      }
-    }).catch(() => {
-      fallback()
-    })
-  }, [cancelAudio, capabilities.synthesis, releaseAudio, speakBrowser])
-
+  const deliveryRef = useRef(options.deliver)
+  deliveryRef.current = options.deliver
   const submit = useCallback(async (text: string) => {
     const normalized = text.trim()
     if (!normalized || !mountedRef.current) return
@@ -286,23 +186,22 @@ export function usePrimaryAgentVoice(): PrimaryAgentVoice {
     setError(null)
     setStatus('sending')
     try {
-      const reply = await deliverVoiceMessage(normalized)
+      const reply = await (deliveryRef.current ?? deliverVoiceMessage)(normalized)
       if (!mountedRef.current) return
-      const spokenReply = reply ?? DELIVERY_ACK
-      setResponse(spokenReply)
-      speak(spokenReply)
+      setResponse(reply ?? DELIVERY_ACK)
+      setStatus('idle')
     } catch (cause) {
       if (!mountedRef.current) return
       setStatus('error')
       setError(cause instanceof Error ? cause.message : 'Не удалось отправить голосовое сообщение.')
     }
-  }, [speak])
+  }, [])
   submitRef.current = submit
 
   useEffect(() => {
     mountedRef.current = true
     const Constructor = capabilities.recognition ? getSpeechRecognitionConstructor() : undefined
-    if (!Constructor) return () => { mountedRef.current = false; cancelAudio() }
+    if (!Constructor) return () => { mountedRef.current = false }
 
     const recognition = new Constructor()
     recognition.lang = 'ru-RU'
@@ -344,10 +243,8 @@ export function usePrimaryAgentVoice(): PrimaryAgentVoice {
       mountedRef.current = false
       recognition.abort()
       recognitionRef.current = null
-      cancelAudio()
-      if (typeof window !== 'undefined') window.speechSynthesis?.cancel()
     }
-  }, [cancelAudio, capabilities.recognition])
+  }, [capabilities.recognition])
 
   const startListening = useCallback(() => {
     const recognition = recognitionRef.current
@@ -356,7 +253,7 @@ export function usePrimaryAgentVoice(): PrimaryAgentVoice {
       setError('Голосовой ввод недоступен в этом браузере.')
       return
     }
-    if (status === 'requesting' || status === 'listening' || status === 'sending' || status === 'speaking') return
+    if (status === 'requesting' || status === 'listening' || status === 'sending') return
     setError(null)
     setTranscript('')
     submittedTranscriptRef.current = null
@@ -399,12 +296,6 @@ export function usePrimaryAgentVoice(): PrimaryAgentVoice {
     }
   }, [status, submit, transcript])
 
-  useEffect(() => () => {
-    mountedRef.current = false
-    cancelAudio()
-    if (typeof window !== 'undefined') window.speechSynthesis?.cancel()
-  }, [cancelAudio])
-
   return useMemo(() => ({
     capabilities,
     status,
@@ -413,7 +304,6 @@ export function usePrimaryAgentVoice(): PrimaryAgentVoice {
     error,
     startListening,
     stopListening,
-    speak,
     submit,
-  }), [capabilities, error, response, speak, startListening, status, stopListening, submit, transcript])
+  }), [capabilities, error, response, startListening, status, stopListening, submit, transcript])
 }

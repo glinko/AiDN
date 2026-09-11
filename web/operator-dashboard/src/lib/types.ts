@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import { agentInterfaceSchema } from '@/spatial/contracts/agent-document'
+import { workspaceChatIntentSchema, workspacePublicationSchema } from '@/spatial/contracts/workspace-chat'
 
 const numberValue = z.coerce.number().catch(0)
 const stringValue = z.string().catch('')
@@ -373,9 +375,14 @@ const agentConversationMessageSchema = z.object({
   text: stringValue,
   created_at: stringValue,
   event_id: z.string().nullable().optional(),
+  request_id: z.string().nullable().optional(),
+  surface_id: z.string().nullable().optional(),
+  chat: workspaceChatIntentSchema.nullable().optional(),
 }).passthrough()
 
 const agentConversationSchema = z.object({
+  interface: agentInterfaceSchema.optional(),
+  workspace: workspacePublicationSchema.nullable().optional(),
   agent_id: z.string().nullable().optional(),
   connected: z.boolean().catch(false),
   delivery: unknownRecord.nullable().optional(),

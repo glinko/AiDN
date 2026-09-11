@@ -462,6 +462,7 @@ class McpControlPlane:
         service,
         *,
         endpoint_service=None,
+        session_service=None,
         endpoint_publication_service=None,
         validation_service=None,
         registry_service=None,
@@ -478,6 +479,7 @@ class McpControlPlane:
             )
         self.service = service
         self.endpoint_service = endpoint_service
+        self.session_service = session_service
         self.endpoint_publication_service = endpoint_publication_service
         self.endpoint_application_service = (
             EndpointApplicationService(
@@ -1067,6 +1069,8 @@ class McpControlPlane:
         }
 
     def _build_tools(self) -> dict[str, McpTool]:
+        from aidn_hypervisor.mcp.interface_tools import build_interface_tools
+
         read_schema = {"type": "object", "additionalProperties": False}
         forecast_schema = {
             "type": "object",
@@ -1119,6 +1123,7 @@ class McpControlPlane:
             "additionalProperties": False,
         }
         return {
+            **build_interface_tools(self),
             "aidn.capabilities.get": McpTool(
                 "aidn.capabilities.get",
                 "Return the negotiated MCP control-plane capabilities and policy boundary.",
@@ -1656,6 +1661,7 @@ class McpControlPlane:
                     "type": "object",
                     "properties": {
                         "text": {"type": "string", "minLength": 1, "maxLength": 16384},
+                        "request_id": {"type": "string", "minLength": 1, "maxLength": 128},
                     },
                     "required": ["text"],
                     "additionalProperties": False,
@@ -1665,6 +1671,7 @@ class McpControlPlane:
                 lambda args: self.service.receive_agent_conversation_reply(
                     agent_id=self.session.agent_identity,
                     text=str(args["text"]),
+                    request_id=args.get("request_id"),
                 ),
             ),
             "aidn.hook.list": McpTool(
@@ -2302,6 +2309,7 @@ class McpControlPlane:
                 arguments.get("bundle_id")
                 or arguments.get("endpoint_id")
                 or arguments.get("runtime_id")
+                or (self.service.agent_channel.interface.intent(arguments["intent_id"])["target"]["id"] if tool.name == "aidn.ui.apply" else None)
             ),
             plan_hash=plan["plan_hash"],
             approval_reference=arguments.get("approval_reference"),
@@ -2326,6 +2334,7 @@ class McpControlPlane:
                 "The target resource revision changed",
                 details={"expected_revision": expected_revision, "current_revision": current_revision},
             )
+        interface_intent = self.service.agent_channel.interface.intent(arguments["intent_id"]) if tool.name == "aidn.ui.apply" else None
         plan_body = {
             "tool": tool.name,
             "request_id": arguments.get("request_id"),
@@ -2333,14 +2342,15 @@ class McpControlPlane:
                 arguments.get("bundle_id")
                 or arguments.get("endpoint_id")
                 or arguments.get("runtime_id")
+                or (interface_intent["target"]["id"] if interface_intent else None)
             ),
             "arguments": plan_arguments,
             "expected_revision": expected_revision,
             "current_revision": current_revision,
-            "changes": self._planned_changes(tool.name, arguments),
+            "changes": interface_intent["diff"] if interface_intent else self._planned_changes(tool.name, arguments),
             "risks": self._planned_risks(tool.name),
             "requires_approval": self.session.approval_policy.get(tool.approval_key or "", "AUTO") != "AUTO",
-            "estimated_downtime_seconds": 0 if tool.name.endswith("activate") else 30,
+            "estimated_downtime_seconds": 0 if tool.name.endswith("activate") or interface_intent else 30,
             "estimated_q_atoms": 0,
             "validation_impact": "UNCHANGED",
         }
@@ -2363,6 +2373,8 @@ class McpControlPlane:
 
     @staticmethod
     def _planned_changes(tool_name: str, arguments: dict[str, Any]) -> list[str]:
+        if tool_name == "aidn.ui.apply":
+            return [f"Apply exact operator form intent {arguments.get('intent_id')} and verify canonical read-back"]
         bundle_id = arguments.get("bundle_id", "bundle")
         if tool_name == "aidn.bundle.activate":
             return [f"start runtime for Bundle {bundle_id}"]
@@ -2765,6 +2777,10 @@ class McpControlPlane:
         return {"status": "retrying", "delivery": _json_safe(retried)}
 
     def _target_revision(self, arguments: dict[str, Any], *, tool_name: str | None = None) -> str | None:
+        if tool_name == "aidn.ui.apply":
+            from aidn_hypervisor.mcp.interface_tools import intent_revision
+
+            return intent_revision(self, arguments["intent_id"])
         bundle_id = arguments.get("bundle_id")
         if bundle_id:
             return self._bundle_revision(bundle_id)
@@ -3224,6 +3240,7 @@ def build_mcp_server(
     service,
     *,
     endpoint_service=None,
+    session_service=None,
     endpoint_publication_service=None,
     validation_service=None,
     registry_service=None,
@@ -3278,6 +3295,7 @@ def build_mcp_server(
     control = McpControlPlane(
         service,
         endpoint_service=endpoint_service,
+        session_service=session_service,
         endpoint_publication_service=endpoint_publication_service,
         validation_service=validation_service,
         registry_service=registry_service,
@@ -3344,6 +3362,7 @@ def main(argv: list[str] | None = None) -> None:
     server = build_mcp_server(
         service,
         endpoint_service=getattr(app.state, "endpoint_service", None),
+        session_service=getattr(app.state, "session_service", None),
         endpoint_publication_service=getattr(app.state, "endpoint_publication_service", None),
         validation_service=getattr(app.state, "validation_service", None),
         registry_service=getattr(app.state, "registry_service", None),

@@ -73,8 +73,9 @@ from aidn_hypervisor.resource_probe import refresh_resource_probe_from_environme
 from aidn_hypervisor.runtime_operations_read_models import (
     build_runtime_operations_payload,
 )
+from aidn_hypervisor.s2_tts import S2TtsError
+from aidn_hypervisor.s2_tts import synthesize as synthesize_s2_tts
 from aidn_hypervisor.service import AllocationUnavailableError, HypervisorService
-from aidn_hypervisor.s2_tts import S2TtsError, synthesize as synthesize_s2_tts
 from aidn_hypervisor.session_application_service import SessionApplicationService
 from aidn_hypervisor.session_read_models import (
     build_operator_sessions_payload,
@@ -202,6 +203,10 @@ class AgentConversationMessageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str = Field(min_length=1, max_length=16_384)
+    request_id: str | None = Field(default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
+    surface_id: str | None = Field(default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
+    interaction: dict | None = Field(default=None, max_length=8)
+    chat: dict | None = Field(default=None, max_length=2)
 
 
 class SpeechSynthesisRequest(BaseModel):
@@ -2174,10 +2179,10 @@ def build_api_router(
         return service.resident_agent_status()
 
     @router.get("/operators/dashboard/agent-channel")
-    async def operator_dashboard_agent_channel() -> dict:
+    async def operator_dashboard_agent_channel(surface_id: str | None = None) -> dict:
         """Return the external MCP Agent channel and its durable history."""
 
-        return service.agent_conversation_status()
+        return service.agent_conversation_status(surface_id)
 
     @router.post("/operators/dashboard/agent-channel/connect")
     async def connect_operator_dashboard_agent_channel(
@@ -2193,7 +2198,13 @@ def build_api_router(
         payload: AgentConversationMessageRequest,
     ) -> dict:
         try:
-            return service.send_agent_conversation_message(payload.text)
+            return service.send_agent_conversation_message(
+                payload.text,
+                request_id=payload.request_id,
+                surface_id=payload.surface_id,
+                interaction=payload.interaction,
+                chat=payload.chat,
+            )
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 

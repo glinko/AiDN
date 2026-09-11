@@ -58,6 +58,7 @@ const dashboardStatusSummarySchema = z.object({
 type DashboardStatusSummary = z.infer<typeof dashboardStatusSummarySchema>
 
 type DashboardPayload = {
+  readonly primaryAgent?: { id: string; label: string; state: string; availability: 'AVAILABLE' | 'UNKNOWN' }
   readonly fleet: Fleet
   readonly endpoints: EndpointPayload
   readonly sessions: SessionDashboard
@@ -335,10 +336,10 @@ function entityRecords(payload: DashboardPayload, scope: SpatialNodeScope, now: 
   const observedAt = payload.observedAt
   const nodeId = nodeIdFor(scope, payload)
   const entities: SpatialCanonicalEntity[] = []
-  const primaryId = `primary-agent-${slug(nodeId)}`
-  const primary = primaryState(payload.residentAgent, payload.statusSummary)
+  const primaryId = payload.primaryAgent?.id ?? `primary-agent-${slug(nodeId)}`
+  const primary = payload.primaryAgent ?? primaryState(payload.residentAgent, payload.statusSummary)
   entities.push({
-    ...canonicalEntityBase('agent', primaryId, nodeId, 'Resident Primary Agent', primary.state, primary.availability, revision, observedAt),
+    ...canonicalEntityBase('agent', primaryId, nodeId, payload.primaryAgent?.label ?? 'Resident Primary Agent', primary.state, primary.availability, revision, observedAt),
     role: 'PRIMARY',
     capability_refs: ['operator.read', 'operator.observe'],
   })
@@ -658,6 +659,7 @@ export function createDashboardSpatialScene(
 /** Pure adapter seam for tests and local fixture-driven development. */
 export function createDashboardSpatialSnapshotForPayload(
   payload: {
+    readonly primaryAgent?: DashboardPayload['primaryAgent']
     readonly fleet: Fleet
     readonly endpoints: EndpointPayload
     readonly sessions: SessionDashboard
@@ -670,6 +672,7 @@ export function createDashboardSpatialSnapshotForPayload(
   now = new Date(),
 ): { snapshot: SpatialWorkspaceSnapshot; status: SpatialNodeStatus; scene: DashboardSpatialSceneData } {
   const normalized: DashboardPayload = {
+    primaryAgent: payload.primaryAgent,
     fleet: payload.fleet,
     endpoints: payload.endpoints,
     sessions: payload.sessions,

@@ -5,6 +5,12 @@ Node authority and the existing Classic route intact. The implementation is
 flag-gated where it can issue a change, and generated dashboard output remains
 out of scope for manual edits.
 
+The subsequent [Agent documents v1](./AGENT-DOCUMENTS-V1.md) slice connects the
+Pearl calibration route to real operator events, MCP reads/presentation,
+canonical endpoint mutations and verified read-back. Its explicit scope and
+remaining limits are documented separately; it does not claim the entire
+Classic component inventory is migrated.
+
 ## Implemented seams
 
 - [component inventory](../../web/operator-dashboard/src/app/component-inventory.ts)

@@ -1,8 +1,10 @@
 import { z } from 'zod'
+import { agentDocumentSchema, agentFormChangeSchema } from '@/spatial/contracts/agent-document'
 
 import { SPATIAL_INTENT_KINDS, type SpatialIntentKind } from '@/spatial/contracts'
 
 export const SPATIAL_COMPONENT_IDS = [
+  'agent-document',
   'text-response',
   'conversation-surface',
   'key-value-summary',
@@ -182,6 +184,7 @@ function builtinDefinition(
 }
 
 export const DEFAULT_SPATIAL_COMPONENTS: readonly SpatialComponentDefinition[] = [
+  { ...builtinDefinition('agent-document', agentDocumentSchema, 'GLASS', ['propose-change', 'close'], 'region'), category: 'configuration', mutation_intent_schema: agentFormChangeSchema, stream_support: 'replace' },
   builtinDefinition('text-response', textResponseDataSchema, 'TEXT', ['copy', 'open-source'], 'article', 'polite'),
   builtinDefinition('conversation-surface', conversationDataSchema, 'GLASS', ['collapse', 'retry', 'cancel', 'branch'], 'log', 'polite'),
   builtinDefinition('key-value-summary', keyValueDataSchema, 'TABLE', ['copy'], 'table'),

@@ -405,6 +405,7 @@ class HypervisorService:
             on_change=self._persist_state,
         )
         self._agent_conversation = AgentConversationService(
+            node_id=self.node_id,
             operator_id=self.operator_id,
             hook_dispatcher=self._hook_dispatcher,
             publish_event=lambda **values: self.record_event(**values),
@@ -561,17 +562,21 @@ class HypervisorService:
             limit=limit,
         )
 
-    def agent_conversation_status(self) -> dict:
-        return self._agent_conversation.status()
+    @property
+    def agent_channel(self) -> AgentConversationService:
+        return self._agent_conversation
+
+    def agent_conversation_status(self, surface_id: str | None = None) -> dict:
+        return self._agent_conversation.status(surface_id)
 
     def connect_agent_conversation(self, agent_id: str) -> dict:
         return self._agent_conversation.connect(agent_id)
 
-    def send_agent_conversation_message(self, text: str) -> dict:
-        return self._agent_conversation.send(text)
+    def send_agent_conversation_message(self, text: str, **context) -> dict:
+        return self._agent_conversation.send(text, **context)
 
-    def receive_agent_conversation_reply(self, *, agent_id: str, text: str) -> dict:
-        return self._agent_conversation.reply(agent_id=agent_id, text=text)
+    def receive_agent_conversation_reply(self, *, agent_id: str, text: str, request_id: str | None = None) -> dict:
+        return self._agent_conversation.reply(agent_id=agent_id, text=text, request_id=request_id)
 
     def agent_conversation_snapshot(self) -> dict:
         return self._agent_conversation.snapshot_state()

@@ -455,6 +455,7 @@ def build_app(
     app.state.mcp_server = build_mcp_server(
         resolved_service,
         endpoint_service=resolved_endpoint_service,
+        session_service=resolved_session_service,
         endpoint_publication_service=resolved_endpoint_publication_service,
         validation_service=resolved_validation_service,
         registry_service=resolved_registry_service,
