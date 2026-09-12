@@ -183,6 +183,14 @@ tariff), whether validation is required, whether external requests may bypass
 an allowlist, and whether publication should remain private or become public.
 No answer marked `ask` is treated as permission.
 
+The external Spatial agent follows the complete form-first protocol in
+[`ai-assisted-installation-agent-guidebook.md`](./ai-assisted-installation-agent-guidebook.md):
+after preparing the plan it reads `aidn.ui.read(kind="installation")`, presents
+the registered native fields, and only treats
+`workflow.confirm_installation=true` from a submitted form as permission to
+advance the reviewed Bundle state machine. Questions are therefore emitted as
+editable, pre-filled controls rather than as an uncorrelated prose checklist.
+
 The Resident Steward receives the same bounded projection through the
 read-only MCP tool `aidn.steward.installation_workflow` or resource
 `aidn://steward/installation`. It exposes the plan hash, observed stages,

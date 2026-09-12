@@ -388,3 +388,109 @@ def test_numeric_parameter_type_survives_an_integral_value():
     next_document = server.control.service.agent_channel.status("surface-a")["interface"]["documents"][0]
     submit(server, next_source, next_document, {"parameter.temperature": 0.6}, request_id="fractional-change")
     assert not apply(server, "fractional-change")["isError"]
+
+
+def test_installation_plan_is_presented_as_editable_form_and_confirmation_is_verified(tmp_path, monkeypatch):
+    plan_path = tmp_path / "installation-plan.json"
+    monkeypatch.setenv("AIDN_INSTALLATION_PLAN_PATH", str(plan_path))
+    server = _endpoint_server(
+        "CHAT:WRITE",
+        "NODE:READ",
+        "STEWARD:EXECUTE",
+        "ENDPOINT:READ",
+        "ENDPOINT:WRITE",
+    )
+    _initialize(server)
+    service = server.control.service
+    service.prepare_installation_plan(
+        provider="llama.cpp",
+        model_id="org/model",
+        model_source="hf://org/model/model.gguf",
+        endpoint_action="start",
+        runtime_policy={
+            "context_length": {"requested": 131072, "fallbacks": [65536, 32768], "on_exhausted": "notify"}
+        },
+    )
+    channel = service.agent_channel
+    channel.connect("agent:test")
+    channel.send("Установи модель", request_id="installation-request", surface_id="surface-a")
+    source_result = _call(
+        server,
+        "aidn.ui.read",
+        {"request_id": "installation-request", "kind": "installation"},
+    )
+    assert not source_result["isError"], source_result
+    source = source_result["structuredContent"]
+    fields = {item["id"]: item for item in source["fields"]}
+    assert fields["runtime.context_length.requested"]["value"] == "131072"
+    assert fields["runtime.context_length.fallback_65536"]["editable"] is True
+    assert fields["workflow.confirm_installation"]["value"] is False
+    presented = _call(
+        server,
+        "aidn.ui.present",
+        {
+            "request_id": "installation-request",
+            "document": {
+                "document_id": "installation-questionnaire",
+                "title": "Установка модели",
+                "blocks": [
+                    {"type": "text", "text": "Проверьте рекомендуемые значения и подтвердите раскатку."},
+                    {"type": "fields", "source_id": source["source_id"], "title": "Параметры"},
+                ],
+            },
+        },
+    )
+    assert not presented["isError"], presented
+    document = presented["structuredContent"]["document"]
+    values = {item["id"]: item["value"] for item in source["fields"]}
+    proposed = {
+        "runtime.context_length.requested": "65536",
+        "publication.pricing": "paid",
+        "publication.tariff.unit_price_q_atoms": 3_000_000,
+        "workflow.confirm_installation": True,
+    }
+    interaction = {
+        "kind": "form_change",
+        "document_id": document["document_id"],
+        "document_revision": document["revision"],
+        "source_id": source["source_id"],
+        "source_revision": source["revision"],
+        "current": {key: values[key] for key in proposed},
+        "proposed": proposed,
+    }
+    channel.send(
+        "Подтверждаю установку",
+        request_id="installation-confirmation",
+        surface_id="surface-a",
+        interaction=interaction,
+    )
+    planned = _call(
+        server,
+        "aidn.ui.apply",
+        {
+            "intent_id": "installation-confirmation",
+            "mode": "plan",
+            "request_id": "installation-confirmation-plan",
+            "idempotency_key": "installation-confirmation-plan",
+        },
+    )
+    assert not planned["isError"], planned
+    applied = _call(
+        server,
+        "aidn.ui.apply",
+        {
+            "intent_id": "installation-confirmation",
+            "mode": "apply",
+            "request_id": "installation-confirmation-plan",
+            "idempotency_key": "installation-confirmation-apply",
+            "plan_hash": planned["structuredContent"]["plan_hash"],
+        },
+    )
+    assert not applied["isError"], applied
+    result = applied["structuredContent"]
+    assert result["verified"] is True
+    assert result["installation_confirmed"] is True
+    assert result["installation"]["publication_policy"]["pricing"] == "paid"
+    assert result["installation"]["runtime_policy"]["context_length"]["requested"] == 65536
+    refreshed = channel.status("surface-a")["interface"]["documents"][0]
+    assert next(field for field in refreshed["blocks"][1]["fields"] if field["id"] == "workflow.confirm_installation")["value"] is False
