@@ -515,6 +515,25 @@ class BuildProviderInstallationPlanRequest(BaseModel):
     configuration: dict = Field(default_factory=dict)
 
 
+class PrepareInstallationPlanRequest(BaseModel):
+    """Intent-only AI-assisted setup choices collected by the Steward."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: Literal["ollama", "llama.cpp", "vllm"]
+    model_id: str = Field(min_length=1, max_length=512)
+    model_source: str = Field(min_length=1, max_length=2048)
+    endpoint_action: Literal["skip", "draft", "start"] = "draft"
+    handoff: Literal["continue", "dashboard"] = "dashboard"
+    model_expected_sha256: str | None = Field(default=None, min_length=64, max_length=64, pattern=r"^[0-9a-fA-F]{64}$")
+    model_expected_bytes: int | None = Field(default=None, gt=0)
+    runtime_policy: dict[str, object] = Field(default_factory=dict, max_length=16)
+    replacement_policy: dict[str, object] = Field(default_factory=dict, max_length=8)
+    publication_policy: dict[str, object] = Field(default_factory=dict, max_length=8)
+    expected_plan_hash: str | None = Field(default=None, min_length=1, max_length=128)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=256)
+
+
 class ApproveProviderInstallationPlanRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -2401,6 +2420,41 @@ def build_api_router(
         """Return the installer handoff without exposing secret material."""
 
         return service.installation_plan()
+
+    @router.post("/operators/dashboard/installation-plan/prepare")
+    async def prepare_operator_dashboard_installation_plan(
+        payload: PrepareInstallationPlanRequest,
+    ) -> dict:
+        """Create/revise the intent-only assisted installation plan.
+
+        This route deliberately stops before provider installation, model
+        download, runtime replacement, and endpoint publication.  The
+        Resident Steward uses the same service method through its MCP tool.
+        """
+
+        try:
+            return service.prepare_installation_plan(
+                provider=payload.provider,
+                model_id=payload.model_id,
+                model_source=payload.model_source,
+                endpoint_action=payload.endpoint_action,
+                handoff=payload.handoff,
+                model_expected_sha256=payload.model_expected_sha256,
+                model_expected_bytes=payload.model_expected_bytes,
+                runtime_policy=payload.runtime_policy,
+                replacement_policy=payload.replacement_policy,
+                publication_policy=payload.publication_policy,
+                expected_plan_hash=payload.expected_plan_hash,
+                actor="dashboard",
+                idempotency_key=payload.idempotency_key,
+            )
+        except ValueError as error:
+            message = str(error)
+            conflict = any(
+                marker in message
+                for marker in ("already exists", "changed;", "has already started")
+            )
+            raise HTTPException(status_code=409 if conflict else 422, detail=message) from error
 
     @router.get("/operators/dashboard/installation-workflow")
     async def operator_dashboard_installation_workflow() -> dict:

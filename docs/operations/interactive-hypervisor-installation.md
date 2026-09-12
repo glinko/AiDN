@@ -160,6 +160,29 @@ The Dashboard read endpoint is:
 GET /operators/dashboard/installation-plan
 ```
 
+An agent or Dashboard can create the intent-only plan through:
+
+```text
+POST /operators/dashboard/installation-plan/prepare
+```
+
+The equivalent Control Plane operation is the plan/apply MCP tool
+`aidn.steward.installation_prepare`.  It writes only the owner-readable
+`installation-plan.json`; the caller must use `mode: "plan"`, then apply that
+exact MCP `plan_hash`.  A revision must also carry the persisted
+`expected_plan_hash`.  This lets the Steward collect answers over several
+turns without silently replacing another operator's choices.
+
+The JSON policy is deliberately explicit.  The default context sequence is
+128K, then 64K, then 32K; the Bundle step forecasts each size before it is
+registered and records the attempted sizes.  If none fits, the plan stops at
+`ask_for_smaller_runtime_configuration` and reports the broker shortfall.  The
+plan also retains unresolved questions for the operator: whether the current
+runtime may be stopped, whether the Endpoint is free or paid (and its Q-ATOM
+tariff), whether validation is required, whether external requests may bypass
+an allowlist, and whether publication should remain private or become public.
+No answer marked `ask` is treated as permission.
+
 The Resident Steward receives the same bounded projection through the
 read-only MCP tool `aidn.steward.installation_workflow` or resource
 `aidn://steward/installation`. It exposes the plan hash, observed stages,

@@ -563,6 +563,53 @@ def test_mcp_steward_installation_workflow_is_bounded_and_read_only(
     assert resource["result"]["contents"][0]["mimeType"] == "application/json"
 
 
+def test_mcp_steward_installation_prepare_plans_then_writes_owner_plan(
+    monkeypatch, tmp_path
+) -> None:
+    plan_path = tmp_path / "installation-plan.json"
+    monkeypatch.setenv("AIDN_INSTALLATION_PLAN_PATH", str(plan_path))
+    server = _server("STEWARD:EXECUTE")
+    _initialize(server)
+
+    request = {
+        "provider": "llama.cpp",
+        "model_id": "org/model",
+        "model_source": "hf://org/model/model.gguf",
+        "endpoint_action": "draft",
+        "runtime_policy": {
+            "context_length": {"requested": 131072, "fallbacks": [65536, 32768]},
+            "max_tokens": 8192,
+            "kv_cache": {"type": "q8_0", "offload": True},
+        },
+        "mode": "plan",
+        "request_id": "installation-prepare-plan",
+        "idempotency_key": "installation-prepare-plan-key",
+    }
+    planned = _call(server, "aidn.steward.installation_prepare", request)
+    assert planned["isError"] is False
+    plan = planned["structuredContent"]
+    assert plan["tool"] == "aidn.steward.installation_prepare"
+    assert plan["estimated_downtime_seconds"] == 0
+    assert "download" in " ".join(plan["risks"])
+
+    applied = _call(
+        server,
+        "aidn.steward.installation_prepare",
+        {
+            **request,
+            "mode": "apply",
+            "idempotency_key": "installation-prepare-apply-key",
+            "plan_hash": plan["plan_hash"],
+        },
+    )
+    assert applied["isError"] is False
+    payload = applied["structuredContent"]
+    assert payload["mode"] == "ai_assisted"
+    assert payload["runtime_policy"]["context_length"]["fallbacks"] == [65536, 32768]
+    assert payload["publication_policy"]["visibility"] == "ask"
+    assert plan_path.exists()
+
+
 def test_mcp_steward_installation_apply_is_plan_bound_and_policy_gated(
     monkeypatch,
 ) -> None:

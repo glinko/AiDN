@@ -69,6 +69,10 @@ def _steward_installation_workflow(self) -> dict[str, Any]:
         "plan_hash": plan.get("plan_hash"),
         "provider": plan.get("provider"),
         "model": {"id": model.get("id"), "source": model.get("source")},
+        "runtime_policy": plan.get("runtime_policy"),
+        "replacement_policy": plan.get("replacement_policy"),
+        "publication_policy": plan.get("publication_policy"),
+        "questions": list(plan.get("questions") or []) if isinstance(plan.get("questions"), list) else [],
         "workflow": plan.get("workflow"),
         "authority": {
             "provider_installation": "operator_approval_required",
@@ -110,6 +114,29 @@ def _steward_installation_apply(self, arguments: dict[str, Any]) -> dict[str, An
         actor=self.session.agent_identity,
         idempotency_key=_string(arguments, "idempotency_key", required=True),
         action=action,
+    )
+
+
+def _steward_installation_prepare(self, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Create or revise the intent-only AI-assisted installation plan."""
+
+    fn = getattr(self.service, "prepare_installation_plan", None)
+    if not callable(fn):
+        return {"available": False, "reason": "installation_workflow_unavailable"}
+    return fn(
+        provider=_string(arguments, "provider", required=True),
+        model_id=_string(arguments, "model_id", required=True),
+        model_source=_string(arguments, "model_source", required=True),
+        endpoint_action=_string(arguments, "endpoint_action") or "draft",
+        handoff=_string(arguments, "handoff") or "dashboard",
+        model_expected_sha256=_string(arguments, "model_expected_sha256"),
+        model_expected_bytes=arguments.get("model_expected_bytes"),
+        runtime_policy=dict(arguments.get("runtime_policy") or {}),
+        replacement_policy=dict(arguments.get("replacement_policy") or {}),
+        publication_policy=dict(arguments.get("publication_policy") or {}),
+        expected_plan_hash=_string(arguments, "expected_plan_hash"),
+        actor=self.session.agent_identity,
+        idempotency_key=_string(arguments, "idempotency_key", required=True),
     )
 
 
@@ -263,6 +290,31 @@ def _steward_escalation_cancel(self, arguments: dict[str, Any]) -> dict[str, Any
 
 def _install_plan_wrapper(control_cls: type, original: Any) -> Any:
     def _build_plan(self, tool: Any, arguments: dict[str, Any]) -> dict[str, Any]:
+        if tool.name == "aidn.steward.installation_prepare":
+            plan_body = {
+                "tool": tool.name,
+                "request_id": arguments.get("request_id"),
+                "arguments": self._plan_arguments(arguments),
+                "changes": [
+                    "write or revise the owner-only AI-assisted installation-plan.json",
+                    "persist context fallback and endpoint policy questions for the Resident Steward",
+                ],
+                "risks": [
+                    "intent only; no provider install, model download, runtime stop, or endpoint publication is performed",
+                ],
+                "requires_approval": self.session.approval_policy.get(tool.approval_key or "", "AUTO") != "AUTO",
+                "estimated_downtime_seconds": 0,
+                "estimated_q_atoms": 0,
+                "validation_impact": "PRIVATE_ONLY",
+            }
+            plan_hash = _hash_payload(plan_body)
+            plan = {
+                "plan_id": "plan_" + plan_hash.removeprefix("sha256:")[:24],
+                "plan_hash": plan_hash,
+                **plan_body,
+            }
+            self._plans[plan_hash] = plan
+            return plan
         if tool.name == "aidn.steward.installation_apply":
             current = self.service.installation_plan()
             if not isinstance(current, dict) or not current.get("available"):
@@ -357,6 +409,7 @@ def install_steward_extensions(control_cls: type, tool_cls: type, resource_cls: 
         "_steward_status": _steward_status,
         "_steward_context": _steward_context,
         "_steward_installation_workflow": _steward_installation_workflow,
+        "_steward_installation_prepare": _steward_installation_prepare,
         "_steward_installation_apply": _steward_installation_apply,
         "_steward_decide": _steward_decide,
         "_steward_action_guard": _steward_action_guard,
@@ -389,6 +442,23 @@ def install_steward_extensions(control_cls: type, tool_cls: type, resource_cls: 
         create = {"type": "object", "properties": {"goal": {"type": "string", "minLength": 1}, "task_class": {"type": "string"}, "data_class": {"type": "string"}, "route": {"type": "object"}, "context": {"type": "object"}, "idempotency_key": {"type": "string"}, "correlation_id": {"type": "string"}, "causation_id": {"type": "string"}, "expires_in_seconds": {"type": "integer", "minimum": 60}}, "required": ["goal"], "additionalProperties": False}
         execute = {"type": "object", "properties": {"action": {"type": "string", "minLength": 1}, "target_id": {"type": "string", "minLength": 1}, "mode": {"enum": ["plan", "apply"]}, "request_id": {"type": "string", "minLength": 1}, "idempotency_key": {"type": "string", "minLength": 1}, "plan_hash": {"type": "string"}, "approval_reference": {"type": "string"}, "event_id": {"type": "string"}, "event_type": {"type": "string"}, "correlation_id": {"type": "string"}, "causation_id": {"type": "string"}, "automation_depth": {"type": "integer", "minimum": 0}, "cooldown_seconds": {"type": "integer", "minimum": 0}}, "required": ["action", "target_id", "mode", "request_id", "idempotency_key"], "additionalProperties": False}
         installation_apply = {"type": "object", "properties": {"installation_plan_hash": {"type": "string", "minLength": 1}, "action": {"enum": ["prepare_review", "apply_provider_installation", "request_model_install", "process_model_install", "create_bundle", "create_private_endpoint", "forecast_private_endpoint", "start_private_endpoint"]}, "mode": {"enum": ["plan", "apply"]}, "request_id": {"type": "string", "minLength": 1}, "idempotency_key": {"type": "string", "minLength": 1}, "approval_reference": {"type": "string"}}, "required": ["installation_plan_hash", "action", "mode", "request_id", "idempotency_key"], "additionalProperties": False}
+        installation_prepare = {"type": "object", "properties": {
+            "provider": {"type": "string", "enum": ["ollama", "llama.cpp", "vllm"]},
+            "model_id": {"type": "string", "minLength": 1, "maxLength": 512},
+            "model_source": {"type": "string", "minLength": 1, "maxLength": 2048},
+            "model_expected_sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+            "model_expected_bytes": {"type": "integer", "minimum": 1},
+            "endpoint_action": {"type": "string", "enum": ["skip", "draft", "start"]},
+            "handoff": {"type": "string", "enum": ["continue", "dashboard"]},
+            "runtime_policy": {"type": "object"},
+            "replacement_policy": {"type": "object"},
+            "publication_policy": {"type": "object"},
+            "expected_plan_hash": {"type": "string", "minLength": 1},
+            "mode": {"enum": ["plan", "apply"]},
+            "request_id": {"type": "string", "minLength": 1},
+            "idempotency_key": {"type": "string", "minLength": 1},
+            "approval_reference": {"type": "string"},
+        }, "required": ["provider", "model_id", "model_source", "mode", "request_id", "idempotency_key"], "additionalProperties": False}
         escalation_plan = {"type": "object", "properties": {"task_id": {"type": "string", "minLength": 1}, "request_id": {"type": "string"}, "idempotency_key": {"type": "string"}, "plan": {"type": "object"}, "requires_operator_approval": {"type": "boolean"}}, "required": ["task_id", "idempotency_key", "plan"], "additionalProperties": False}
         escalation_cancel = {"type": "object", "properties": {"task_id": {"type": "string", "minLength": 1}, "reason": {"type": "string"}}, "required": ["task_id"], "additionalProperties": False}
         escalation_get = {"type": "object", "properties": {"task_id": {"type": "string", "minLength": 1}}, "required": ["task_id"], "additionalProperties": False}
@@ -396,6 +466,7 @@ def install_steward_extensions(control_cls: type, tool_cls: type, resource_cls: 
             "aidn.steward.status": tool_cls("aidn.steward.status", "Return Resident Steward status.", read, ("STEWARD:READ",), "READ_ONLY", lambda _a: self._steward_status()),
             "aidn.steward.context": tool_cls("aidn.steward.context", "Return bounded redacted Steward context.", read, ("STEWARD:READ",), "READ_ONLY", lambda _a: self._steward_context()),
             "aidn.steward.installation_workflow": tool_cls("aidn.steward.installation_workflow", "Return the bounded assisted-installation workflow and next action.", read, ("STEWARD:READ",), "READ_ONLY", lambda _a: self._steward_installation_workflow()),
+            "aidn.steward.installation_prepare": tool_cls("aidn.steward.installation_prepare", "Plan or apply creation of the intent-only AI-assisted installation plan.", installation_prepare, ("STEWARD:EXECUTE",), "STEWARD_INSTALLATION", lambda a: self._steward_installation_prepare(a), mutating=True, approval_key="steward_execute"),
             "aidn.steward.installation_apply": tool_cls("aidn.steward.installation_apply", "Plan or apply the current policy-bound assisted-installation step.", installation_apply, ("STEWARD:EXECUTE",), "STEWARD_INSTALLATION", lambda a: self._steward_installation_apply(a), mutating=True, approval_key="steward_execute"),
             "aidn.steward.decide": tool_cls("aidn.steward.decide", "Return a read-only Steward recommendation.", decide, ("STEWARD:READ",), "READ_ONLY", lambda a: self._steward_decide(a)),
             "aidn.steward.action_guard": tool_cls("aidn.steward.action_guard", "Guard a bounded action without executing it.", guard, ("STEWARD:GUARD",), "READ_ONLY", lambda a: self._steward_action_guard(a)),

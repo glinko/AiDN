@@ -9,6 +9,9 @@ import pytest
 from aidn_hypervisor.installation_onboarding import (
     InstallationOnboardingPlan,
     build_installation_workflow_projection,
+    create_installation_plan,
+    installation_context_candidates,
+    installation_plan_questions,
     installation_plan_hash,
     prepare_assisted_installation_review,
     read_installation_plan,
@@ -47,6 +50,67 @@ def test_ai_plan_preserves_operator_choices_and_is_review_bound() -> None:
     assert payload["endpoint"]["requested_action"] == "draft"
     assert payload["next_action"] == "resident_steward_review"
     assert payload["authority"]["downloads"] == "explicit_operator_review_required"
+
+
+def test_ai_plan_persists_context_fallback_and_operator_questions() -> None:
+    plan = InstallationOnboardingPlan(
+        setup_mode="ai_assisted",
+        provider="llama.cpp",
+        model_id="org/model",
+        model_source="hf://org/model/model.gguf",
+        endpoint_action="draft",
+        runtime_policy={
+            "context_length": {
+                "requested": 131072,
+                "fallbacks": [65536, 32768],
+                "on_exhausted": "ask",
+            },
+            "max_tokens": 8192,
+            "kv_cache": {"type": "q8_0", "offload": True},
+        },
+    )
+    payload = plan.to_dict()
+
+    assert installation_context_candidates(payload["runtime_policy"]) == [131072, 65536, 32768]
+    assert payload["runtime_policy"]["kv_cache"] == {"type": "q8_0", "offload": True}
+    question_ids = {item["id"] for item in payload["questions"]}
+    assert {
+        "replace_current_runtime",
+        "endpoint_pricing",
+        "endpoint_validation",
+        "external_requests_without_allowlist",
+        "endpoint_visibility",
+    } <= question_ids
+    assert "context_fallback_exhausted" in question_ids
+
+
+def test_create_installation_plan_requires_hash_to_revise(tmp_path: Path) -> None:
+    path = tmp_path / "installation-plan.json"
+    created = create_installation_plan(
+        path,
+        provider="llama.cpp",
+        model_id="org/model",
+        model_source="hf://org/model/model.gguf",
+    )
+    assert created["mode"] == "ai_assisted"
+    assert created["runtime_policy"]["context_length"]["requested"] == 131072
+    with pytest.raises(ValueError, match="already exists"):
+        create_installation_plan(
+            path,
+            provider="llama.cpp",
+            model_id="org/other-model",
+            model_source="hf://org/other-model/model.gguf",
+        )
+    revised = create_installation_plan(
+        path,
+        provider="llama.cpp",
+        model_id="org/model",
+        model_source="hf://org/model/model.gguf",
+        expected_plan_hash=str(created["plan_hash"]),
+        publication_policy={"pricing": "free", "validation": "required"},
+    )
+    assert revised["publication_policy"]["pricing"] == "free"
+    assert revised["plan_hash"] != created["plan_hash"]
 
 
 def test_model_source_rejects_credentials_query_and_non_https() -> None:

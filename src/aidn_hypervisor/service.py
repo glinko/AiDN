@@ -14,7 +14,7 @@ from aidn_hypervisor.allocation_lifecycle_service import AllocationLifecycleServ
 from aidn_hypervisor.bundle_runtime_policy_service import BundleRuntimePolicyService
 from aidn_hypervisor.consensus.finality import ConsensusFinalityEvidence
 from aidn_hypervisor.consensus.models import LedgerOperationEnvelope
-from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig, TaskRequest
+from aidn_hypervisor.domain.models import AllocationRequest, BundleConfig, ResourceProfile, TaskRequest
 from aidn_hypervisor.economics.models import (
     EpochRewardPoolShares,
 )
@@ -41,7 +41,11 @@ from aidn_hypervisor.hypervisor_integration_service import (
 )
 from aidn_hypervisor.installation_onboarding import (
     build_installation_workflow_projection,
+    create_installation_plan,
+    installation_context_candidates,
     prepare_assisted_installation_review,
+    installation_plan_path,
+    provider_runtime_parameter_policy,
     read_installation_plan,
     update_installation_plan,
 )
@@ -84,6 +88,7 @@ from aidn_hypervisor.resident_worker import ResidentWorker
 from aidn_hypervisor.resources import ResourceAdmissionError
 from aidn_hypervisor.runtime_execution_service import RuntimeExecutionService
 from aidn_hypervisor.runtime_port_allocator import RuntimePortAllocationError
+from aidn_hypervisor.runtime_parameter_policy import normalize_runtime_parameter_policy
 from aidn_hypervisor.runtime_protocol import RuntimeProtocolBoundaryService
 from aidn_hypervisor.runtime_protocol.models import RuntimeRequestRecord
 from aidn_hypervisor.runtime_protocol.store import RuntimeProtocolStore
@@ -2648,6 +2653,80 @@ class HypervisorService:
             },
         }
 
+    def prepare_installation_plan(
+        self,
+        *,
+        provider: str,
+        model_id: str,
+        model_source: str | None,
+        endpoint_action: str = "draft",
+        handoff: str = "dashboard",
+        model_expected_sha256: str | None = None,
+        model_expected_bytes: int | None = None,
+        runtime_policy: dict[str, object] | None = None,
+        replacement_policy: dict[str, object] | None = None,
+        publication_policy: dict[str, object] | None = None,
+        expected_plan_hash: str | None = None,
+        actor: str = "operator",
+        idempotency_key: str | None = None,
+    ) -> dict:
+        """Create/revise the AI-assisted intent without touching the host.
+
+        This is the Control Plane entry point used by the Resident Steward and
+        the dashboard.  It only writes the owner-readable installation plan;
+        provider installation, model download, runtime replacement and
+        endpoint publication remain separate reviewed actions.
+        """
+
+        path = installation_plan_path()
+        if path is None:
+            raise ValueError(
+                "AI-assisted installation is not configured; set AIDN_INSTALLATION_PLAN_PATH"
+            )
+        payload = create_installation_plan(
+            path,
+            provider=provider,
+            model_id=model_id,
+            model_source=model_source,
+            endpoint_action=endpoint_action,
+            handoff=handoff,
+            model_expected_sha256=model_expected_sha256,
+            model_expected_bytes=model_expected_bytes,
+            runtime_policy=runtime_policy,
+            replacement_policy=replacement_policy,
+            publication_policy=publication_policy,
+            expected_plan_hash=expected_plan_hash,
+        )
+        operation_id = f"installation-plan-{uuid4().hex}"
+        self.record_event(
+            event_type="installation.plan.created" if expected_plan_hash is None else "installation.plan.revised",
+            message=(
+                "AI-assisted installation plan created"
+                if expected_plan_hash is None
+                else "AI-assisted installation plan revised with operator policy"
+            ),
+            details={
+                "operation_id": operation_id,
+                "actor": str(actor or "operator"),
+                "idempotency_key": idempotency_key,
+                "plan_hash": payload.get("plan_hash"),
+                "provider": payload.get("provider"),
+                "model_id": (payload.get("model") or {}).get("id")
+                if isinstance(payload.get("model"), dict)
+                else None,
+                "endpoint_action": (payload.get("endpoint") or {}).get("requested_action")
+                if isinstance(payload.get("endpoint"), dict)
+                else None,
+            },
+        )
+        self._persist_state()
+        return {
+            **payload,
+            "operation_id": operation_id,
+            "configured_path": str(path),
+            "next_action": payload.get("next_action") or "resident_steward_review",
+        }
+
     def apply_installation_plan(
         self,
         *,
@@ -2938,6 +3017,12 @@ class HypervisorService:
             else:
                 raise ValueError("the selected model has no concrete source URL")
         operation_id = f"model-install-{uuid4().hex}"
+        assisted_runtime_policy = provider_runtime_parameter_policy(
+            provider_type,
+            current.get("runtime_policy")
+            if isinstance(current.get("runtime_policy"), dict)
+            else {},
+        )
         install = self.request_model_install(
             provider_type=provider_type,
             model_id=model_id,
@@ -2945,6 +3030,7 @@ class HypervisorService:
             requested_by=actor,
             expected_sha256=model.get("expected_sha256"),
             expected_bytes=model.get("expected_bytes"),
+            runtime_parameter_policy=assisted_runtime_policy,
         )
         application["model"] = {
             "id": model_id,
@@ -2961,6 +3047,7 @@ class HypervisorService:
             "operation_id": operation_id,
             "idempotency_key": idempotency_key,
             "status": "QUEUED",
+            "runtime_parameter_policy": assisted_runtime_policy,
             "requested_at": datetime.now(UTC).isoformat(),
         }
         updated = update_installation_plan(
@@ -3311,6 +3398,53 @@ class HypervisorService:
             not idempotency_key or existing_runtime.get("idempotency_key") == idempotency_key
         ):
             return {**current, "operation_id": existing_runtime.get("operation_id"), "workflow": self.installation_plan().get("workflow")}
+        # Starting a new model can reclaim the GPU/VRAM used by an existing
+        # runtime.  The assisted workflow must ask first; it may only stop a
+        # different live runtime after the persisted replacement policy says
+        # so explicitly.
+        replacement_policy = current.get("replacement_policy")
+        replacement_policy = replacement_policy if isinstance(replacement_policy, dict) else {}
+        active_other_runtimes = []
+        try:
+            active_other_runtimes = [
+                runtime
+                for runtime in self.list_runtimes()
+                if str(getattr(runtime, "bundle_id", "") or "") != bundle_id
+                and str(getattr(runtime, "status", "") or "").lower()
+                not in {"stopped", "failed", "deleted"}
+            ]
+        except (AttributeError, TypeError):
+            active_other_runtimes = []
+        if active_other_runtimes:
+            replacement_mode = str(replacement_policy.get("mode") or "ask").lower()
+            allow_stop = str(replacement_policy.get("allow_stop_current") or "ask").lower()
+            if replacement_mode in {"ask", "deny"} or allow_stop in {"ask", "deny"}:
+                runtime_ids = [str(getattr(runtime, "runtime_id", "")) for runtime in active_other_runtimes]
+                application["runtime"] = {
+                    **existing_runtime,
+                    "status": "REPLACEMENT_CONFIRMATION_REQUIRED" if replacement_mode == "ask" or allow_stop == "ask" else "REPLACEMENT_DENIED",
+                    "active_runtime_ids": runtime_ids,
+                    "message": "A current runtime is active; answer whether the workflow may stop it before starting the selected model.",
+                    "next_step": "revise_replacement_policy",
+                }
+                updated = update_installation_plan(
+                    None,
+                    expected_hash=plan_hash,
+                    status="RUNTIME_REPLACEMENT_CONFIRMATION_REQUIRED" if replacement_mode == "ask" or allow_stop == "ask" else "RUNTIME_REPLACEMENT_DENIED",
+                    application=application,
+                    next_action="ask_replace_current_runtime" if replacement_mode == "ask" or allow_stop == "ask" else "choose_parallel_runtime_or_free_capacity",
+                )
+                updated["workflow"] = self.installation_plan().get("workflow")
+                return updated
+            if replacement_mode == "replace" and allow_stop == "allow":
+                stopped_runtime_ids: list[str] = []
+                for runtime in active_other_runtimes:
+                    runtime_id = str(getattr(runtime, "runtime_id", ""))
+                    if not runtime_id:
+                        continue
+                    self.force_stop_runtime(runtime_id)
+                    stopped_runtime_ids.append(runtime_id)
+                existing_runtime["stopped_runtime_ids"] = stopped_runtime_ids
         try:
             runtime = self.start_bundle(bundle_id, reserve_resources=True)
         except (ResourceAdmissionError, RuntimePortAllocationError) as error:
@@ -3361,6 +3495,93 @@ class HypervisorService:
         updated["workflow"] = self.installation_plan().get("workflow")
         return updated
 
+    def _select_assisted_runtime_context(
+        self,
+        *,
+        provider_type: str,
+        install: dict,
+        runtime_policy: dict,
+    ) -> tuple[int, list[dict[str, object]]]:
+        """Pick the first context size admitted by the side-effect-free broker.
+
+        The selection happens before the Bundle is registered, so a fallback
+        does not leave an Endpoint or Bundle pointing at a stale hash.  The
+        actual runtime start still performs its authoritative admission check.
+        """
+
+        candidates = installation_context_candidates(runtime_policy)
+        resources = getattr(self, "resources", None)
+        if resources is None or not callable(getattr(resources, "forecast", None)):
+            return candidates[0], [
+                {
+                    "context_length": candidates[0],
+                    "decision": "UNKNOWN",
+                    "reason": "resource_broker_unavailable",
+                }
+            ]
+        plugin = self._get_plugin(provider_type)
+        defaults = plugin.bundle_defaults_from_install(
+            model_id=str(install.get("provider_model_reference") or install.get("model_id") or "model"),
+            target_path=str(install.get("target_path") or ""),
+        )
+        attempts: list[dict[str, object]] = []
+        for candidate_context in candidates:
+            policy = normalize_runtime_parameter_policy(
+                provider_type,
+                provider_runtime_parameter_policy(
+                    provider_type,
+                    runtime_policy,
+                    context_length=candidate_context,
+                ),
+            )
+            candidate_bundle = BundleConfig(
+                bundle_id="bundle-context-forecast",
+                plugin_id=plugin.plugin_id,
+                provider_type=provider_type,
+                workload_type="llm_text",
+                model_id=str(defaults["model_id"]),
+                launch_mode=str(defaults["launch_mode"]),
+                endpoint="http://127.0.0.1:8080",
+                device_affinity=str(defaults["device_affinity"]),
+                resource_profile=ResourceProfile(),
+                warm_policy="auto",
+                priority_class=50,
+                max_parallel_requests=1,
+                enabled=True,
+                runtime_parameter_policy=policy,
+            )
+            plugin.validate_bundle(candidate_bundle)
+            estimate = plugin.estimate_resources(
+                TaskRequest(
+                    task_type="runtime_activation",
+                    payload={},
+                    constraints={"bundle_id": "bundle-context-forecast"},
+                ),
+                candidate_bundle,
+                None,
+            )
+            startup = estimate.get("startup_transient", {})
+            startup = startup if isinstance(startup, dict) else {}
+            resident = estimate.get("runtime_resident", {})
+            resident = resident if isinstance(resident, dict) else {}
+            required = {
+                "cpu": float(startup.get("cpu", 0.0) or 0.0) + float(resident.get("cpu", 0.0) or 0.0),
+                "ram_mb": int(startup.get("ram_mb", 0) or 0) + int(resident.get("ram_mb", 0) or 0),
+                "vram_mb": int(startup.get("vram_mb", 0) or 0) + int(resident.get("vram_mb", 0) or 0),
+            }
+            forecast = dict(resources.forecast(**required))
+            attempts.append(
+                {
+                    "context_length": candidate_context,
+                    "decision": forecast.get("decision"),
+                    "required": required,
+                    "shortfall": forecast.get("shortfall"),
+                }
+            )
+            if str(forecast.get("decision") or "").upper() == "ADMIT":
+                return candidate_context, attempts
+        return candidates[-1], attempts
+
     def _create_bundle_from_installation_plan(
         self,
         *,
@@ -3398,6 +3619,34 @@ class HypervisorService:
         )
         if install is None or str(install.get("status") or "").lower() != "completed":
             raise ValueError("model install is not completed; process and verify it before creating a Bundle")
+        runtime_policy = current.get("runtime_policy")
+        runtime_policy = runtime_policy if isinstance(runtime_policy, dict) else {}
+        context_candidates = installation_context_candidates(runtime_policy)
+        selected_context, context_attempts = self._select_assisted_runtime_context(
+            provider_type=str(current.get("provider") or install.get("provider_type") or ""),
+            install=install,
+            runtime_policy=runtime_policy,
+        )
+        selected_decision = str(context_attempts[-1].get("decision") or "").upper() if context_attempts else "UNKNOWN"
+        if selected_decision not in {"ADMIT", "UNKNOWN"}:
+            application["runtime"] = {
+                "status": "CONTEXT_RESOURCE_EXHAUSTED",
+                "requested_context_length": context_candidates[0],
+                "attempted_context_lengths": context_candidates,
+                "attempts": context_attempts,
+                "message": "None of the configured context sizes fit current allocatable resources.",
+                "next_step": "ask_for_smaller_runtime_configuration",
+            }
+            updated = update_installation_plan(
+                None,
+                expected_hash=plan_hash,
+                status="CONTEXT_RESOURCE_EXHAUSTED",
+                application=application,
+                next_action="ask_for_smaller_runtime_configuration",
+            )
+            updated["context_attempts"] = context_attempts
+            updated["workflow"] = self.installation_plan().get("workflow")
+            return updated
         operation_id = f"bundle-install-{uuid4().hex}"
         bundle_id = f"bundle-steward-{install_id}"[:128]
         bundle = self.register_bundle_from_install(
@@ -3405,6 +3654,13 @@ class HypervisorService:
             bundle_id=bundle_id,
             workload_type="llm_text",
             endpoint="http://127.0.0.1:8080",
+            runtime_parameter_policy=provider_runtime_parameter_policy(
+                str(current.get("provider") or ""),
+                current.get("runtime_policy")
+                if isinstance(current.get("runtime_policy"), dict)
+                else {},
+                context_length=selected_context,
+            ),
         )
         application["bundle"] = {
             "bundle_id": bundle["bundle_id"],
@@ -3415,6 +3671,17 @@ class HypervisorService:
             "idempotency_key": idempotency_key,
             "created_at": datetime.now(UTC).isoformat(),
             "actor": actor,
+            "publication_policy": current.get("publication_policy")
+            if isinstance(current.get("publication_policy"), dict)
+            else {},
+        }
+        application["runtime"] = {
+            "status": "CONTEXT_SELECTED",
+            "requested_context_length": context_candidates[0],
+            "selected_context_length": selected_context,
+            "attempted_context_lengths": [int(item.get("context_length")) for item in context_attempts],
+            "fallback_applied": selected_context != context_candidates[0],
+            "attempts": context_attempts,
         }
         updated = update_installation_plan(
             None,

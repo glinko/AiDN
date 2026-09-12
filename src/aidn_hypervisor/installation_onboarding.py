@@ -16,9 +16,10 @@ import os
 import re
 import tempfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -27,6 +28,37 @@ PROVIDER_CHOICES = {"skip", "ollama", "llama.cpp", "vllm"}
 ENDPOINT_ACTIONS = {"skip", "draft", "start"}
 HANDOFF_ACTIONS = {"continue", "dashboard"}
 PLAN_MAX_BYTES = 128 * 1024
+
+# The assisted workflow keeps resource-sensitive choices explicit in the plan
+# instead of allowing an agent to invent launch flags.  Context fallback is
+# deterministic: try the requested 128K window, then 64K, then 32K, and stop
+# with a user-visible explanation if none fits the Resource Broker forecast.
+CONTEXT_LENGTH_CHOICES = (131_072, 65_536, 32_768)
+DEFAULT_RUNTIME_POLICY: dict[str, object] = {
+    "context_length": {
+        "requested": CONTEXT_LENGTH_CHOICES[0],
+        "fallbacks": list(CONTEXT_LENGTH_CHOICES[1:]),
+        "on_exhausted": "notify",
+    },
+    "max_tokens": 8192,
+    "gpu_layers": "auto",
+    "kv_cache": {"type": "auto", "offload": "auto"},
+    "max_concurrency": 1,
+}
+DEFAULT_REPLACEMENT_POLICY: dict[str, object] = {
+    "mode": "ask",
+    "allow_stop_current": "ask",
+}
+DEFAULT_PUBLICATION_POLICY: dict[str, object] = {
+    "visibility": "ask",
+    "pricing": "ask",
+    "tariff": None,
+    "validation": "ask",
+    "external_requests_without_allowlist": "ask",
+    "endpoint_name": None,
+}
+_POLICY_KV_TYPES = {"auto", "f16", "q8_0", "q4_0"}
+_POLICY_ASK = "ask"
 
 
 def _set_owner_only_permissions(fd: int) -> None:
@@ -94,6 +126,366 @@ def validate_model_source(value: str, *, provider: str) -> str:
     return source
 
 
+def _bounded_integer(value: object, *, name: str, minimum: int, maximum: int) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be an integer")
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be an integer") from error
+    if normalized < minimum or normalized > maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return normalized
+
+
+def normalize_installation_runtime_policy(value: Mapping[str, object] | None) -> dict[str, object]:
+    """Normalize the resource-sensitive runtime choices stored in a plan.
+
+    This policy is intentionally separate from the provider's lower-level
+    ``runtime_parameter_policy``.  It describes the operator's decision tree
+    (including context fallbacks), while the service translates the selected
+    values into provider-safe launch parameters only after a resource forecast.
+    """
+
+    raw = dict(value or {})
+    allowed = {"context_length", "max_tokens", "gpu_layers", "kv_cache", "max_concurrency"}
+    unknown = sorted(set(raw) - allowed)
+    if unknown:
+        raise ValueError(f"unsupported installation runtime policy fields: {', '.join(unknown)}")
+
+    context_raw = raw.get("context_length", {})
+    if isinstance(context_raw, Mapping):
+        requested_raw = context_raw.get("requested", CONTEXT_LENGTH_CHOICES[0])
+        fallbacks_raw = context_raw.get("fallbacks", list(CONTEXT_LENGTH_CHOICES[1:]))
+        exhausted = str(context_raw.get("on_exhausted", _POLICY_ASK)).strip().lower()
+        selected_raw = context_raw.get("selected")
+    else:
+        requested_raw = context_raw
+        fallbacks_raw = list(CONTEXT_LENGTH_CHOICES[1:])
+        exhausted = _POLICY_ASK
+        selected_raw = None
+    requested = _bounded_integer(
+        requested_raw,
+        name="runtime context_length.requested",
+        minimum=32_768,
+        maximum=CONTEXT_LENGTH_CHOICES[0],
+    )
+    if requested not in CONTEXT_LENGTH_CHOICES:
+        raise ValueError("runtime context_length.requested must be 131072, 65536, or 32768")
+    if not isinstance(fallbacks_raw, Sequence) or isinstance(fallbacks_raw, (str, bytes)):
+        raise ValueError("runtime context_length.fallbacks must be an array")
+    fallbacks: list[int] = []
+    for item in fallbacks_raw:
+        candidate = _bounded_integer(
+            item,
+            name="runtime context_length fallback",
+            minimum=32_768,
+            maximum=CONTEXT_LENGTH_CHOICES[0],
+        )
+        if candidate not in CONTEXT_LENGTH_CHOICES:
+            raise ValueError("runtime context_length fallbacks must be 131072, 65536, or 32768")
+        if candidate < requested and candidate not in fallbacks:
+            fallbacks.append(candidate)
+    # The policy requested by the operator is always evaluated first.  Keep
+    # the canonical descending fallback order even when a UI submits fields in
+    # a different order, and fill the standard lower choices when omitted.
+    fallbacks = [candidate for candidate in CONTEXT_LENGTH_CHOICES if candidate < requested and candidate in fallbacks]
+    if not fallbacks:
+        fallbacks = [candidate for candidate in CONTEXT_LENGTH_CHOICES if candidate < requested]
+    if exhausted not in {"notify", "ask", "stop"}:
+        raise ValueError("runtime context_length.on_exhausted must be notify, ask, or stop")
+    selected: int | None = None
+    if selected_raw is not None:
+        selected = _bounded_integer(
+            selected_raw,
+            name="runtime context_length.selected",
+            minimum=32_768,
+            maximum=CONTEXT_LENGTH_CHOICES[0],
+        )
+        if selected not in [requested, *fallbacks]:
+            raise ValueError("runtime context_length.selected must be one of the requested or fallback sizes")
+    context_payload: dict[str, object] = {
+        "requested": requested,
+        "fallbacks": fallbacks,
+        "on_exhausted": exhausted,
+    }
+    if selected is not None:
+        context_payload["selected"] = selected
+
+    max_tokens = _bounded_integer(
+        raw.get("max_tokens", 8192),
+        name="runtime max_tokens",
+        minimum=1,
+        maximum=32_768,
+    )
+    gpu_layers_raw = raw.get("gpu_layers", "auto")
+    if isinstance(gpu_layers_raw, str) and gpu_layers_raw.strip().lower() == "auto":
+        gpu_layers: int | str = "auto"
+    else:
+        gpu_layers = _bounded_integer(gpu_layers_raw, name="runtime gpu_layers", minimum=0, maximum=999)
+
+    kv_raw = raw.get("kv_cache", {})
+    if not isinstance(kv_raw, Mapping):
+        raise ValueError("runtime kv_cache must be an object")
+    kv_type = str(kv_raw.get("type", "auto")).strip().lower()
+    if kv_type not in _POLICY_KV_TYPES:
+        raise ValueError("runtime kv_cache.type must be auto, f16, q8_0, or q4_0")
+    offload_raw = kv_raw.get("offload", "auto")
+    if isinstance(offload_raw, bool):
+        kv_offload: bool | str = offload_raw
+    else:
+        offload = str(offload_raw).strip().lower()
+        if offload not in {"auto", "true", "false"}:
+            raise ValueError("runtime kv_cache.offload must be auto, true, or false")
+        kv_offload = "auto" if offload == "auto" else offload == "true"
+
+    max_concurrency = _bounded_integer(
+        raw.get("max_concurrency", 1),
+        name="runtime max_concurrency",
+        minimum=1,
+        maximum=4096,
+    )
+    return {
+        "context_length": context_payload,
+        "max_tokens": max_tokens,
+        "gpu_layers": gpu_layers,
+        "kv_cache": {"type": kv_type, "offload": kv_offload},
+        "max_concurrency": max_concurrency,
+    }
+
+
+def _normalize_tri_state(value: object, *, name: str, true_label: str = "allow") -> str:
+    if isinstance(value, bool):
+        return true_label if value else "deny"
+    normalized = str(value).strip().lower()
+    if normalized in {"ask", true_label, "deny"}:
+        return normalized
+    raise ValueError(f"{name} must be ask, {true_label}, or deny")
+
+
+def normalize_installation_replacement_policy(value: Mapping[str, object] | None) -> dict[str, object]:
+    raw = dict(value or {})
+    unknown = sorted(set(raw) - {"mode", "allow_stop_current"})
+    if unknown:
+        raise ValueError(f"unsupported installation replacement policy fields: {', '.join(unknown)}")
+    mode = str(raw.get("mode", "ask")).strip().lower()
+    if mode not in {"ask", "replace", "parallel", "deny"}:
+        raise ValueError("replacement mode must be ask, replace, parallel, or deny")
+    return {
+        "mode": mode,
+        "allow_stop_current": _normalize_tri_state(
+            raw.get("allow_stop_current", "ask"),
+            name="replacement allow_stop_current",
+        ),
+    }
+
+
+def normalize_installation_publication_policy(value: Mapping[str, object] | None) -> dict[str, object]:
+    raw = dict(value or {})
+    unknown = sorted(
+        set(raw)
+        - {"visibility", "pricing", "tariff", "validation", "external_requests_without_allowlist", "endpoint_name"}
+    )
+    if unknown:
+        raise ValueError(f"unsupported installation publication policy fields: {', '.join(unknown)}")
+    visibility = str(raw.get("visibility", "ask")).strip().lower()
+    if visibility not in {"ask", "private", "public"}:
+        raise ValueError("publication visibility must be ask, private, or public")
+    pricing = str(raw.get("pricing", "ask")).strip().lower()
+    if pricing not in {"ask", "free", "paid", "fixed", "metered"}:
+        raise ValueError("publication pricing must be ask, free, paid, fixed, or metered")
+    tariff_raw = raw.get("tariff")
+    tariff: dict[str, object] | None = None
+    if tariff_raw is not None:
+        if not isinstance(tariff_raw, Mapping):
+            raise ValueError("publication tariff must be an object")
+        tariff_unknown = sorted(
+            set(tariff_raw) - {"kind", "dimension", "unit_price_q_atoms", "unit_divisor", "minimum_charge_q_atoms"}
+        )
+        if tariff_unknown:
+            raise ValueError(f"unsupported publication tariff fields: {', '.join(tariff_unknown)}")
+        tariff_kind = str(tariff_raw.get("kind", "metered")).strip().lower()
+        if tariff_kind not in {"fixed", "metered"}:
+            raise ValueError("publication tariff.kind must be fixed or metered")
+        dimension = str(tariff_raw.get("dimension", "request_count")).strip().lower()
+        if dimension not in {
+            "request_count",
+            "input_tokens",
+            "output_tokens",
+            "cached_input_tokens",
+        }:
+            raise ValueError("publication tariff.dimension is not supported")
+        if tariff_kind == "fixed" and dimension != "request_count":
+            raise ValueError("fixed publication tariff must use request_count")
+        tariff = {
+            "kind": tariff_kind,
+            "dimension": dimension,
+            "unit_price_q_atoms": _bounded_integer(
+                tariff_raw.get("unit_price_q_atoms", 0),
+                name="publication tariff.unit_price_q_atoms",
+                minimum=0,
+                maximum=10**12,
+            ),
+            "unit_divisor": _bounded_integer(
+                tariff_raw.get("unit_divisor", 1),
+                name="publication tariff.unit_divisor",
+                minimum=1,
+                maximum=10**9,
+            ),
+            "minimum_charge_q_atoms": _bounded_integer(
+                tariff_raw.get("minimum_charge_q_atoms", 0),
+                name="publication tariff.minimum_charge_q_atoms",
+                minimum=0,
+                maximum=10**12,
+            ),
+        }
+        if pricing in {"fixed", "metered"} and tariff["kind"] != pricing:
+            raise ValueError("publication tariff.kind must match the selected pricing mode")
+        if pricing == "free" and int(tariff["unit_price_q_atoms"]) > 0:
+            raise ValueError("a free endpoint cannot include a positive tariff")
+    validation = str(raw.get("validation", "ask")).strip().lower()
+    if validation not in {"ask", "required", "disabled"}:
+        raise ValueError("publication validation must be ask, required, or disabled")
+    endpoint_name_raw = raw.get("endpoint_name")
+    endpoint_name = _clean(endpoint_name_raw) or None
+    if endpoint_name is not None:
+        if len(endpoint_name) > 128 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._:/-]*", endpoint_name):
+            raise ValueError("publication endpoint_name must be a bounded display name")
+    return {
+        "visibility": visibility,
+        "pricing": pricing,
+        "tariff": tariff,
+        "validation": validation,
+        "external_requests_without_allowlist": _normalize_tri_state(
+            raw.get("external_requests_without_allowlist", "ask"),
+            name="publication external_requests_without_allowlist",
+            true_label="allow",
+        ),
+        "endpoint_name": endpoint_name,
+    }
+
+
+def installation_plan_questions(
+    *,
+    runtime_policy: Mapping[str, object],
+    replacement_policy: Mapping[str, object],
+    publication_policy: Mapping[str, object],
+) -> list[dict[str, object]]:
+    """Return the bounded questions an agent must ask before mutating setup."""
+
+    questions: list[dict[str, object]] = []
+    context = runtime_policy.get("context_length")
+    if isinstance(context, Mapping) and context.get("on_exhausted") == "ask":
+        questions.append(
+            {
+                "id": "context_fallback_exhausted",
+                "prompt": "If 128K, 64K, and 32K all fail resource admission, should installation stop and ask for a smaller configuration?",
+                "choices": ["ask", "stop"],
+                "default": "ask",
+            }
+        )
+    if replacement_policy.get("mode") == "ask" or replacement_policy.get("allow_stop_current") == "ask":
+        questions.append(
+            {
+                "id": "replace_current_runtime",
+                "prompt": "May the workflow stop the current runtime if the selected model needs the GPU?",
+                "choices": ["allow", "deny"],
+                "default": "deny",
+            }
+        )
+    if publication_policy.get("pricing") == "ask":
+        questions.append(
+            {
+                "id": "endpoint_pricing",
+                "prompt": "Should the endpoint be free or paid?",
+                "choices": ["free", "paid"],
+            }
+        )
+    if publication_policy.get("pricing") in {"paid", "fixed", "metered"} and not publication_policy.get("tariff"):
+        questions.append(
+            {
+                "id": "endpoint_tariff",
+                "prompt": "Which Q-ATOM tariff should be applied to the paid endpoint?",
+                "choices": ["fixed request price", "metered input/output price"],
+                "required_fields": ["kind", "dimension", "unit_price_q_atoms"],
+            }
+        )
+    if publication_policy.get("validation") == "ask":
+        questions.append(
+            {
+                "id": "endpoint_validation",
+                "prompt": "Run endpoint validation before it can be published?",
+                "choices": ["required", "disabled"],
+                "default": "required",
+            }
+        )
+    if publication_policy.get("external_requests_without_allowlist") == "ask":
+        questions.append(
+            {
+                "id": "external_requests_without_allowlist",
+                "prompt": "Allow external requests without an allowlist?",
+                "choices": ["allow", "deny"],
+                "default": "deny",
+            }
+        )
+    if publication_policy.get("visibility") == "ask":
+        questions.append(
+            {
+                "id": "endpoint_visibility",
+                "prompt": "Keep the endpoint private or publish it?",
+                "choices": ["private", "public"],
+                "default": "private",
+            }
+        )
+    return questions
+
+
+def installation_context_candidates(runtime_policy: Mapping[str, object]) -> list[int]:
+    """Return the ordered context sizes a forecast may try."""
+
+    normalized = normalize_installation_runtime_policy(runtime_policy)
+    context = normalized["context_length"]
+    assert isinstance(context, Mapping)
+    return [int(context["requested"]), *[int(item) for item in context["fallbacks"]]]
+
+
+def provider_runtime_parameter_policy(
+    provider: str,
+    runtime_policy: Mapping[str, object],
+    *,
+    context_length: int | None = None,
+) -> dict[str, object]:
+    """Translate assisted choices into the provider-neutral runtime contract."""
+
+    normalized = normalize_installation_runtime_policy(runtime_policy)
+    context = normalized["context_length"]
+    assert isinstance(context, Mapping)
+    selected_context = context_length or context.get("selected") or context["requested"]
+    selected_context = _bounded_integer(
+        selected_context,
+        name="runtime context_length",
+        minimum=32_768,
+        maximum=CONTEXT_LENGTH_CHOICES[0],
+    )
+    result: dict[str, object] = {
+        "context_length": selected_context,
+        "max_tokens": normalized["max_tokens"],
+    }
+    provider_key = str(provider).strip().lower()
+    if provider_key == "llama.cpp":
+        gpu_layers = normalized["gpu_layers"]
+        if gpu_layers != "auto":
+            result["gpu_layers"] = gpu_layers
+        kv_cache = normalized["kv_cache"]
+        assert isinstance(kv_cache, Mapping)
+        if kv_cache.get("offload") != "auto":
+            result["kv_offload"] = kv_cache["offload"]
+        if kv_cache.get("type") != "auto":
+            result["kv_cache_type_k"] = kv_cache["type"]
+            result["kv_cache_type_v"] = kv_cache["type"]
+    return result
+
+
 @dataclass(frozen=True)
 class InstallationOnboardingPlan:
     """Serializable, resumable choices collected by the installer."""
@@ -106,6 +498,9 @@ class InstallationOnboardingPlan:
     model_expected_bytes: int | None = None
     endpoint_action: str = "skip"
     handoff: str = "dashboard"
+    runtime_policy: Mapping[str, object] = field(default_factory=dict)
+    replacement_policy: Mapping[str, object] = field(default_factory=dict)
+    publication_policy: Mapping[str, object] = field(default_factory=dict)
     schema_version: int = 1
 
     def __post_init__(self) -> None:
@@ -159,6 +554,9 @@ class InstallationOnboardingPlan:
                 raise ValueError("model integrity metadata requires a model source")
             if endpoint_action != "skip" and model_source is None:
                 raise ValueError("endpoint setup requires a model source")
+        runtime_policy = normalize_installation_runtime_policy(self.runtime_policy)
+        replacement_policy = normalize_installation_replacement_policy(self.replacement_policy)
+        publication_policy = normalize_installation_publication_policy(self.publication_policy)
         object.__setattr__(self, "setup_mode", mode)
         object.__setattr__(self, "provider", provider)
         object.__setattr__(self, "model_id", model_id)
@@ -167,6 +565,9 @@ class InstallationOnboardingPlan:
         object.__setattr__(self, "model_expected_bytes", model_expected_bytes)
         object.__setattr__(self, "endpoint_action", endpoint_action)
         object.__setattr__(self, "handoff", handoff)
+        object.__setattr__(self, "runtime_policy", runtime_policy)
+        object.__setattr__(self, "replacement_policy", replacement_policy)
+        object.__setattr__(self, "publication_policy", publication_policy)
 
     @property
     def ai_assisted(self) -> bool:
@@ -196,6 +597,11 @@ class InstallationOnboardingPlan:
                     "expected_bytes": self.model_expected_bytes,
                 }
             )
+        questions = installation_plan_questions(
+            runtime_policy=self.runtime_policy,
+            replacement_policy=self.replacement_policy,
+            publication_policy=self.publication_policy,
+        )
         return {
             "schema_version": self.schema_version,
             "created_at": datetime.now(UTC).isoformat(),
@@ -204,6 +610,10 @@ class InstallationOnboardingPlan:
             "provider": self.provider,
             "model": model_payload,
             "endpoint": {"requested_action": self.endpoint_action},
+            "runtime_policy": dict(self.runtime_policy),
+            "replacement_policy": dict(self.replacement_policy),
+            "publication_policy": dict(self.publication_policy),
+            "questions": questions,
             "handoff": self.handoff,
             "status": "READY_FOR_REVIEW" if self.ai_assisted else "MANUAL",
             "next_action": next_action,
@@ -237,6 +647,83 @@ def write_installation_plan(path: str | os.PathLike[str], plan: InstallationOnbo
         except OSError:
             pass
         raise
+    return payload
+
+
+def create_installation_plan(
+    path: str | os.PathLike[str],
+    *,
+    provider: str,
+    model_id: str,
+    model_source: str | None,
+    endpoint_action: str = "draft",
+    handoff: str = "dashboard",
+    model_expected_sha256: str | None = None,
+    model_expected_bytes: int | None = None,
+    runtime_policy: Mapping[str, object] | None = None,
+    replacement_policy: Mapping[str, object] | None = None,
+    publication_policy: Mapping[str, object] | None = None,
+    expected_plan_hash: str | None = None,
+) -> dict[str, object]:
+    """Create or revise an AI-assisted plan without executing host actions.
+
+    Revision is allowed only while the plan is still an un-applied review.  A
+    caller must provide the current hash for a revision, which lets a chat
+    agent safely collect the pricing/validation/runtime answers over several
+    turns without overwriting another operator's choices.
+    """
+
+    current = read_installation_plan(path)
+    preserve_application: dict[str, object] | None = None
+    preserve_status: str | None = None
+    preserve_next_action: str | None = None
+    if current.get("available"):
+        if expected_plan_hash is None:
+            raise ValueError("an installation plan already exists; provide expected_plan_hash to revise it")
+        if str(current.get("plan_hash") or "") != str(expected_plan_hash):
+            raise ValueError("installation plan changed; refresh before revising")
+        application = current.get("application")
+        if isinstance(application, Mapping) and application:
+            current_model = current.get("model") if isinstance(current.get("model"), Mapping) else {}
+            if (
+                str(current.get("provider") or "") != str(provider)
+                or str(current_model.get("id") or "") != str(model_id)
+                or str(current_model.get("source") or "") != str(model_source or "")
+            ):
+                raise ValueError("provider and model choices cannot change after the workflow has started")
+            current_runtime = application.get("runtime")
+            current_runtime = current_runtime if isinstance(current_runtime, Mapping) else {}
+            if current_runtime.get("runtime_id"):
+                raise ValueError("installation plan has already started a runtime; revise it through the workflow actions")
+            preserve_application = dict(application)
+            preserve_status = str(current.get("status") or "") or None
+            preserve_next_action = str(current.get("next_action") or "") or None
+    elif expected_plan_hash is not None:
+        raise ValueError("expected_plan_hash was supplied but no installation plan exists")
+    plan = InstallationOnboardingPlan(
+        setup_mode="ai_assisted",
+        provider=provider,
+        model_id=model_id,
+        model_source=model_source,
+        model_expected_sha256=model_expected_sha256,
+        model_expected_bytes=model_expected_bytes,
+        endpoint_action=endpoint_action,
+        handoff=handoff,
+        runtime_policy=runtime_policy or {},
+        replacement_policy=replacement_policy or {},
+        publication_policy=publication_policy or {},
+    )
+    payload = write_installation_plan(path, plan)
+    if preserve_application is not None:
+        # Keep completed provider/model/bundle observations while changing only
+        # the still-unresolved policy answers.  The update rebinds the hash.
+        return update_installation_plan(
+            path,
+            expected_hash=str(payload["plan_hash"]),
+            status=preserve_status or str(payload.get("status") or "READY_FOR_REVIEW"),
+            application=preserve_application,
+            next_action=preserve_next_action,
+        )
     return payload
 
 
@@ -329,6 +816,21 @@ def read_installation_plan(
                 else "skip"
             ),
             handoff=str(payload.get("handoff") or "dashboard"),
+            runtime_policy=(
+                payload.get("runtime_policy")
+                if isinstance(payload.get("runtime_policy"), Mapping)
+                else {}
+            ),
+            replacement_policy=(
+                payload.get("replacement_policy")
+                if isinstance(payload.get("replacement_policy"), Mapping)
+                else {}
+            ),
+            publication_policy=(
+                payload.get("publication_policy")
+                if isinstance(payload.get("publication_policy"), Mapping)
+                else {}
+            ),
             schema_version=int(payload.get("schema_version") or 1),
         )
         normalized = plan.to_dict(plan_path=str(resolved))
@@ -605,7 +1107,23 @@ def build_installation_workflow_projection(
     completed = sum(1 for stage in required_stages if stage["state"] in {"READY", "SKIPPED"})
     required = len(required_stages)
 
-    if plan_status in {"READY_FOR_REVIEW", "PLAN_READY"} and not application:
+    context_exhausted = str(application_runtime.get("status") or "").upper() == "CONTEXT_RESOURCE_EXHAUSTED"
+    replacement_confirmation = str(application_runtime.get("status") or "").upper() == "REPLACEMENT_CONFIRMATION_REQUIRED"
+    if context_exhausted:
+        action_id = "ask_for_smaller_runtime_configuration"
+        action_label = "Choose a smaller runtime configuration"
+        reason = str(
+            application_runtime.get("message")
+            or "None of the configured context sizes fit current allocatable resources."
+        )
+    elif replacement_confirmation:
+        action_id = "ask_replace_current_runtime"
+        action_label = "Confirm replacing the current runtime"
+        reason = str(
+            application_runtime.get("message")
+            or "A current runtime is active; the workflow will not stop it without an explicit operator answer."
+        )
+    elif plan_status in {"READY_FOR_REVIEW", "PLAN_READY"} and not application:
         action_id = "prepare_assisted_installation_review"
         action_label = "Prepare the assisted installation review"
         reason = "The saved choices are ready, but no provider review has been prepared."
@@ -717,6 +1235,8 @@ def build_installation_workflow_projection(
             if provider_job_id or provider_job
             else None
         ),
+        "runtime_policy": plan.get("runtime_policy"),
+        "questions": list(plan.get("questions") or []) if isinstance(plan.get("questions"), list) else [],
         "forecast": dict(application_forecast) if application_forecast else None,
         "completion": completion,
         "next_action": {"id": action_id, "label": action_label, "reason": reason},
@@ -882,16 +1402,27 @@ __all__ = [
     "ENDPOINT_ACTIONS",
     "HANDOFF_ACTIONS",
     "InstallationOnboardingPlan",
+    "CONTEXT_LENGTH_CHOICES",
+    "DEFAULT_PUBLICATION_POLICY",
+    "DEFAULT_REPLACEMENT_POLICY",
+    "DEFAULT_RUNTIME_POLICY",
     "PLAN_MAX_BYTES",
     "PROVIDER_CHOICES",
     "SETUP_MODES",
     "validate_model_id",
     "validate_model_source",
+    "normalize_installation_runtime_policy",
+    "normalize_installation_replacement_policy",
+    "normalize_installation_publication_policy",
+    "installation_plan_questions",
+    "installation_context_candidates",
+    "provider_runtime_parameter_policy",
     "installation_plan_hash",
     "installation_plan_path",
     "read_installation_plan",
     "build_installation_workflow_projection",
     "prepare_assisted_installation_review",
+    "create_installation_plan",
     "update_installation_plan",
     "write_installation_plan",
 ]
