@@ -156,6 +156,28 @@ def _installation_plan_source(control):
     }
     fallbacks = {int(item) for item in context.get("fallbacks", []) if str(item).isdigit()}
     requested_context = int(context.get("requested") or CONTEXT_LENGTH_CHOICES[0])
+    # ``ask`` is the persisted unresolved state.  The frame still needs a
+    # concrete, editable recommendation so checking the confirmation box
+    # answers the question instead of silently carrying an unresolved policy
+    # into the lifecycle runner.
+    replacement_mode_view = str(replacement.get("mode") or "parallel")
+    if replacement_mode_view == "ask":
+        replacement_mode_view = "parallel"
+    allow_stop_view = str(replacement.get("allow_stop_current") or "deny")
+    if allow_stop_view == "ask":
+        allow_stop_view = "deny"
+    visibility_view = str(publication.get("visibility") or "private")
+    if visibility_view == "ask":
+        visibility_view = "private"
+    pricing_view = str(publication.get("pricing") or "free")
+    if pricing_view == "ask":
+        pricing_view = "free"
+    validation_view = str(publication.get("validation") or "required")
+    if validation_view == "ask":
+        validation_view = "required"
+    external_requests_view = str(publication.get("external_requests_without_allowlist") or "deny")
+    if external_requests_view == "ask":
+        external_requests_view = "deny"
     fields = [
         _field(
             "installation.plan_hash",
@@ -277,7 +299,7 @@ def _installation_plan_source(control):
         _field(
             "replacement.mode",
             "Политика текущего runtime",
-            str(replacement.get("mode") or "ask"),
+            replacement_mode_view,
             type="select",
             options=["ask", "parallel", "replace", "deny"],
             editable=True,
@@ -286,7 +308,7 @@ def _installation_plan_source(control):
         _field(
             "replacement.allow_stop_current",
             "Разрешить остановку текущего runtime",
-            str(replacement.get("allow_stop_current") or "ask"),
+            allow_stop_view,
             type="select",
             options=["ask", "allow", "deny"],
             editable=True,
@@ -295,7 +317,7 @@ def _installation_plan_source(control):
         _field(
             "publication.visibility",
             "Видимость endpoint",
-            str(publication.get("visibility") or "ask"),
+            visibility_view,
             type="select",
             options=["ask", "private", "public"],
             editable=True,
@@ -304,7 +326,7 @@ def _installation_plan_source(control):
         _field(
             "publication.pricing",
             "Тариф endpoint",
-            str(publication.get("pricing") or "ask"),
+            pricing_view,
             type="select",
             options=["ask", "free", "paid", "fixed", "metered"],
             editable=True,
@@ -313,7 +335,7 @@ def _installation_plan_source(control):
         _field(
             "publication.validation",
             "Валидация перед публикацией",
-            str(publication.get("validation") or "ask"),
+            validation_view,
             type="select",
             options=["ask", "required", "disabled"],
             editable=True,
@@ -322,7 +344,7 @@ def _installation_plan_source(control):
         _field(
             "publication.external_requests_without_allowlist",
             "Внешние запросы без allowlist",
-            str(publication.get("external_requests_without_allowlist") or "ask"),
+            external_requests_view,
             type="select",
             options=["ask", "allow", "deny"],
             editable=True,

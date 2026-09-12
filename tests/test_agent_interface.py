@@ -492,5 +492,6 @@ def test_installation_plan_is_presented_as_editable_form_and_confirmation_is_ver
     assert result["installation_confirmed"] is True
     assert result["installation"]["publication_policy"]["pricing"] == "paid"
     assert result["installation"]["runtime_policy"]["context_length"]["requested"] == 65536
+    assert result["installation"]["replacement_policy"]["mode"] == "parallel"
     refreshed = channel.status("surface-a")["interface"]["documents"][0]
     assert next(field for field in refreshed["blocks"][1]["fields"] if field["id"] == "workflow.confirm_installation")["value"] is False
